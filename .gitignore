@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+out/
+
+# Env & local
+.env
+.env.local
+*.local.env
+
+# Dev email outbox
+apps/api/var/
+
+# OS / editor
+.DS_Store
+Thumbs.db

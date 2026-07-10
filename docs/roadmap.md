@@ -10,15 +10,18 @@ Local-first, web-first. Each phase ends with something demonstrable. AWS deploym
 - [x] Agent team structure (`.claude/agents/`)
 - [x] CLAUDE.md for future sessions
 
-## Phase 1 — Scaffold & Family Graph
+## Phase 1 — Scaffold & Family Graph ✅ (done 2026-07-10)
 
 Goal: a parent can sign up, create a family, add a child profile, and invite a grandparent — end to end locally.
 
-- Monorepo layout: `apps/web` (Next.js + TS + Tailwind + ShadCN), `apps/api` (FastAPI + Pydantic), `docker-compose.yml` (Postgres)
-- Migrations (Alembic) for identity & graph tables: `users`, `families`, `family_members`, `family_invites`, `children`, `child_relationships`, `consent_records`
-- Local auth (JWT dev issuer behind the auth abstraction; Cognito later)
-- Parental-consent capture at child-profile creation
-- Invite flow via email (Mailpit locally)
+- [x] Monorepo layout: `apps/web` (Next.js 16 + TS + Tailwind), `apps/api` (FastAPI + Pydantic + SQLAlchemy)
+- [x] Native PostgreSQL 16 (winget service) instead of Docker — this machine has no WSL2; Docker can come later
+- [x] Alembic migrations for identity & graph tables: `users`, `families`, `family_members`, `family_invites`, `children`, `child_relationships`, `consent_records`
+- [x] Local auth (JWT dev issuer; Cognito abstraction later)
+- [x] Parental-consent capture recorded at child-profile creation
+- [x] Invite flow via email (dev outbox at `apps/api/var/outbox/` instead of Mailpit)
+- [x] 17 API tests: auth, cross-family access denial, consent enforcement, role checks, invite lifecycle
+- Deferred within phase: ShadCN adoption (hand-rolled Tailwind primitives in `src/components/ui.tsx` for now)
 
 ## Phase 2 — Vault, Feed & Memories
 

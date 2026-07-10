@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **FutureRoots** — a Family Wealth Network ("Building Generational Wealth & Memories"): families preserve memories, transfer wisdom, teach financial literacy, and build generational wealth around child-centered vaults. It is a **family platform, not a crypto product** — blockchain (Base) is invisible infrastructure only.
 
-**Current status: design phase.** The repo contains documentation and an agent team, no application code yet. Phase 1 (scaffold) has not started — see `docs/roadmap.md`.
+**Current status: Phase 1 complete.** Monorepo scaffold with working Family Graph: signup/login, family creation, child profiles (with recorded parental consent), and the email invite flow, end to end locally. See `docs/roadmap.md` for what's next (Phase 2: Vault, Feed & Memories).
 
 ## Source-of-truth documents (read before designing or building anything)
 
@@ -35,7 +35,26 @@ Trading, crypto wallets, DeFi, NFTs, complex investments, enterprise white-label
 
 ## Commands
 
-None yet — no code exists. When Phase 1 lands, record here: how to start the stack (docker compose + API + web), run migrations, and run tests (including a single test).
+Full setup details in `docs/dev.md`. Prereqs: Node 20+, uv, PostgreSQL 16 running as a Windows service (db/role `futureroots`/`futureroots` — see dev.md for the one-time SQL).
+
+```powershell
+# API (apps/api) — http://localhost:8000, OpenAPI docs at /docs
+uv sync                                  # install deps
+uv run alembic upgrade head              # apply migrations
+uv run uvicorn app.main:app --reload     # run server
+uv run pytest                            # all tests
+uv run pytest tests/test_invites.py -k single_use   # single test
+uv run alembic revision --autogenerate -m "msg"     # new migration after model changes
+
+# Web (apps/web) — http://localhost:3000
+npm install
+npm run dev
+npm run build                            # type-checks + production build
+```
+
+Dev email (invites) is written to `apps/api/var/outbox/` as text files — invite links are in there. On this machine `uv` lives at `$env:LOCALAPPDATA\Microsoft\WinGet\Packages\astral-sh.uv_*\uv.exe` and node at `C:\Program Files\nodejs` (add to PATH in fresh shells if not picked up).
+
+Note: `apps/web` is Next.js 16 — dynamic-route `params` are Promises in server components (use `useParams()` in client components); `useSearchParams` needs a Suspense boundary; `next lint` is removed (run eslint directly). See `apps/web/AGENTS.md`.
 
 ## Brand voice
 
