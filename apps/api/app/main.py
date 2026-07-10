@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .routers import auth, children, families, invites
+from .routers import auth, children, families, feed, invites, vault
 
 app = FastAPI(title="FutureRoots API", version="0.1.0")
 
@@ -18,6 +18,8 @@ app.include_router(auth.router)
 app.include_router(families.router)
 app.include_router(children.router)
 app.include_router(invites.router)
+app.include_router(vault.router)
+app.include_router(feed.router)
 
 
 @app.get("/health")

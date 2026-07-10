@@ -40,6 +40,36 @@ export interface InvitePreview {
   invited_by: string;
 }
 
+export type VaultItemType = "photo" | "video" | "voice" | "message" | "document" | "achievement";
+
+export interface VaultItemOut {
+  id: string;
+  type: VaultItemType;
+  title: string;
+  body: string | null;
+  media_id: string | null;
+  media_content_type: string | null;
+  created_by_name: string;
+  created_at: string;
+}
+
+export type FeedEventType =
+  | "milestone"
+  | "achievement"
+  | "contribution"
+  | "memory_added"
+  | "capsule_created"
+  | "member_joined";
+
+export interface FeedEventOut {
+  id: string;
+  type: FeedEventType;
+  child_id: string | null;
+  actor_name: string;
+  payload: Record<string, string | null>;
+  created_at: string;
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -117,4 +147,43 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ token }),
     }),
+
+  listVault: (childId: string) => request<VaultItemOut[]>(`/children/${childId}/vault`),
+  addVaultItem: (
+    childId: string,
+    item: { type: VaultItemType; title: string; body?: string; media_id?: string }
+  ) =>
+    request<VaultItemOut>(`/children/${childId}/vault`, {
+      method: "POST",
+      body: JSON.stringify(item),
+    }),
+  postMilestone: (
+    childId: string,
+    milestone: { title: string; description?: string; media_id?: string }
+  ) =>
+    request<VaultItemOut>(`/children/${childId}/milestones`, {
+      method: "POST",
+      body: JSON.stringify(milestone),
+    }),
+  familyFeed: (familyId: string) => request<FeedEventOut[]>(`/families/${familyId}/feed`),
+
+  uploadMedia: async (childId: string, file: File): Promise<string> => {
+    const ticket = await request<{ media_id: string; upload_url: string }>(
+      `/children/${childId}/media`,
+      { method: "POST", body: JSON.stringify({ content_type: file.type }) }
+    );
+    const token = getToken();
+    const res = await fetch(`${API_URL}${ticket.upload_url}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: file,
+    });
+    if (!res.ok) throw new ApiError(res.status, "Upload failed");
+    return ticket.media_id;
+  },
 };
+
+/** URL an <img>/<video> tag can load (tags can't send auth headers). */
+export function mediaUrl(mediaId: string): string {
+  return `${API_URL}/media/${mediaId}?token=${getToken()}`;
+}

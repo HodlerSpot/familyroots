@@ -49,8 +49,9 @@ users ──< family_members >── families ──< children
 
 ### Vault & memories
 
-**media_objects** — one row per stored binary (S3/MinIO)
-- `id`, `storage_key`, `content_type`, `byte_size`, `uploaded_by`, `status` (`pending | uploaded | deleted`), `created_at`
+**media_objects** — one row per stored binary (S3 in prod, local disk in dev)
+- `id`, `child_id` → children, `storage_key`, `content_type`, `byte_size`, `uploaded_by`, `status` (`pending | uploaded | deleted`), `created_at`
+- media is child-scoped at creation so download access control follows the Family Graph, and uploaded media can never be attached to a different child's vault
 
 **vault_items** — the child's lifetime vault
 - `id`, `child_id`, `type` (`photo | video | voice | message | document | achievement`), `media_id` → media_objects (nullable for text), `title`, `body` (text messages/captions), `created_by`, `created_at`, `deleted_at`

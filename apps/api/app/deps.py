@@ -6,7 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from .db import SessionLocal
-from .models import Family, FamilyMember, FamilyRole, MemberStatus, User
+from .models import Child, Family, FamilyMember, FamilyRole, MemberStatus, User
 from .security import decode_access_token
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -64,6 +64,28 @@ def require_guardian_role(membership: FamilyMember) -> None:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "Only a parent or guardian may do this"
         )
+
+
+def get_child_with_access(
+    db: Session, child_id: uuid.UUID, user: User
+) -> tuple[Child, FamilyMember]:
+    """Load a child; the caller must be an active member of the child's family.
+    404 (not 403) when there's no access, so children's existence never leaks."""
+    child = db.get(Child, child_id)
+    if child is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Child not found")
+    membership = (
+        db.query(FamilyMember)
+        .filter(
+            FamilyMember.family_id == child.family_id,
+            FamilyMember.user_id == user.id,
+            FamilyMember.status == MemberStatus.active,
+        )
+        .first()
+    )
+    if membership is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Child not found")
+    return child, membership
 
 
 def get_family_or_404(db: Session, family_id: uuid.UUID) -> Family:

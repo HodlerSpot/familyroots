@@ -2,7 +2,18 @@ import enum
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Date,
+    DateTime,
+    Enum,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -29,6 +40,30 @@ class ConsentType(str, enum.Enum):
     profile_creation = "profile_creation"
     media_storage = "media_storage"
     contributions = "contributions"
+
+
+class MediaStatus(str, enum.Enum):
+    pending = "pending"
+    uploaded = "uploaded"
+    deleted = "deleted"
+
+
+class VaultItemType(str, enum.Enum):
+    photo = "photo"
+    video = "video"
+    voice = "voice"
+    message = "message"
+    document = "document"
+    achievement = "achievement"
+
+
+class FeedEventType(str, enum.Enum):
+    milestone = "milestone"
+    achievement = "achievement"
+    contribution = "contribution"
+    memory_added = "memory_added"
+    capsule_created = "capsule_created"
+    member_joined = "member_joined"
 
 
 def role_column() -> Enum:
@@ -120,6 +155,64 @@ class ChildRelationship(Base):
 
     child: Mapped[Child] = relationship(back_populates="relationships")
     user: Mapped[User] = relationship()
+
+
+class MediaObject(Base):
+    __tablename__ = "media_objects"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    # Media is always scoped to a child so access control follows the Family Graph
+    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
+    storage_key: Mapped[str] = mapped_column(String(255), unique=True)
+    content_type: Mapped[str] = mapped_column(String(100))
+    byte_size: Mapped[int] = mapped_column(BigInteger, default=0)
+    uploaded_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[MediaStatus] = mapped_column(
+        Enum(MediaStatus, native_enum=False, length=20), default=MediaStatus.pending
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    child: Mapped[Child] = relationship()
+
+
+class VaultItem(Base):
+    __tablename__ = "vault_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
+    type: Mapped[VaultItemType] = mapped_column(
+        Enum(VaultItemType, native_enum=False, length=20)
+    )
+    media_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("media_objects.id"), nullable=True
+    )
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    child: Mapped[Child] = relationship()
+    media: Mapped[MediaObject | None] = relationship()
+    author: Mapped[User] = relationship()
+
+
+class FeedEvent(Base):
+    __tablename__ = "feed_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    family_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("families.id"), index=True)
+    child_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("children.id"), nullable=True)
+    type: Mapped[FeedEventType] = mapped_column(
+        Enum(FeedEventType, native_enum=False, length=20)
+    )
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+
+    actor: Mapped[User] = relationship()
 
 
 class ConsentRecord(Base):

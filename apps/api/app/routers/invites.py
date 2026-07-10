@@ -15,8 +15,10 @@ from ..models import (
     User,
     utcnow,
 )
+from ..models import FeedEventType
 from ..schemas import FamilySummary, InviteAccept, InviteCreate, InviteOut, InvitePreview
 from ..services.email import get_email_sender
+from ..services.feed import emit
 
 router = APIRouter(tags=["invites"])
 
@@ -147,5 +149,12 @@ def accept_invite(payload: InviteAccept, db: DbSession, user: CurrentUser) -> Fa
         )
 
     invite.accepted_at = utcnow()
+    emit(
+        db,
+        family_id=invite.family_id,
+        actor_user_id=user.id,
+        type=FeedEventType.member_joined,
+        payload={"member_name": user.display_name, "role": invite.role.value},
+    )
     db.commit()
     return FamilySummary(id=invite.family_id, name=invite.family.name, role=invite.role)

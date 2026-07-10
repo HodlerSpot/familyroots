@@ -23,15 +23,17 @@ Goal: a parent can sign up, create a family, add a child profile, and invite a g
 - [x] 17 API tests: auth, cross-family access denial, consent enforcement, role checks, invite lifecycle
 - Deferred within phase: ShadCN adoption (hand-rolled Tailwind primitives in `src/components/ui.tsx` for now)
 
-## Phase 2 — Vault, Feed & Memories
+## Phase 2 — Vault, Feed & Memories ✅ (done 2026-07-10)
 
 Goal: the family's private timeline is alive.
 
-- Presigned media upload (MinIO locally, S3-compatible)
-- `vault_items`, `media_objects`, `feed_events`
-- Family Feed UI (private timeline) + Child Vault UI
-- Milestone posting (parent records "first steps", "recital", etc.)
-- Email notifications to family members on milestones (SES abstraction → Mailpit)
+- [x] Media upload behind a `MediaStorage` abstraction — local disk (`apps/api/var/media/`) now, S3 presigned URLs later with the same client contract (ticket → PUT → attach)
+- [x] `media_objects` (child-scoped for Family Graph access control), `vault_items`, `feed_events` tables + migration
+- [x] Vault API: any family member adds memories (photos/messages); media never attaches across children; 25 MB upload cap
+- [x] Milestone posting → vault item + feed event + email to every family member except the poster
+- [x] Family Feed API + UI ("Family moments" on the family page), `member_joined` events on invite acceptance
+- [x] Child Vault UI (`/family/[id]/child/[childId]`): milestone + memory forms with photo upload, vault timeline
+- [x] 10 new tests (27 total): media access denial, foreign-media rejection, feed privacy, milestone email fan-out
 
 ## Phase 3 — Achievement Economy & Contributions (north-star phase)
 

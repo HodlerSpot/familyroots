@@ -24,7 +24,8 @@ class OutboxEmailSender:
         existing = len(list(self.outbox_dir.glob("*.txt")))
         path = self.outbox_dir / f"{existing + 1:04d}.txt"
         path.write_text(f"To: {to}\nSubject: {subject}\n\n{body}\n", encoding="utf-8")
-        print(f"[email] to={to} subject={subject!r} -> {path}")
+        # ascii() because the Windows console (cp1252) chokes on emoji in subjects
+        print(f"[email] to={to} subject={ascii(subject)} -> {path}")
 
 
 _sender: EmailSender = OutboxEmailSender()

@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { api, ApiError, FamilyDetail, FamilyRole, getToken } from "@/lib/api";
+import { api, ApiError, FamilyDetail, FamilyRole, FeedEventOut, getToken } from "@/lib/api";
 import { Button, Card, ErrorNote, Input, Label } from "@/components/ui";
+import { FamilyFeedList } from "@/components/feed";
 
 export default function FamilyPage() {
   const router = useRouter();
   const { id } = useParams<{ id: string }>();
   const [family, setFamily] = useState<FamilyDetail | null>(null);
+  const [feed, setFeed] = useState<FeedEventOut[]>([]);
   const [error, setError] = useState("");
 
   const [myEmail, setMyEmail] = useState("");
@@ -18,9 +20,14 @@ export default function FamilyPage() {
 
   const load = useCallback(async () => {
     try {
-      const [detail, me] = await Promise.all([api.familyDetail(id), api.me()]);
+      const [detail, me, events] = await Promise.all([
+        api.familyDetail(id),
+        api.me(),
+        api.familyFeed(id),
+      ]);
       setFamily(detail);
       setMyEmail(me.email);
+      setFeed(events);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) router.replace("/login");
       else setError(err instanceof ApiError ? err.message : "Couldn't load this family");
@@ -54,18 +61,23 @@ export default function FamilyPage() {
         )}
         <div className="grid gap-3 sm:grid-cols-2">
           {family.children.map((c) => (
-            <Card key={c.id}>
-              <h3 className="text-lg font-semibold text-stone-900">{c.first_name}</h3>
-              <p className="text-sm text-stone-500">
-                Born {new Date(c.birthdate + "T00:00:00").toLocaleDateString()}
-              </p>
-              <p className="mt-2 text-sm text-emerald-800">
-                {c.first_name}&apos;s vault begins here 🌱
-              </p>
+            <Card key={c.id} className="transition hover:border-emerald-400">
+              <a href={`/family/${family.id}/child/${c.id}`}>
+                <h3 className="text-lg font-semibold text-stone-900">{c.first_name}</h3>
+                <p className="text-sm text-stone-500">
+                  Born {new Date(c.birthdate + "T00:00:00").toLocaleDateString()}
+                </p>
+                <p className="mt-2 text-sm text-emerald-800">Open {c.first_name}&apos;s vault →</p>
+              </a>
             </Card>
           ))}
         </div>
         {isParent && <AddChildForm familyId={family.id} onAdded={load} />}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-xl font-semibold text-stone-800">Family moments</h2>
+        <FamilyFeedList events={feed} />
       </section>
 
       <section className="space-y-3">

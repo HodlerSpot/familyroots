@@ -3,7 +3,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
-from .models import ConsentType, FamilyRole, MemberStatus
+from .models import ConsentType, FamilyRole, FeedEventType, MediaStatus, MemberStatus, VaultItemType
 
 
 # --- auth ---
@@ -104,3 +104,49 @@ class InvitePreview(BaseModel):
     family_name: str
     role: FamilyRole
     invited_by: str
+
+
+# --- media & vault ---
+
+class MediaCreate(BaseModel):
+    content_type: str = Field(pattern=r"^(image|video|audio)/[\w.+-]+$")
+
+
+class MediaUploadTicket(BaseModel):
+    media_id: uuid.UUID
+    upload_url: str
+
+
+class VaultItemCreate(BaseModel):
+    type: VaultItemType
+    title: str = Field(min_length=1, max_length=200)
+    body: str | None = Field(default=None, max_length=5000)
+    media_id: uuid.UUID | None = None
+
+
+class VaultItemOut(BaseModel):
+    id: uuid.UUID
+    type: VaultItemType
+    title: str
+    body: str | None
+    media_id: uuid.UUID | None
+    media_content_type: str | None = None
+    created_by_name: str
+    created_at: datetime
+
+
+class MilestoneCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=5000)
+    media_id: uuid.UUID | None = None
+
+
+# --- feed ---
+
+class FeedEventOut(BaseModel):
+    id: uuid.UUID
+    type: FeedEventType
+    child_id: uuid.UUID | None
+    actor_name: str
+    payload: dict
+    created_at: datetime

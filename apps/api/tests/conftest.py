@@ -27,6 +27,16 @@ def isolated_outbox(tmp_path, monkeypatch):
     monkeypatch.setattr(email_module, "_sender", email_module.OutboxEmailSender(tmp_path))
 
 
+@pytest.fixture(autouse=True)
+def isolated_storage(tmp_path, monkeypatch):
+    """Keep test media out of the real dev media dir (apps/api/var/media)."""
+    from app.services import storage as storage_module
+
+    monkeypatch.setattr(
+        storage_module, "_storage", storage_module.LocalDiskStorage(tmp_path / "media")
+    )
+
+
 @pytest.fixture()
 def client():
     Base.metadata.create_all(engine)
