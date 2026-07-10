@@ -1,0 +1,67 @@
+# FutureRoots — Build Roadmap
+
+Local-first, web-first. Each phase ends with something demonstrable. AWS deployment is deferred until Phase 2 is worth showing to real family members.
+
+## Phase 0 — Foundation docs ✦ (current)
+
+- [x] Vision source of truth (`docs/vision.md`)
+- [x] Architecture (`docs/architecture.md`)
+- [x] Data model (`docs/data-model.md`)
+- [x] Agent team structure (`.claude/agents/`)
+- [x] CLAUDE.md for future sessions
+
+## Phase 1 — Scaffold & Family Graph
+
+Goal: a parent can sign up, create a family, add a child profile, and invite a grandparent — end to end locally.
+
+- Monorepo layout: `apps/web` (Next.js + TS + Tailwind + ShadCN), `apps/api` (FastAPI + Pydantic), `docker-compose.yml` (Postgres)
+- Migrations (Alembic) for identity & graph tables: `users`, `families`, `family_members`, `family_invites`, `children`, `child_relationships`, `consent_records`
+- Local auth (JWT dev issuer behind the auth abstraction; Cognito later)
+- Parental-consent capture at child-profile creation
+- Invite flow via email (Mailpit locally)
+
+## Phase 2 — Vault, Feed & Memories
+
+Goal: the family's private timeline is alive.
+
+- Presigned media upload (MinIO locally, S3-compatible)
+- `vault_items`, `media_objects`, `feed_events`
+- Family Feed UI (private timeline) + Child Vault UI
+- Milestone posting (parent records "first steps", "recital", etc.)
+- Email notifications to family members on milestones (SES abstraction → Mailpit)
+
+## Phase 3 — Achievement Economy & Contributions (north-star phase)
+
+Goal: the 60-second grandparent flow works.
+
+- Goals + completions + badges
+- Stripe integration: PaymentIntents, saved payment methods, webhook → ledger
+- `fund_accounts` + append-only `fund_ledger_entries`, balances on the child vault
+- The one-screen grandparent flow: milestone context → congratulate → contribute → optional video message
+- Contribution fee handling
+- **Measure it:** instrument time-from-notification-to-completed-contribution
+
+## Phase 4 — Time Capsules & Legacy Archive
+
+- `time_capsules` with age/date/milestone release conditions + release scheduler
+- Family Legacy Archive (`legacy_items`): stories, recipes, documents, wisdom recordings
+- Voice/video recording in-browser for capsules and wisdom
+
+## Phase 5 — Deploy & Harden
+
+- AWS serverless deployment (CloudFront, S3, API Gateway + Lambda/Mangum, Cognito, SES, RDS) — infrastructure as code
+- Swap local auth → Cognito, Mailpit → SES, MinIO → S3 (config-only if abstractions held)
+- Security & compliance review (COPPA/GDPR/PIPEDA checklist), data-erasure flow
+- Cost check against the ~$50/month ceiling
+
+## Phase 6 — AI & Growth
+
+- Family Story Generator, Birthday Memory Generator (API-based models)
+- Wisdom Search across messages/stories/archives
+- Legacy Book Generator
+- `AnchorService` real implementation on Base (contribution proofs; still invisible)
+- React Native/Expo mobile app once the API is stable
+
+## Explicitly deferred (do not build)
+
+Trading, crypto wallets, DeFi, NFTs, complex investments (RESP/ETF come after real traction), enterprise white-labeling, custom/self-hosted AI models.
