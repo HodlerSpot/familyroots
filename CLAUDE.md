@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **FutureRoots** — a Family Wealth Network ("Building Generational Wealth & Memories"): families preserve memories, transfer wisdom, teach financial literacy, and build generational wealth around child-centered vaults. It is a **family platform, not a crypto product** — blockchain (Base) is invisible infrastructure only.
 
-**Current status: Phase 5 complete — deployed to AWS.** All product phases (Family Graph, Vault/Feed/Memories, Achievement Economy, Time Capsules, Legacy Archive) are live: API on Lambda + RDS (us-east-1, CDK stack in `infra/`, runbook in `docs/deploy.md`), web on Amplify Hosting at `https://main.d2eorgdxfwgaam.amplifyapp.com`. SES is in sandbox mode. Next: Phase 6 (AI & growth) and the hardening backlog in `docs/deploy.md`.
+**Current status: Phase 5 complete — live at https://futureroots.app.** All product phases (Family Graph, Vault/Feed/Memories, Achievement Economy, Time Capsules, Legacy Archive) are deployed: web on Amplify Hosting (futureroots.app + www), API on Lambda + RDS at `https://api.futureroots.app` (us-east-1, CDK stack in `infra/`, runbook in `docs/deploy.md`). DNS lives in Cloudflare (domain registered there). SES is in sandbox mode. Next: Phase 6 (AI & growth) and the hardening backlog in `docs/deploy.md`.
 
 ## Source-of-truth documents (read before designing or building anything)
 

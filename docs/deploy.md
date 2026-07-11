@@ -45,6 +45,13 @@ aws sesv2 create-email-identity --email-identity someone@example.com --region us
 
 Request production access (SES console → Account dashboard) before inviting real families.
 
+## Custom domain (futureroots.app)
+
+- Domain registered at **Cloudflare** (Registrar) — nameservers must stay Cloudflare's, so DNS records live in the Cloudflare dashboard, all **DNS only** (grey cloud — proxying breaks ACM validation and double-proxies Amplify's CDN).
+- Web: Amplify domain association for apex + www (`@` and `www` CNAME → the Amplify CloudFront host; ACM cert auto-managed by Amplify).
+- API: ACM cert for `api.futureroots.app` + API Gateway custom domain + mapping to the HTTP API; `api` CNAME → the API GW regional target (`d-1oabzuff0d.execute-api.us-east-1.amazonaws.com`).
+- URLs: `https://futureroots.app` (web) · `https://api.futureroots.app` (API). `WEB_BASE_URL`/`EXTRA_ORIGINS` in `infra/.env` and `NEXT_PUBLIC_API_URL` in Amplify env vars must stay in sync with these.
+
 ## Web (Amplify Hosting)
 
 Amplify app builds `apps/web` from the GitHub repo (monorepo root `apps/web`). After the first deploy, set `WEB_BASE_URL` in `infra/.env` to the Amplify URL and redeploy the stack so API CORS and email links point at it. Set `NEXT_PUBLIC_API_URL` env var in Amplify to the `ApiUrl` output.

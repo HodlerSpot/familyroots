@@ -65,7 +65,7 @@ Goal: the 60-second grandparent flow works.
 - [x] Storage swap local→S3 (presigned up/down) and email swap outbox→SES were config-only — the abstractions held
 - [x] Migrations run in-VPC via a Lambda management command
 - [x] Web on Amplify Hosting (Next 15 — Amplify doesn't support 16 yet), builds from GitHub on push
-- [x] Live: API `https://425w8dkba7.execute-api.us-east-1.amazonaws.com` · Web `https://main.d2eorgdxfwgaam.amplifyapp.com`
+- [x] Live: Web `https://futureroots.app` (+ www) · API `https://api.futureroots.app` — DNS in Cloudflare (domain registered there), certs via ACM
 - [x] Cost ~$22–25/month — under the ~$50 ceiling
 - Hardening backlog (see `docs/deploy.md`): Cognito swap, Secrets Manager, SES production access, custom domain + CloudFront/WAF, RDS deletion protection, formal COPPA/GDPR/PIPEDA review before real families
 
