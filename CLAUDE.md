@@ -54,7 +54,7 @@ npm run build                            # type-checks + production build
 
 Dev email (invites) is written to `apps/api/var/outbox/` as text files — invite links are in there. On this machine `uv` lives at `$env:LOCALAPPDATA\Microsoft\WinGet\Packages\astral-sh.uv_*\uv.exe` and node at `C:\Program Files\nodejs` (add to PATH in fresh shells if not picked up).
 
-Note: `apps/web` is Next.js 16 — dynamic-route `params` are Promises in server components (use `useParams()` in client components); `useSearchParams` needs a Suspense boundary; `next lint` is removed (run eslint directly). See `apps/web/AGENTS.md`.
+Note: `apps/web` is **Next.js 15** (pinned — Amplify Hosting SSR doesn't support 16 yet; see `apps/web/AGENTS.md`). Dynamic-route `params` are Promises in server components (use `useParams()` in client components); `useSearchParams` needs a Suspense boundary.
 
 ## Brand voice
 

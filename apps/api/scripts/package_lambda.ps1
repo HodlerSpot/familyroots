@@ -21,10 +21,10 @@ if ($LASTEXITCODE -ne 0) { throw "uv export failed" }
     --python-platform x86_64-manylinux_2_28 --python-version 3.13 --only-binary :all:
 if ($LASTEXITCODE -ne 0) { throw "uv pip install failed" }
 
-# 3. Application code + migrations
+# 3. Application code + migrations ("migrations" in the zip: the "alembic"
+#    name collides with the installed alembic library package)
 Copy-Item -Recurse app "$stage\app"
-Copy-Item -Recurse alembic "$stage\alembic"
-Copy-Item alembic.ini $stage
+Copy-Item -Recurse alembic "$stage\migrations"
 Get-ChildItem -Recurse $stage -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force -Confirm:$false
 
 # 4. Zip with forward slashes (Compress-Archive writes backslash entries that

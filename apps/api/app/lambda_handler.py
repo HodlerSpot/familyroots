@@ -19,9 +19,12 @@ def _run_migrations() -> dict:
     from alembic import command
     from alembic.config import Config
 
-    ini = Path(__file__).resolve().parents[1] / "alembic.ini"
-    cfg = Config(str(ini))
-    cfg.set_main_option("script_location", str(ini.parent / "alembic"))
+    # Migrations ship as "migrations/" in the zip — the "alembic/" name would
+    # collide with the alembic library package at /var/task/alembic
+    cfg = Config()
+    cfg.set_main_option(
+        "script_location", str(Path(__file__).resolve().parents[1] / "migrations")
+    )
     command.upgrade(cfg, "head")
     return {"status": "migrated"}
 

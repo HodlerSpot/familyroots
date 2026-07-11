@@ -50,11 +50,25 @@ class SesEmailSender:
         )
 
 
+class BestEffortSender:
+    """Notifications must never break the user's action (e.g. an invite is
+    still an invite if the email bounces). Failures are logged, not raised."""
+
+    def __init__(self, inner: EmailSender) -> None:
+        self.inner = inner
+
+    def send(self, to: str, subject: str, body: str) -> None:
+        try:
+            self.inner.send(to, subject, body)
+        except Exception as exc:  # noqa: BLE001 — deliberately broad
+            print(f"[email] send to {to} failed: {exc!r}")
+
+
 def _build_sender() -> EmailSender:
     from ..config import settings
 
     if settings.email_backend == "ses":
-        return SesEmailSender(settings.ses_from_address)
+        return BestEffortSender(SesEmailSender(settings.ses_from_address))
     return OutboxEmailSender()
 
 
