@@ -15,8 +15,15 @@ out/
 .env.local
 *.local.env
 
-# Dev email outbox
+# Dev email outbox & media
 apps/api/var/
+
+# Lambda packaging output
+apps/api/build/
+
+# Infra
+infra/cdk.out/
+infra/.env
 
 # OS / editor
 .DS_Store

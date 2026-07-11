@@ -2,7 +2,6 @@ import io
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import FileResponse
 
 from ..config import settings
 from ..deps import CurrentUser, DbSession, get_active_membership, get_child_with_access
@@ -65,15 +64,16 @@ def create_media(
     )
     db.add(media)
     db.commit()
-    # Local dev uploads through the API; the S3 implementation will hand out
-    # a presigned URL here instead — same contract for the client either way.
-    return MediaUploadTicket(media_id=media.id, upload_url=f"/media/{media.id}/content")
+    # Local: an API path the client PUTs to. S3: a presigned URL — bytes never
+    # flow through the API. Same client contract either way.
+    return MediaUploadTicket(media_id=media.id, upload_url=get_storage().upload_target(media))
 
 
 @router.put("/media/{media_id}/content", status_code=status.HTTP_204_NO_CONTENT)
 async def upload_media_content(
     media_id: uuid.UUID, request: Request, db: DbSession, user: CurrentUser
 ) -> None:
+    """Local-backend upload path (S3 clients PUT to the presigned URL instead)."""
     media = db.get(MediaObject, media_id)
     if media is None or media.uploaded_by != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Upload not found")
@@ -85,7 +85,30 @@ async def upload_media_content(
         raise HTTPException(
             status.HTTP_413_CONTENT_TOO_LARGE, "That file is too large (25 MB max for now)"
         )
-    media.byte_size = get_storage().save(media.storage_key, io.BytesIO(body))
+    get_storage().save(media.storage_key, io.BytesIO(body))
+    db.commit()
+
+
+@router.post("/media/{media_id}/complete", status_code=status.HTTP_204_NO_CONTENT)
+def complete_media_upload(media_id: uuid.UUID, db: DbSession, user: CurrentUser) -> None:
+    """Client signals the bytes are in storage; we verify before marking usable."""
+    media = db.get(MediaObject, media_id)
+    if media is None or media.uploaded_by != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Upload not found")
+    if media.status != MediaStatus.pending:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This upload is already complete")
+
+    size = get_storage().confirm_upload(media)
+    if size is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "The file never arrived — please retry"
+        )
+    if size > MAX_UPLOAD_BYTES:
+        get_storage().delete(media.storage_key)
+        raise HTTPException(
+            status.HTTP_413_CONTENT_TOO_LARGE, "That file is too large (25 MB max for now)"
+        )
+    media.byte_size = size
     media.status = MediaStatus.uploaded
     db.commit()
 
@@ -94,7 +117,7 @@ async def upload_media_content(
 def download_media(media_id: uuid.UUID, db: DbSession, token: str | None = None):
     """Serves media to <img>/<video> tags, which can't send an Authorization
     header — so this endpoint (only) accepts the access token as ?token=.
-    The S3 implementation replaces this with presigned download URLs."""
+    Local backend streams the file; S3 backend 307-redirects to a presigned URL."""
     user_id = decode_access_token(token) if token else None
     user = db.get(User, user_id) if user_id else None
     if user is None:
@@ -110,10 +133,7 @@ def download_media(media_id: uuid.UUID, db: DbSession, token: str | None = None)
     else:  # orphaned media is unreachable
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
 
-    path = get_storage().open(media.storage_key)
-    if not path.exists():
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
-    return FileResponse(path, media_type=media.content_type)
+    return get_storage().download(media)
 
 
 # --- vault ---

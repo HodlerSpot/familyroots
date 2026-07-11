@@ -41,6 +41,7 @@ def test_legacy_item_with_family_media(client):
     media_id = r.json()["media_id"]
     r = client.put(r.json()["upload_url"], content=PNG_BYTES, headers=parent)
     assert r.status_code == 204
+    assert client.post(f"/media/{media_id}/complete", headers=parent).status_code == 204
 
     r = client.post(
         f"/families/{family_id}/legacy",

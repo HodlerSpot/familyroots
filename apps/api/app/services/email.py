@@ -28,7 +28,37 @@ class OutboxEmailSender:
         print(f"[email] to={to} subject={ascii(subject)} -> {path}")
 
 
-_sender: EmailSender = OutboxEmailSender()
+class SesEmailSender:
+    """Production sender via the SES v2 API (reached through a VPC endpoint)."""
+
+    def __init__(self, from_address: str) -> None:
+        import boto3
+
+        self.from_address = from_address
+        self.client = boto3.client("sesv2")
+
+    def send(self, to: str, subject: str, body: str) -> None:
+        self.client.send_email(
+            FromEmailAddress=self.from_address,
+            Destination={"ToAddresses": [to]},
+            Content={
+                "Simple": {
+                    "Subject": {"Data": subject, "Charset": "UTF-8"},
+                    "Body": {"Text": {"Data": body, "Charset": "UTF-8"}},
+                }
+            },
+        )
+
+
+def _build_sender() -> EmailSender:
+    from ..config import settings
+
+    if settings.email_backend == "ses":
+        return SesEmailSender(settings.ses_from_address)
+    return OutboxEmailSender()
+
+
+_sender: EmailSender = _build_sender()
 
 
 def get_email_sender() -> EmailSender:

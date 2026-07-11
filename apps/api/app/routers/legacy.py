@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, status
 from ..deps import CurrentUser, DbSession, get_active_membership
 from ..models import LegacyItem, MediaObject, MediaStatus
 from ..schemas import LegacyCreate, LegacyOut, MediaCreate, MediaUploadTicket
+from ..services.storage import get_storage
 
 router = APIRouter(tags=["legacy"])
 
@@ -41,7 +42,7 @@ def create_family_media(
     )
     db.add(media)
     db.commit()
-    return MediaUploadTicket(media_id=media.id, upload_url=f"/media/{media.id}/content")
+    return MediaUploadTicket(media_id=media.id, upload_url=get_storage().upload_target(media))
 
 
 @router.post(

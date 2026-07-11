@@ -189,7 +189,24 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     }
     throw new ApiError(res.status, detail);
   }
+  if (res.status === 204) return undefined as T;
   return res.json();
+}
+
+/** PUT the file where the ticket points (our API locally, presigned S3 in
+ * prod), then confirm so the server marks it usable. */
+async function putAndComplete(
+  ticket: { media_id: string; upload_url: string },
+  file: File
+): Promise<string> {
+  const isApiPath = ticket.upload_url.startsWith("/");
+  const url = isApiPath ? `${API_URL}${ticket.upload_url}` : ticket.upload_url;
+  const headers: Record<string, string> = { "Content-Type": file.type };
+  if (isApiPath) headers.Authorization = `Bearer ${getToken()}`;
+  const res = await fetch(url, { method: "PUT", headers, body: file });
+  if (!res.ok) throw new ApiError(res.status, "Upload failed");
+  await request<void>(`/media/${ticket.media_id}/complete`, { method: "POST" });
+  return ticket.media_id;
 }
 
 export const api = {
@@ -317,14 +334,7 @@ export const api = {
       `/families/${familyId}/media`,
       { method: "POST", body: JSON.stringify({ content_type: file.type }) }
     );
-    const token = getToken();
-    const res = await fetch(`${API_URL}${ticket.upload_url}`, {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${token}` },
-      body: file,
-    });
-    if (!res.ok) throw new ApiError(res.status, "Upload failed");
-    return ticket.media_id;
+    return putAndComplete(ticket, file);
   },
 
   uploadMedia: async (childId: string, file: File): Promise<string> => {
@@ -332,14 +342,7 @@ export const api = {
       `/children/${childId}/media`,
       { method: "POST", body: JSON.stringify({ content_type: file.type }) }
     );
-    const token = getToken();
-    const res = await fetch(`${API_URL}${ticket.upload_url}`, {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${token}` },
-      body: file,
-    });
-    if (!res.ok) throw new ApiError(res.status, "Upload failed");
-    return ticket.media_id;
+    return putAndComplete(ticket, file);
   },
 };
 

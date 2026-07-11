@@ -14,6 +14,8 @@ def upload_photo(client, headers, child_id) -> str:
     upload_url = r.json()["upload_url"]
     r = client.put(upload_url, content=PNG_BYTES, headers=headers)
     assert r.status_code == 204, r.text
+    r = client.post(f"/media/{media_id}/complete", headers=headers)
+    assert r.status_code == 204, r.text
     return media_id
 
 
