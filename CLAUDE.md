@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **FutureRoots** — a Family Wealth Network ("Building Generational Wealth & Memories"): families preserve memories, transfer wisdom, teach financial literacy, and build generational wealth around child-centered vaults. It is a **family platform, not a crypto product** — blockchain (Base) is invisible infrastructure only.
 
-**Current status: Phase 2 complete.** Family Graph (signup/login, families, child profiles with recorded consent, email invites) plus Vault, Feed & Memories: photo upload behind a storage abstraction, child vaults, milestone posting with family email notifications, and the private family feed. See `docs/roadmap.md` for what's next (Phase 3: Achievement Economy & Contributions — the north-star phase).
+**Current status: Phase 3 complete (the north-star phase).** Family Graph, Vault/Feed/Memories, plus the Achievement Economy: goals with badge/cash/fund rewards, the append-only future-fund ledger behind a `PaymentProvider` abstraction (local simulator now, Stripe drops into the same seam), and the one-screen grandparent contribution flow linked from milestone emails. See `docs/roadmap.md` for what's next (Phase 4: Time Capsules & Legacy Archive).
 
 ## Source-of-truth documents (read before designing or building anything)
 

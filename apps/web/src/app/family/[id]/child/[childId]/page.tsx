@@ -2,7 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { api, ApiError, getToken, mediaUrl, VaultItemOut } from "@/lib/api";
+import {
+  api,
+  ApiError,
+  BadgeOut,
+  formatMoney,
+  FundOut,
+  getToken,
+  GoalOut,
+  mediaUrl,
+  VaultItemOut,
+} from "@/lib/api";
 import { Button, Card, ErrorNote, Input, Label } from "@/components/ui";
 
 const TYPE_ICONS: Record<string, string> = {
@@ -19,16 +29,32 @@ export default function ChildVaultPage() {
   const { id: familyId, childId } = useParams<{ id: string; childId: string }>();
   const [items, setItems] = useState<VaultItemOut[] | null>(null);
   const [childName, setChildName] = useState("");
+  const [fund, setFund] = useState<FundOut | null>(null);
+  const [goals, setGoals] = useState<GoalOut[]>([]);
+  const [badges, setBadges] = useState<BadgeOut[]>([]);
+  const [isParent, setIsParent] = useState(false);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     try {
-      const [vault, family] = await Promise.all([
+      const [vault, family, me, fundData, goalsData, badgesData] = await Promise.all([
         api.listVault(childId),
         api.familyDetail(familyId),
+        api.me(),
+        api.childFund(childId),
+        api.listGoals(childId),
+        api.listBadges(childId),
       ]);
       setItems(vault);
       setChildName(family.children.find((c) => c.id === childId)?.first_name ?? "");
+      setFund(fundData);
+      setGoals(goalsData);
+      setBadges(badgesData);
+      setIsParent(
+        family.members.some(
+          (m) => ["parent", "guardian"].includes(m.role) && m.user.email === me.email
+        )
+      );
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) router.replace("/login");
       else setError(err instanceof ApiError ? err.message : "Couldn't load this vault");
@@ -59,6 +85,56 @@ export default function ChildVaultPage() {
           Every memory added here stays with {childName || "them"} for life.
         </p>
       </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Card className="flex flex-col justify-between bg-emerald-50/50">
+          <div>
+            <h3 className="font-semibold text-emerald-900">🌳 Future fund</h3>
+            <p className="mt-2 text-3xl font-bold text-emerald-900">
+              {fund ? formatMoney(fund.balance_cents, fund.currency) : "—"}
+            </p>
+            <p className="text-sm text-stone-500">
+              {fund && fund.entries.length > 0
+                ? `${fund.entries.length} gift${fund.entries.length === 1 ? "" : "s"} from the family`
+                : "The first gift starts the journey"}
+            </p>
+          </div>
+          <Button
+            className="mt-4 w-full"
+            onClick={() => router.push(`/family/${familyId}/child/${childId}/contribute`)}
+          >
+            Add to {childName ? `${childName}'s` : "their"} future
+          </Button>
+        </Card>
+        <Card>
+          <h3 className="font-semibold text-emerald-900">🏅 Badges</h3>
+          {badges.length === 0 ? (
+            <p className="mt-2 text-sm text-stone-500">
+              Badges appear when {childName || "they"} complete{childName ? "s" : ""} goals.
+            </p>
+          ) : (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {badges.map((b) => (
+                <span
+                  key={b.id}
+                  className="rounded-full bg-amber-50 px-3 py-1 text-sm text-amber-900"
+                  title={new Date(b.awarded_at).toLocaleDateString()}
+                >
+                  {b.icon} {b.label}
+                </span>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <GoalsSection
+        childId={childId}
+        childName={childName}
+        goals={goals}
+        isParent={isParent}
+        onChanged={load}
+      />
 
       <div className="grid gap-4 md:grid-cols-2">
         <MilestoneForm childId={childId} onPosted={load} childName={childName} />
@@ -97,6 +173,163 @@ export default function ChildVaultPage() {
         </div>
       </section>
     </div>
+  );
+}
+
+const REWARD_LABELS: Record<string, string> = {
+  badge: "🏅 Badge",
+  cash: "💵 Cash reward",
+  fund_contribution: "🌳 Future fund gift",
+  privilege: "⭐ Family privilege",
+};
+
+function GoalsSection({
+  childId,
+  childName,
+  goals,
+  isParent,
+  onChanged,
+}: {
+  childId: string;
+  childName: string;
+  goals: GoalOut[];
+  isParent: boolean;
+  onChanged: () => void;
+}) {
+  const [showForm, setShowForm] = useState(false);
+  const [title, setTitle] = useState("");
+  const [rewardType, setRewardType] = useState<"badge" | "cash" | "fund_contribution" | "privilege">("badge");
+  const [rewardAmount, setRewardAmount] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function createGoal(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await api.createGoal(childId, {
+        title,
+        reward_type: rewardType,
+        reward_amount_cents:
+          rewardType === "cash" || rewardType === "fund_contribution"
+            ? Math.round(parseFloat(rewardAmount || "0") * 100)
+            : undefined,
+      });
+      setTitle("");
+      setRewardAmount("");
+      setShowForm(false);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function complete(goalId: string) {
+    setError("");
+    try {
+      await api.completeGoal(goalId);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong");
+    }
+  }
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-semibold text-stone-800">Goals</h2>
+        {isParent && (
+          <Button variant="soft" onClick={() => setShowForm((v) => !v)}>
+            {showForm ? "Close" : "+ New goal"}
+          </Button>
+        )}
+      </div>
+      <ErrorNote>{error}</ErrorNote>
+
+      {showForm && (
+        <Card>
+          <form onSubmit={createGoal} className="space-y-3">
+            <div>
+              <Label htmlFor="gtitle">Goal</Label>
+              <Input
+                id="gtitle"
+                placeholder="e.g. Read 10 books"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                required
+              />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="greward">Reward</Label>
+                <select
+                  id="greward"
+                  value={rewardType}
+                  onChange={(e) => setRewardType(e.target.value as typeof rewardType)}
+                  className="w-full rounded-lg border border-stone-300 bg-white px-4 py-3 text-base"
+                >
+                  <option value="badge">🏅 Badge</option>
+                  <option value="cash">💵 Cash</option>
+                  <option value="fund_contribution">🌳 Future fund gift</option>
+                  <option value="privilege">⭐ Family privilege</option>
+                </select>
+              </div>
+              {(rewardType === "cash" || rewardType === "fund_contribution") && (
+                <div>
+                  <Label htmlFor="gamount">Amount ($)</Label>
+                  <Input
+                    id="gamount"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={rewardAmount}
+                    onChange={(e) => setRewardAmount(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
+            </div>
+            <Button type="submit" disabled={busy}>
+              {busy ? "Creating…" : "Create goal"}
+            </Button>
+          </form>
+        </Card>
+      )}
+
+      {goals.length === 0 && !showForm && (
+        <p className="text-stone-600">
+          {isParent
+            ? `Set a goal for ${childName || "your child"} — reading, chores, practice — and celebrate when they get there.`
+            : "No goals yet."}
+        </p>
+      )}
+      <div className="grid gap-3 sm:grid-cols-2">
+        {goals.map((g) => (
+          <Card key={g.id} className={g.status === "completed" ? "opacity-70" : ""}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-semibold text-stone-900">
+                  {g.status === "completed" ? "✅ " : ""}
+                  {g.title}
+                </h3>
+                <p className="mt-1 text-sm text-stone-500">
+                  {REWARD_LABELS[g.reward_type]}
+                  {g.reward_amount_cents ? ` · ${formatMoney(g.reward_amount_cents, g.currency)}` : ""}
+                </p>
+              </div>
+              {isParent && g.status === "active" && (
+                <Button variant="soft" onClick={() => complete(g.id)}>
+                  Done!
+                </Button>
+              )}
+            </div>
+          </Card>
+        ))}
+      </div>
+    </section>
   );
 }
 

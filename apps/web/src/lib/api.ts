@@ -66,8 +66,57 @@ export interface FeedEventOut {
   type: FeedEventType;
   child_id: string | null;
   actor_name: string;
-  payload: Record<string, string | null>;
+  payload: Record<string, string | number | null>;
   created_at: string;
+}
+
+export type RewardType = "cash" | "fund_contribution" | "badge" | "privilege";
+
+export interface GoalOut {
+  id: string;
+  title: string;
+  description: string | null;
+  reward_type: RewardType;
+  reward_amount_cents: number | null;
+  currency: string;
+  status: "active" | "completed" | "archived";
+  due_at: string | null;
+  completed_at: string | null;
+}
+
+export interface BadgeOut {
+  id: string;
+  label: string;
+  icon: string;
+  awarded_at: string;
+}
+
+export interface ContributionOut {
+  id: string;
+  amount_cents: number;
+  currency: string;
+  fee_cents: number;
+  message: string | null;
+  status: "pending" | "succeeded" | "failed" | "refunded";
+  created_at: string;
+}
+
+export interface FundOut {
+  child_id: string;
+  currency: string;
+  balance_cents: number;
+  entries: {
+    id: string;
+    amount_cents: number;
+    entry_type: string;
+    contributor_name: string | null;
+    message: string | null;
+    created_at: string;
+  }[];
+}
+
+export function formatMoney(cents: number, currency = "USD"): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
 }
 
 export class ApiError extends Error {
@@ -166,6 +215,39 @@ export const api = {
       body: JSON.stringify(milestone),
     }),
   familyFeed: (familyId: string) => request<FeedEventOut[]>(`/families/${familyId}/feed`),
+
+  listGoals: (childId: string) => request<GoalOut[]>(`/children/${childId}/goals`),
+  createGoal: (
+    childId: string,
+    goal: {
+      title: string;
+      description?: string;
+      reward_type: RewardType;
+      reward_amount_cents?: number;
+    }
+  ) =>
+    request<GoalOut>(`/children/${childId}/goals`, {
+      method: "POST",
+      body: JSON.stringify(goal),
+    }),
+  completeGoal: (goalId: string, notes?: string) =>
+    request<GoalOut>(`/goals/${goalId}/complete`, {
+      method: "POST",
+      body: JSON.stringify({ notes }),
+    }),
+  listBadges: (childId: string) => request<BadgeOut[]>(`/children/${childId}/badges`),
+
+  createContribution: (
+    childId: string,
+    c: { amount_cents: number; message?: string; trigger_feed_event_id?: string }
+  ) =>
+    request<ContributionOut>(`/children/${childId}/contributions`, {
+      method: "POST",
+      body: JSON.stringify(c),
+    }),
+  confirmContribution: (contributionId: string) =>
+    request<ContributionOut>(`/contributions/${contributionId}/confirm`, { method: "POST" }),
+  childFund: (childId: string) => request<FundOut>(`/children/${childId}/fund`),
 
   uploadMedia: async (childId: string, file: File): Promise<string> => {
     const ticket = await request<{ media_id: string; upload_url: string }>(

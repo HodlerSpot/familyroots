@@ -227,6 +227,7 @@ def post_milestone(
     )
     sender = get_email_sender()
     family_url = f"{settings.web_base_url}/family/{child.family_id}"
+    contribute_url = f"{family_url}/child/{child.id}/contribute"
     for recipient in recipients:
         sender.send(
             to=recipient.email,
@@ -237,7 +238,8 @@ def post_milestone(
                 f"milestone:\n\n"
                 f"  {payload.title}\n"
                 + (f"  {payload.description}\n" if payload.description else "")
-                + f"\nShare in the moment: {family_url}\n\n"
+                + f"\nShare in the moment: {family_url}\n"
+                f"Celebrate with a gift to {child.first_name}'s future: {contribute_url}\n\n"
                 f"With warmth,\nFutureRoots"
             ),
         )

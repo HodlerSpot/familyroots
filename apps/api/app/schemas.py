@@ -3,7 +3,17 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
-from .models import ConsentType, FamilyRole, FeedEventType, MediaStatus, MemberStatus, VaultItemType
+from .models import (
+    ConsentType,
+    ContributionStatus,
+    FamilyRole,
+    FeedEventType,
+    GoalStatus,
+    MediaStatus,
+    MemberStatus,
+    RewardType,
+    VaultItemType,
+)
 
 
 # --- auth ---
@@ -150,3 +160,78 @@ class FeedEventOut(BaseModel):
     actor_name: str
     payload: dict
     created_at: datetime
+
+
+# --- goals & badges ---
+
+class GoalCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    reward_type: RewardType
+    reward_amount_cents: int | None = Field(default=None, ge=0, le=1_000_000_00)
+    due_at: datetime | None = None
+
+
+class GoalOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    description: str | None
+    reward_type: RewardType
+    reward_amount_cents: int | None
+    currency: str
+    status: GoalStatus
+    due_at: datetime | None
+    completed_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class GoalComplete(BaseModel):
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class BadgeOut(BaseModel):
+    id: uuid.UUID
+    label: str
+    icon: str
+    awarded_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# --- contributions & fund ---
+
+class ContributionCreate(BaseModel):
+    amount_cents: int = Field(ge=100, le=10_000_00, description="1.00 to 10,000.00")
+    currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$")
+    message: str | None = Field(default=None, max_length=2000)
+    media_id: uuid.UUID | None = None
+    trigger_feed_event_id: uuid.UUID | None = None
+
+
+class ContributionOut(BaseModel):
+    id: uuid.UUID
+    amount_cents: int
+    currency: str
+    fee_cents: int
+    message: str | None
+    status: ContributionStatus
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class LedgerEntryOut(BaseModel):
+    id: uuid.UUID
+    amount_cents: int
+    entry_type: str
+    contributor_name: str | None
+    message: str | None
+    created_at: datetime
+
+
+class FundOut(BaseModel):
+    child_id: uuid.UUID
+    currency: str
+    balance_cents: int
+    entries: list[LedgerEntryOut]

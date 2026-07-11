@@ -66,6 +66,32 @@ class FeedEventType(str, enum.Enum):
     member_joined = "member_joined"
 
 
+class RewardType(str, enum.Enum):
+    cash = "cash"
+    fund_contribution = "fund_contribution"
+    badge = "badge"
+    privilege = "privilege"
+
+
+class GoalStatus(str, enum.Enum):
+    active = "active"
+    completed = "completed"
+    archived = "archived"
+
+
+class ContributionStatus(str, enum.Enum):
+    pending = "pending"
+    succeeded = "succeeded"
+    failed = "failed"
+    refunded = "refunded"
+
+
+class LedgerEntryType(str, enum.Enum):
+    contribution = "contribution"
+    goal_reward = "goal_reward"
+    adjustment = "adjustment"
+
+
 def role_column() -> Enum:
     return Enum(FamilyRole, native_enum=False, length=20)
 
@@ -213,6 +239,107 @@ class FeedEvent(Base):
     )
 
     actor: Mapped[User] = relationship()
+
+
+class Goal(Base):
+    __tablename__ = "goals"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reward_type: Mapped[RewardType] = mapped_column(
+        Enum(RewardType, native_enum=False, length=20)
+    )
+    reward_amount_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    status: Mapped[GoalStatus] = mapped_column(
+        Enum(GoalStatus, native_enum=False, length=20), default=GoalStatus.active
+    )
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    child: Mapped[Child] = relationship()
+
+
+class GoalCompletion(Base):
+    __tablename__ = "goal_completions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    goal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("goals.id"), unique=True)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    verified_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    goal: Mapped[Goal] = relationship()
+
+
+class Badge(Base):
+    __tablename__ = "badges"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
+    label: Mapped[str] = mapped_column(String(120))
+    icon: Mapped[str] = mapped_column(String(16), default="🏅")
+    source_goal_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("goals.id"), nullable=True)
+    awarded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Contribution(Base):
+    __tablename__ = "contributions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
+    contributor_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    fee_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("media_objects.id"), nullable=True
+    )
+    provider_payment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[ContributionStatus] = mapped_column(
+        Enum(ContributionStatus, native_enum=False, length=20),
+        default=ContributionStatus.pending,
+    )
+    trigger_feed_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("feed_events.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    child: Mapped[Child] = relationship()
+    contributor: Mapped[User] = relationship()
+
+
+class FundAccount(Base):
+    __tablename__ = "fund_accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), unique=True)
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class FundLedgerEntry(Base):
+    """Append-only. Never UPDATE or DELETE a row; corrections are new
+    compensating entries. Written only by record_payment_succeeded (verified
+    payment events) — see services/payments.py."""
+
+    __tablename__ = "fund_ledger_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("fund_accounts.id"), index=True)
+    amount_cents: Mapped[int] = mapped_column(BigInteger)  # signed
+    entry_type: Mapped[LedgerEntryType] = mapped_column(
+        Enum(LedgerEntryType, native_enum=False, length=20)
+    )
+    source_contribution_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("contributions.id"), nullable=True, unique=True
+    )
+    anchor_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class ConsentRecord(Base):

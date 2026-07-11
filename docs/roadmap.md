@@ -35,16 +35,19 @@ Goal: the family's private timeline is alive.
 - [x] Child Vault UI (`/family/[id]/child/[childId]`): milestone + memory forms with photo upload, vault timeline
 - [x] 10 new tests (27 total): media access denial, foreign-media rejection, feed privacy, milestone email fan-out
 
-## Phase 3 — Achievement Economy & Contributions (north-star phase)
+## Phase 3 — Achievement Economy & Contributions ✅ (done 2026-07-10, north-star phase)
 
 Goal: the 60-second grandparent flow works.
 
-- Goals + completions + badges
-- Stripe integration: PaymentIntents, saved payment methods, webhook → ledger
-- `fund_accounts` + append-only `fund_ledger_entries`, balances on the child vault
-- The one-screen grandparent flow: milestone context → congratulate → contribute → optional video message
-- Contribution fee handling
-- **Measure it:** instrument time-from-notification-to-completed-contribution
+- [x] Goals + completions + badges; parents/guardians manage, whole family sees; achievement feed events
+- [x] Payments behind a `PaymentProvider` abstraction — `LocalPaymentProvider` simulates the card flow; `record_payment_succeeded` is the ONLY ledger-write path, called only after provider verification (Stripe PaymentIntents + signed webhooks drop into the same seam — real Stripe wiring pending API keys)
+- [x] `fund_accounts` + append-only `fund_ledger_entries`; balance always derived (SUM); idempotent settlement via unique source_contribution_id
+- [x] One-screen grandparent flow (`/family/[id]/child/[childId]/contribute`): preset $10/$25/$50, note, single confirm — linked from milestone emails and feed events ("Celebrate with a gift")
+- [x] Contribution fee in config basis points (default 250 = 2.5%), deducted from the gift
+- [x] Goal completions never write the ledger (no phantom money — money rewards route through the real payment flow)
+- [x] Parents emailed when someone contributes; contribution celebration on the feed
+- [x] 13 new tests (40 total): fee math, idempotent confirm, derived balances, append-only corrections, role/outsider denials
+- Deferred within phase: video message on contribution; time-to-contribution instrumentation; real Stripe keys
 
 ## Phase 4 — Time Capsules & Legacy Archive
 

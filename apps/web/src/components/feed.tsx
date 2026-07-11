@@ -1,6 +1,6 @@
 "use client";
 
-import { FeedEventOut, mediaUrl } from "@/lib/api";
+import { FeedEventOut, formatMoney, mediaUrl } from "@/lib/api";
 import { Card } from "@/components/ui";
 
 function timeAgo(iso: string): string {
@@ -23,8 +23,15 @@ function eventLine(e: FeedEventOut): { icon: string; text: string } {
       };
     case "member_joined":
       return { icon: "🌱", text: `${p.member_name} joined the family as a ${p.role}` };
+    case "achievement":
+      return { icon: "🏅", text: `${p.child_name} reached a goal: ${p.title}` };
+    case "contribution":
+      return {
+        icon: "💝",
+        text: `${p.contributor_name} added ${formatMoney(Number(p.amount_cents))} to ${p.child_name}'s future fund`,
+      };
     default:
-      return { icon: "✨", text: p.title ?? e.type };
+      return { icon: "✨", text: String(p.title ?? e.type) };
   }
 }
 
@@ -49,11 +56,22 @@ export function FamilyFeedList({ events }: { events: FeedEventOut[] }) {
               {e.type === "milestone" && e.payload.description && (
                 <p className="mt-1 text-sm text-stone-600">{e.payload.description}</p>
               )}
+              {e.type === "contribution" && e.payload.message && (
+                <p className="mt-1 text-sm italic text-stone-600">“{e.payload.message}”</p>
+              )}
+              {(e.type === "milestone" || e.type === "achievement") && e.child_id && (
+                <a
+                  href={`${location.pathname.replace(/\/$/, "")}/child/${e.child_id}/contribute`}
+                  className="mt-2 inline-block rounded-lg bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-900 hover:bg-emerald-100"
+                >
+                  💝 Celebrate with a gift
+                </a>
+              )}
               {e.payload.media_id && (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={mediaUrl(e.payload.media_id)}
-                  alt={e.payload.title ?? "family memory"}
+                  src={mediaUrl(String(e.payload.media_id))}
+                  alt={String(e.payload.title ?? "family memory")}
                   className="mt-3 max-h-72 rounded-xl object-cover"
                 />
               )}
