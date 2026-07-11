@@ -4,7 +4,7 @@ Region: **us-east-1** · Account: the one configured in `aws configure` · IaC: 
 
 ## Architecture deployed
 
-- **VPC** — 2 AZs, private isolated subnets only, **no NAT gateway** (cost). AWS access via endpoints: S3 gateway endpoint (free) + SES v2 API PrivateLink (`com.amazonaws.us-east-1.email`).
+- **VPC** — 2 AZs: public (NAT), private-with-egress (Lambda), isolated (RDS). Egress via a **fck-nat t4g.nano instance** (~$3/mo vs $32 managed NAT) so Lambda reaches Stripe/SES/AI APIs; S3 keeps the free gateway endpoint so media bypasses the NAT.
 - **RDS PostgreSQL 16** `db.t4g.micro`, 20 GB gp3, single-AZ, 7-day backups. **No public endpoint** — only the API Lambda's security group can reach port 5432.
 - **Lambda** (`python3.13`, 512 MB) running FastAPI via Mangum, deployed from `apps/api/build/lambda.zip`, inside the VPC.
 - **HTTP API Gateway** fronting the Lambda.
@@ -12,7 +12,14 @@ Region: **us-east-1** · Account: the one configured in `aws configure` · IaC: 
 - **SES** — email in sandbox mode initially (sender and recipients must be verified identities).
 - **Web** — AWS Amplify Hosting building `apps/web` from GitHub on push.
 
-Estimated baseline: ~$22–25/month (RDS ~$15, SES endpoint ~$7.3, rest pennies at MVP traffic).
+Estimated baseline: ~$18–21/month (RDS ~$15, fck-nat ~$3.3, rest pennies at MVP traffic).
+
+## Payments (Stripe, live mode)
+
+- `PaymentProvider` backend switched by `FUTUREROOTS_PAYMENT_BACKEND` (`local` in dev, `stripe` in prod). Keys live in `infra/.env` (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`) → Lambda env; the publishable key is a public Amplify env var (`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`).
+- Settlement happens **only** via the signature-verified `POST /webhooks/stripe` (webhook endpoint `we_1Ts44zAXijaNn5C5yVSHU2UT` in the Stripe dashboard, events: `payment_intent.succeeded`/`payment_failed`). The local `/confirm` endpoint refuses in stripe mode.
+- Key rotation: update `infra/.env`, `cdk deploy`; publishable key via Amplify console + rebuild.
+- Refunds: Stripe dashboard → refund the payment; then add a compensating `adjustment` ledger entry (there is no automated refund webhook handling yet — see hardening backlog).
 
 ## Secrets
 

@@ -47,7 +47,8 @@ Goal: the 60-second grandparent flow works.
 - [x] Goal completions never write the ledger (no phantom money — money rewards route through the real payment flow)
 - [x] Parents emailed when someone contributes; contribution celebration on the feed
 - [x] 13 new tests (40 total): fee math, idempotent confirm, derived balances, append-only corrections, role/outsider denials
-- Deferred within phase: video message on contribution; time-to-contribution instrumentation; real Stripe keys
+- Deferred within phase: video message on contribution; time-to-contribution instrumentation
+- ~~Real Stripe keys~~ → **done 2026-07-11**: live-mode PaymentIntents + Stripe Elements + signed-webhook settlement (see `docs/deploy.md`)
 
 ## Phase 4 — Time Capsules & Legacy Archive ✅ (done 2026-07-10)
 

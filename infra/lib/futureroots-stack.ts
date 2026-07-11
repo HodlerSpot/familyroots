@@ -37,6 +37,9 @@ export class FutureRootsStack extends cdk.Stack {
       instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.NANO),
     });
     const vpc = new ec2.Vpc(this, "Vpc", {
+      // 10.1/16 (was 10.0/16): forces clean VPC replacement when the subnet
+      // layout changes — in-place layout edits collide on CIDR allocation
+      ipAddresses: ec2.IpAddresses.cidr("10.1.0.0/16"),
       maxAzs: 2,
       natGatewayProvider: natProvider,
       natGateways: 1,
@@ -58,7 +61,9 @@ export class FutureRootsStack extends cdk.Stack {
 
     // --- Database: smallest real Postgres, never publicly reachable
     const dbSecurityGroup = new ec2.SecurityGroup(this, "DbSg", { vpc });
-    const db = new rds.DatabaseInstance(this, "Db", {
+    // "Db2" (not "Db"): logical-id change forces clean replacement after the
+    // VPC swap — RDS can't move a subnet group across VPCs in place
+    const db = new rds.DatabaseInstance(this, "Db2", {
       engine: rds.DatabaseInstanceEngine.postgres({
         version: rds.PostgresEngineVersion.VER_16,
       }),
