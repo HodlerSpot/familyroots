@@ -3,7 +3,7 @@
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, ApiError, setToken } from "@/lib/api";
-import { Button, Card, ErrorNote, Input, Label } from "@/components/ui";
+import { Button, Card, ErrorNote, Input, Label, PasswordInput } from "@/components/ui";
 
 function LoginForm() {
   const router = useRouter();
@@ -38,9 +38,8 @@ function LoginForm() {
         </div>
         <div>
           <Label htmlFor="password">Password</Label>
-          <Input
+          <PasswordInput
             id="password"
-            type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
