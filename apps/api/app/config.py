@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     media_bucket: str = ""
     email_backend: str = "outbox"  # outbox | ses
     ses_from_address: str = "hello@futureroots.example"
+    payment_backend: str = "local"  # local | stripe
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
     web_base_url: str = "http://localhost:3000"
     cors_extra_origins: str = ""  # comma-separated additional allowed origins
 

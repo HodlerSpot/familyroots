@@ -2,27 +2,14 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, status
 
-from ..config import settings
 from ..deps import CurrentUser, DbSession, get_child_with_access
-from ..models import (
-    Contribution,
-    ContributionStatus,
-    FamilyMember,
-    FamilyRole,
-    FeedEventType,
-    FundAccount,
-    FundLedgerEntry,
-    MemberStatus,
-    User,
-)
+from ..models import Contribution, ContributionStatus, FundAccount, FundLedgerEntry, User
 from ..schemas import ContributionCreate, ContributionOut, FundOut, LedgerEntryOut
-from ..services.email import get_email_sender
-from ..services.feed import emit
 from ..services.payments import (
     contribution_fee_cents,
     fund_balance_cents,
     get_payment_provider,
-    record_payment_succeeded,
+    settle_contribution,
 )
 
 router = APIRouter(tags=["contributions"])
@@ -48,75 +35,41 @@ def create_contribution(
         media_id=payload.media_id,
         trigger_feed_event_id=payload.trigger_feed_event_id,
     )
-    contribution.provider_payment_id = get_payment_provider().create_payment(contribution)
+    provider_id, client_secret = get_payment_provider().create_payment(contribution)
+    contribution.provider_payment_id = provider_id
     db.add(contribution)
     db.commit()
-    return ContributionOut.model_validate(contribution)
+    out = ContributionOut.model_validate(contribution)
+    out.client_secret = client_secret  # Stripe Elements needs this; never stored
+    return out
 
 
 @router.post("/contributions/{contribution_id}/confirm", response_model=ContributionOut)
 def confirm_contribution(
     contribution_id: uuid.UUID, db: DbSession, user: CurrentUser
 ) -> ContributionOut:
-    """Local-dev settlement: the provider verifies, then the shared
-    record_payment_succeeded writes the ledger. With Stripe, a signed webhook
-    replaces this endpoint and calls the same function."""
+    """Local-backend settlement. With Stripe, the signed webhook settles
+    instead and this endpoint refuses."""
     contribution = db.get(Contribution, contribution_id)
     if contribution is None or contribution.contributor_user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Contribution not found")
     if contribution.status == ContributionStatus.succeeded:
         raise HTTPException(status.HTTP_409_CONFLICT, "Already completed")
-    if not get_payment_provider().confirm_payment(contribution):
+
+    provider = get_payment_provider()
+    if provider.settles_via_webhook:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "This payment completes automatically once your card is confirmed",
+        )
+    get_child_with_access(db, contribution.child_id, user)
+    if not provider.confirm_payment(contribution):
         contribution.status = ContributionStatus.failed
         db.commit()
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "The payment didn't go through")
 
-    child, _ = get_child_with_access(db, contribution.child_id, user)
-    record_payment_succeeded(db, contribution)
-    emit(
-        db,
-        family_id=child.family_id,
-        actor_user_id=user.id,
-        type=FeedEventType.contribution,
-        child_id=child.id,
-        payload={
-            "contribution_id": str(contribution.id),
-            "child_name": child.first_name,
-            "contributor_name": user.display_name,
-            "amount_cents": contribution.amount_cents,
-            "currency": contribution.currency,
-            "message": contribution.message,
-        },
-    )
+    settle_contribution(db, contribution)
     db.commit()
-
-    # Tell the parents someone just added to their child's future
-    parents = (
-        db.query(User)
-        .join(FamilyMember, FamilyMember.user_id == User.id)
-        .filter(
-            FamilyMember.family_id == child.family_id,
-            FamilyMember.status == MemberStatus.active,
-            FamilyMember.role.in_([FamilyRole.parent, FamilyRole.guardian]),
-            User.id != user.id,
-        )
-        .all()
-    )
-    sender = get_email_sender()
-    amount = f"${contribution.amount_cents / 100:,.2f}"
-    for parent in parents:
-        sender.send(
-            to=parent.email,
-            subject=f"{user.display_name} just added to {child.first_name}'s future",
-            body=(
-                f"Hi {parent.display_name},\n\n"
-                f"{user.display_name} contributed {amount} to {child.first_name}'s "
-                f"future fund"
-                + (f" with a note:\n\n  “{contribution.message}”\n" if contribution.message else ".\n")
-                + f"\nSee it here: {settings.web_base_url}/family/{child.family_id}\n\n"
-                f"With warmth,\nFutureRoots"
-            ),
-        )
     return ContributionOut.model_validate(contribution)
 
 

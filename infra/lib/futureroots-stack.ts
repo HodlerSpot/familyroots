@@ -7,6 +7,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import { FckNatInstanceProvider } from "cdk-fck-nat";
 import { Construct } from "constructs";
 
 function required(name: string): string {
@@ -29,21 +30,30 @@ export class FutureRootsStack extends cdk.Stack {
       .filter(Boolean);
     const allOrigins = [...new Set([webBaseUrl, "http://localhost:3000", ...extraOrigins])];
 
-    // --- Network: two isolated AZs, no NAT (cost ceiling), endpoints for AWS services
+    // --- Network: 2 AZs; egress via a fck-nat t4g.nano instance (~$3/mo,
+    // vs $32/mo managed NAT) so the Lambda can reach Stripe/SES/AI APIs.
+    // RDS stays in isolated subnets with no route out.
+    const natProvider = new FckNatInstanceProvider({
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.NANO),
+    });
     const vpc = new ec2.Vpc(this, "Vpc", {
       maxAzs: 2,
-      natGateways: 0,
+      natGatewayProvider: natProvider,
+      natGateways: 1,
       subnetConfiguration: [
-        { name: "app", subnetType: ec2.SubnetType.PRIVATE_ISOLATED, cidrMask: 24 },
+        { name: "ingress", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
+        { name: "app", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 },
+        { name: "db", subnetType: ec2.SubnetType.PRIVATE_ISOLATED, cidrMask: 24 },
       ],
     });
+    natProvider.securityGroup.addIngressRule(
+      ec2.Peer.ipv4(vpc.vpcCidrBlock),
+      ec2.Port.allTraffic(),
+      "VPC egress through NAT"
+    );
+    // Keep S3 on the free gateway path (media bytes bypass the NAT instance)
     vpc.addGatewayEndpoint("S3Endpoint", {
       service: ec2.GatewayVpcEndpointAwsService.S3,
-    });
-    // SES v2 API via PrivateLink so the VPC-bound Lambda can send email
-    const sesEndpoint = vpc.addInterfaceEndpoint("SesEndpoint", {
-      service: new ec2.InterfaceVpcEndpointAwsService("email"),
-      privateDnsEnabled: true,
     });
 
     // --- Database: smallest real Postgres, never publicly reachable
@@ -102,7 +112,7 @@ export class FutureRootsStack extends cdk.Stack {
       memorySize: 512,
       timeout: cdk.Duration.seconds(30),
       vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [apiSecurityGroup],
       environment: {
         FUTUREROOTS_DATABASE_URL: `postgresql+psycopg://futureroots:${dbPassword}@${db.dbInstanceEndpointAddress}:5432/futureroots`,
@@ -113,6 +123,9 @@ export class FutureRootsStack extends cdk.Stack {
         FUTUREROOTS_SES_FROM_ADDRESS: sesFrom,
         FUTUREROOTS_WEB_BASE_URL: webBaseUrl,
         FUTUREROOTS_CORS_EXTRA_ORIGINS: extraOrigins.join(","),
+        FUTUREROOTS_PAYMENT_BACKEND: "stripe",
+        FUTUREROOTS_STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY ?? "",
+        FUTUREROOTS_STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET ?? "",
       },
     });
     mediaBucket.grantReadWrite(apiFn);
@@ -123,7 +136,6 @@ export class FutureRootsStack extends cdk.Stack {
         resources: ["*"],
       })
     );
-    sesEndpoint.connections.allowDefaultPortFrom(apiFn);
 
     // --- HTTP API
     const httpApi = new apigwv2.HttpApi(this, "HttpApi", {

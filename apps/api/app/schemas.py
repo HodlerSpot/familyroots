@@ -221,6 +221,8 @@ class ContributionOut(BaseModel):
     message: str | None
     status: ContributionStatus
     created_at: datetime
+    # Stripe mode only, returned once at creation for Stripe Elements
+    client_secret: str | None = None
 
     model_config = {"from_attributes": True}
 

@@ -100,6 +100,7 @@ export interface ContributionOut {
   message: string | null;
   status: "pending" | "succeeded" | "failed" | "refunded";
   created_at: string;
+  client_secret: string | null;
 }
 
 export interface FundOut {

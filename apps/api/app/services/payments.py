@@ -3,14 +3,17 @@
 Money discipline (docs/data-model.md):
 - integer cents + currency, always
 - the fund ledger is append-only
-- ledger entries are written ONLY from a verified payment-success event, and
-  only by record_payment_succeeded below — no other code writes the ledger
+- ledger entries are written ONLY from a verified payment-success event —
+  the local simulator's verified confirm, or a signature-verified Stripe
+  webhook — and only via settle_contribution below
 - balances are always derived (SUM over entries), never stored
 
-The local provider simulates the card flow so everything works end to end
-with no cloud dependency; the Stripe implementation replaces create/confirm
-with PaymentIntents + signed webhooks, then calls the same
-record_payment_succeeded.
+Backends:
+- LocalPaymentProvider (dev): simulated card flow, settled by the
+  POST /contributions/{id}/confirm endpoint.
+- StripePaymentProvider (prod): PaymentIntent created here, card collected
+  by Stripe Elements in the browser, settled ONLY by the signed
+  payment_intent.succeeded webhook (never by client say-so).
 """
 
 import uuid
@@ -23,10 +26,17 @@ from ..config import settings
 from ..models import (
     Contribution,
     ContributionStatus,
+    FamilyMember,
+    FamilyRole,
+    FeedEventType,
     FundAccount,
     FundLedgerEntry,
     LedgerEntryType,
+    MemberStatus,
+    User,
 )
+from .email import get_email_sender
+from .feed import emit
 
 
 def contribution_fee_cents(amount_cents: int) -> int:
@@ -35,27 +45,63 @@ def contribution_fee_cents(amount_cents: int) -> int:
 
 
 class PaymentProvider(Protocol):
-    def create_payment(self, contribution: Contribution) -> str:
-        """Start a payment; returns the provider's payment id."""
+    settles_via_webhook: bool
+
+    def create_payment(self, contribution: Contribution) -> tuple[str, str | None]:
+        """Start a payment; returns (provider_payment_id, client_secret_or_None)."""
         ...
 
     def confirm_payment(self, contribution: Contribution) -> bool:
-        """Confirm/settle the payment; True when the provider verified success.
-        (Stripe: this step is replaced by Stripe.js + signed webhook.)"""
+        """Local backend only: verify the simulated payment succeeded."""
         ...
 
 
 class LocalPaymentProvider:
     """Dev-only simulated card processor. Always succeeds."""
 
-    def create_payment(self, contribution: Contribution) -> str:
-        return f"local_{uuid.uuid4().hex}"
+    settles_via_webhook = False
+
+    def create_payment(self, contribution: Contribution) -> tuple[str, str | None]:
+        return f"local_{uuid.uuid4().hex}", None
 
     def confirm_payment(self, contribution: Contribution) -> bool:
         return contribution.provider_payment_id is not None
 
 
-_provider: PaymentProvider = LocalPaymentProvider()
+class StripePaymentProvider:
+    settles_via_webhook = True
+
+    def __init__(self, secret_key: str) -> None:
+        import stripe
+
+        self.client = stripe.StripeClient(secret_key)
+
+    def create_payment(self, contribution: Contribution) -> tuple[str, str | None]:
+        intent = self.client.payment_intents.create(
+            params={
+                "amount": contribution.amount_cents,
+                "currency": contribution.currency.lower(),
+                "automatic_payment_methods": {"enabled": True},
+                "metadata": {
+                    "contribution_id": str(contribution.id),
+                    "child_id": str(contribution.child_id),
+                },
+                "description": "FutureRoots family contribution",
+            }
+        )
+        return intent.id, intent.client_secret
+
+    def confirm_payment(self, contribution: Contribution) -> bool:
+        raise NotImplementedError("Stripe settles via the signed webhook only")
+
+
+def _build_provider() -> PaymentProvider:
+    if settings.payment_backend == "stripe":
+        return StripePaymentProvider(settings.stripe_secret_key)
+    return LocalPaymentProvider()
+
+
+_provider: PaymentProvider = _build_provider()
 
 
 def get_payment_provider() -> PaymentProvider:
@@ -79,9 +125,12 @@ def fund_balance_cents(db: Session, account_id: uuid.UUID) -> int:
     )
 
 
-def record_payment_succeeded(db: Session, contribution: Contribution) -> FundLedgerEntry:
-    """THE ledger-write path. Call only after the provider verified success.
-    Idempotent via the unique constraint on source_contribution_id."""
+def settle_contribution(db: Session, contribution: Contribution) -> FundLedgerEntry:
+    """THE settlement path: ledger entry + feed celebration + parent emails.
+    Call only after payment success is verified (local confirm or signed
+    Stripe webhook). Idempotent at the DB level via the unique constraint on
+    fund_ledger_entries.source_contribution_id; callers must also check
+    status to avoid duplicate feed events."""
     contribution.status = ContributionStatus.succeeded
     account = get_or_create_fund_account(db, contribution.child_id, contribution.currency)
     entry = FundLedgerEntry(
@@ -93,4 +142,53 @@ def record_payment_succeeded(db: Session, contribution: Contribution) -> FundLed
         anchor_ref=None,
     )
     db.add(entry)
+
+    child = contribution.child
+    contributor = contribution.contributor
+    emit(
+        db,
+        family_id=child.family_id,
+        actor_user_id=contributor.id,
+        type=FeedEventType.contribution,
+        child_id=child.id,
+        payload={
+            "contribution_id": str(contribution.id),
+            "child_name": child.first_name,
+            "contributor_name": contributor.display_name,
+            "amount_cents": contribution.amount_cents,
+            "currency": contribution.currency,
+            "message": contribution.message,
+        },
+    )
+
+    parents = (
+        db.query(User)
+        .join(FamilyMember, FamilyMember.user_id == User.id)
+        .filter(
+            FamilyMember.family_id == child.family_id,
+            FamilyMember.status == MemberStatus.active,
+            FamilyMember.role.in_([FamilyRole.parent, FamilyRole.guardian]),
+            User.id != contributor.id,
+        )
+        .all()
+    )
+    sender = get_email_sender()
+    amount = f"${contribution.amount_cents / 100:,.2f}"
+    for parent in parents:
+        sender.send(
+            to=parent.email,
+            subject=f"{contributor.display_name} just added to {child.first_name}'s future",
+            body=(
+                f"Hi {parent.display_name},\n\n"
+                f"{contributor.display_name} contributed {amount} to {child.first_name}'s "
+                f"future fund"
+                + (
+                    f" with a note:\n\n  “{contribution.message}”\n"
+                    if contribution.message
+                    else ".\n"
+                )
+                + f"\nSee it here: {settings.web_base_url}/family/{child.family_id}\n\n"
+                f"With warmth,\nFutureRoots"
+            ),
+        )
     return entry

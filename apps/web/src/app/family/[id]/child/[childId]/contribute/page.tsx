@@ -2,10 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { loadStripe } from "@stripe/stripe-js";
+import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
 import { api, ApiError, formatMoney, getToken } from "@/lib/api";
 import { Button, Card, ErrorNote, Input } from "@/components/ui";
 
 const PRESETS = [1000, 2500, 5000];
+const stripeKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+const stripePromise = stripeKey ? loadStripe(stripeKey) : null;
 
 export default function ContributePage() {
   const router = useRouter();
@@ -17,6 +21,9 @@ export default function ContributePage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
+  // Stripe step: set when the API returns a client_secret
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [pendingAmount, setPendingAmount] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -41,7 +48,7 @@ export default function ContributePage() {
 
   const effectiveAmount = custom ? Math.round(parseFloat(custom) * 100) || 0 : amount;
 
-  async function send() {
+  async function start() {
     setBusy(true);
     setError("");
     try {
@@ -49,8 +56,19 @@ export default function ContributePage() {
         amount_cents: effectiveAmount,
         message: message || undefined,
       });
-      await api.confirmContribution(contribution.id);
-      setDone(true);
+      if (contribution.client_secret) {
+        if (!stripePromise) {
+          setError("Payments aren't configured on this site yet — please try again later.");
+          setBusy(false);
+          return;
+        }
+        setPendingAmount(effectiveAmount);
+        setClientSecret(contribution.client_secret);
+        setBusy(false);
+      } else {
+        await api.confirmContribution(contribution.id);
+        setDone(true);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong — please try again");
       setBusy(false);
@@ -58,6 +76,7 @@ export default function ContributePage() {
   }
 
   if (done) {
+    const finalAmount = pendingAmount || effectiveAmount;
     return (
       <Card className="mx-auto max-w-lg space-y-4 text-center">
         <div className="text-5xl">💝</div>
@@ -65,13 +84,38 @@ export default function ContributePage() {
           You just added to {childName}&apos;s future
         </h1>
         <p className="text-stone-600">
-          Your {formatMoney(effectiveAmount)} gift{message ? " and your note are" : " is"} on
+          Your {formatMoney(finalAmount)} gift{message ? " and your note are" : " is"} on
           {childName ? ` ${childName}'s` : " their"} timeline for the whole family to see —
           and it will be waiting for {childName || "them"} for years to come.
         </p>
         <Button onClick={() => router.push(`/family/${familyId}`)} className="w-full">
           See the family feed
         </Button>
+      </Card>
+    );
+  }
+
+  if (clientSecret && stripePromise) {
+    return (
+      <Card className="mx-auto max-w-lg space-y-6">
+        <div className="text-center">
+          <div className="text-4xl">🌱</div>
+          <h1 className="mt-2 text-2xl font-bold text-emerald-900">
+            {formatMoney(pendingAmount)} for {childName || "their"} future
+          </h1>
+        </div>
+        <Elements
+          stripe={stripePromise}
+          options={{ clientSecret, appearance: { variables: { colorPrimary: "#047857" } } }}
+        >
+          <PaymentForm amount={pendingAmount} onPaid={() => setDone(true)} />
+        </Elements>
+        <button
+          onClick={() => setClientSecret(null)}
+          className="w-full text-center text-sm text-stone-500 underline"
+        >
+          ← Change amount
+        </button>
       </Card>
     );
   }
@@ -83,9 +127,7 @@ export default function ContributePage() {
         <h1 className="mt-2 text-2xl font-bold text-emerald-900">
           Add to {childName || "their"} future
         </h1>
-        <p className="mt-1 text-stone-600">
-          A gift today, a head start tomorrow.
-        </p>
+        <p className="mt-1 text-stone-600">A gift today, a head start tomorrow.</p>
       </div>
 
       <div className="grid grid-cols-3 gap-3">
@@ -122,16 +164,51 @@ export default function ContributePage() {
       />
       <ErrorNote>{error}</ErrorNote>
       <Button
-        onClick={send}
+        onClick={start}
         disabled={busy || effectiveAmount < 100}
         className="w-full text-lg"
       >
-        {busy ? "Sending…" : `Send ${formatMoney(effectiveAmount)} with love`}
+        {busy ? "One moment…" : `Continue with ${formatMoney(effectiveAmount)}`}
       </Button>
       <p className="text-center text-xs text-stone-400">
         Gifts are added to {childName || "the child"}&apos;s future fund, safe until
         they&apos;re grown.
       </p>
     </Card>
+  );
+}
+
+function PaymentForm({ amount, onPaid }: { amount: number; onPaid: () => void }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function pay(e: React.FormEvent) {
+    e.preventDefault();
+    if (!stripe || !elements) return;
+    setBusy(true);
+    setError("");
+    const result = await stripe.confirmPayment({
+      elements,
+      confirmParams: { return_url: window.location.href },
+      redirect: "if_required",
+    });
+    if (result.error) {
+      setError(result.error.message ?? "The payment didn't go through — please try again");
+      setBusy(false);
+    } else {
+      onPaid();
+    }
+  }
+
+  return (
+    <form onSubmit={pay} className="space-y-4">
+      <PaymentElement />
+      <ErrorNote>{error}</ErrorNote>
+      <Button type="submit" disabled={busy || !stripe} className="w-full text-lg">
+        {busy ? "Sending…" : `Send ${formatMoney(amount)} with love`}
+      </Button>
+    </form>
   );
 }

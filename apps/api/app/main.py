@@ -13,6 +13,7 @@ from .routers import (
     invites,
     legacy,
     vault,
+    webhooks,
 )
 
 app = FastAPI(title="FutureRoots API", version="0.1.0")
@@ -38,6 +39,7 @@ app.include_router(goals.router)
 app.include_router(contributions.router)
 app.include_router(capsules.router)
 app.include_router(legacy.router)
+app.include_router(webhooks.router)
 
 
 @app.get("/health")
