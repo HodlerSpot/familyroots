@@ -23,7 +23,7 @@ export function Logo({
       <img src="/logo-mark.png" alt="" className={`${s.img} w-auto`} />
       <span className="flex flex-col leading-none">
         <span className={`font-extrabold tracking-tight ${s.text}`}>
-          <span className="text-[#1FA84D]">Future</span>
+          <span className="text-emerald-800">Future</span>
           <span className="text-[#1E4FD8]">Roots</span>
         </span>
         {withTagline && (

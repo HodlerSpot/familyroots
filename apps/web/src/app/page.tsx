@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { getToken } from "@/lib/api";
 import { Button, Card } from "@/components/ui";
 import { Logo } from "@/components/logo";
+import { PixelBackdrop } from "@/components/pixel-backdrop";
 
 export default function Home() {
   const router = useRouter();
@@ -15,8 +16,9 @@ export default function Home() {
 
   return (
     <div className="space-y-8 text-center">
+      <PixelBackdrop />
       <div className="space-y-5 pt-6">
-        <div className="flex justify-center">
+        <div className="mb-10 flex justify-center">
           <Logo size="lg" withTagline />
         </div>
         <h1 className="text-4xl font-bold text-emerald-900">
