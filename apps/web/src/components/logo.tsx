@@ -4,7 +4,8 @@
 const SIZES = {
   sm: { img: "h-9", text: "text-2xl", tagline: "hidden" },
   md: { img: "h-12", text: "text-3xl", tagline: "text-xs" },
-  lg: { img: "h-20", text: "text-5xl", tagline: "text-sm" },
+  // lg scales down on narrow phones so the lockup never overflows the viewport
+  lg: { img: "h-14 sm:h-20", text: "text-3xl sm:text-5xl", tagline: "text-xs sm:text-sm" },
 } as const;
 
 export function Logo({
@@ -18,9 +19,9 @@ export function Logo({
 }) {
   const s = SIZES[size];
   return (
-    <span className={`inline-flex items-center gap-2.5 ${className}`}>
+    <span className={`inline-flex max-w-full items-center gap-2.5 ${className}`}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/logo-mark.png" alt="" className={`${s.img} w-auto`} />
+      <img src="/logo-mark.png" alt="" className={`${s.img} w-auto shrink-0`} />
       <span className="flex flex-col leading-none">
         <span className={`font-extrabold tracking-tight ${s.text}`}>
           <span className="text-emerald-800">Future</span>

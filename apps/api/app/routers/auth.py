@@ -1,11 +1,38 @@
 from fastapi import APIRouter, HTTPException, status
 
+from ..config import settings
 from ..deps import CurrentUser, DbSession
 from ..models import User
 from ..schemas import LoginRequest, SignupRequest, TokenResponse, UserOut
 from ..security import create_access_token, hash_password, verify_password
+from ..services.email import get_email_sender
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _send_welcome_email(user: User) -> None:
+    get_email_sender().send(
+        to=user.email,
+        subject=f"Welcome to FutureRoots, {user.display_name} 🌱",
+        body=(
+            f"Hi {user.display_name},\n\n"
+            f"Welcome to FutureRoots — your family's private space for memories, "
+            f"milestones, and building a future together.\n\n"
+            f"Here's how families use it:\n\n"
+            f"  🏡  Create your family space and add your children — each child gets\n"
+            f"      a vault of memories that stays with them for life.\n"
+            f"  💌  Invite grandparents and relatives with a simple email link.\n"
+            f"  🎉  Share milestones — first steps, recitals, big wins — and the\n"
+            f"      whole family celebrates with you.\n"
+            f"  🌳  Grow their future fund — family members can add a gift in under\n"
+            f"      a minute, right from a milestone email.\n"
+            f"  ✉️  Seal time capsules to be opened at just the right moment,\n"
+            f"      years from now.\n\n"
+            f"Start here: {settings.web_base_url}/family\n\n"
+            f"We're glad your family is here.\n\n"
+            f"With warmth,\nThe FutureRoots team"
+        ),
+    )
 
 
 @router.post("/signup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
@@ -20,6 +47,7 @@ def signup(payload: SignupRequest, db: DbSession) -> TokenResponse:
     )
     db.add(user)
     db.commit()
+    _send_welcome_email(user)
     return TokenResponse(access_token=create_access_token(user.id))
 
 

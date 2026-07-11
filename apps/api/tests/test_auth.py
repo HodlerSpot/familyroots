@@ -31,6 +31,23 @@ def test_wrong_password_rejected(client):
     assert r.status_code == 401
 
 
+def test_welcome_email_on_signup(client, tmp_path, monkeypatch):
+    from app.services import email as email_module
+
+    monkeypatch.setattr(email_module, "_sender", email_module.OutboxEmailSender(tmp_path))
+    signup(client, "newfamily@example.com", "Pat Parent")
+
+    emails = list(tmp_path.glob("*.txt"))
+    assert len(emails) == 1
+    content = emails[0].read_text(encoding="utf-8")
+    assert "To: newfamily@example.com" in content
+    assert "Welcome to FutureRoots, Pat Parent" in content
+    assert "/family" in content
+    # Brand rule: no crypto vocabulary in user-facing text
+    for banned in ("wallet", "blockchain", "crypto", "token", "web3"):
+        assert banned not in content.lower()
+
+
 def test_me_requires_auth(client):
     assert client.get("/auth/me").status_code == 401
     assert client.get("/auth/me", headers={"Authorization": "Bearer garbage"}).status_code == 401

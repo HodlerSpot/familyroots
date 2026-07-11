@@ -61,6 +61,8 @@ def test_invite_email_written_to_outbox(client, tmp_path, monkeypatch):
 
     parent = signup(client, "parent@example.com", "Pat")
     family_id = create_family(client, parent)
+    for f in tmp_path.glob("*.txt"):
+        f.unlink()  # drop the welcome email; this test is about the invite
     r = client.post(
         f"/families/{family_id}/invites",
         json={"email": "gran@example.com", "role": "grandparent"},
