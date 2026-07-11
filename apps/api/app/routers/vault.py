@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import FileResponse
 
 from ..config import settings
-from ..deps import CurrentUser, DbSession, get_child_with_access
+from ..deps import CurrentUser, DbSession, get_active_membership, get_child_with_access
 from ..models import (
     FamilyMember,
     FeedEventType,
@@ -103,7 +103,12 @@ def download_media(media_id: uuid.UUID, db: DbSession, token: str | None = None)
     media = db.get(MediaObject, media_id)
     if media is None or media.status != MediaStatus.uploaded:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
-    get_child_with_access(db, media.child_id, user)
+    if media.child_id is not None:
+        get_child_with_access(db, media.child_id, user)
+    elif media.family_id is not None:
+        get_active_membership(db, media.family_id, user)
+    else:  # orphaned media is unreachable
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
 
     path = get_storage().open(media.storage_key)
     if not path.exists():

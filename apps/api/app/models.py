@@ -63,7 +63,33 @@ class FeedEventType(str, enum.Enum):
     contribution = "contribution"
     memory_added = "memory_added"
     capsule_created = "capsule_created"
+    capsule_released = "capsule_released"
     member_joined = "member_joined"
+
+
+class CapsuleType(str, enum.Enum):
+    letter = "letter"
+    audio = "audio"
+    video = "video"
+
+
+class ReleaseCondition(str, enum.Enum):
+    age = "age"
+    date = "date"
+    milestone = "milestone"
+
+
+class CapsuleStatus(str, enum.Enum):
+    sealed = "sealed"
+    released = "released"
+
+
+class LegacyType(str, enum.Enum):
+    story = "story"
+    recipe = "recipe"
+    document = "document"
+    photo = "photo"
+    wisdom = "wisdom"
 
 
 class RewardType(str, enum.Enum):
@@ -187,8 +213,14 @@ class MediaObject(Base):
     __tablename__ = "media_objects"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    # Media is always scoped to a child so access control follows the Family Graph
-    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
+    # Media is scoped to exactly one of child (vault, capsules) or family
+    # (legacy archive) so access control always follows the Family Graph
+    child_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("children.id"), nullable=True, index=True
+    )
+    family_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("families.id"), nullable=True, index=True
+    )
     storage_key: Mapped[str] = mapped_column(String(255), unique=True)
     content_type: Mapped[str] = mapped_column(String(100))
     byte_size: Mapped[int] = mapped_column(BigInteger, default=0)
@@ -198,7 +230,7 @@ class MediaObject(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    child: Mapped[Child] = relationship()
+    child: Mapped[Child | None] = relationship()
 
 
 class VaultItem(Base):
@@ -340,6 +372,55 @@ class FundLedgerEntry(Base):
     )
     anchor_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TimeCapsule(Base):
+    """Sealed capsules are visible in full only to their creator until released;
+    everyone else sees existence + condition, never body or media."""
+
+    __tablename__ = "time_capsules"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    type: Mapped[CapsuleType] = mapped_column(Enum(CapsuleType, native_enum=False, length=20))
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("media_objects.id"), nullable=True
+    )
+    release_condition: Mapped[ReleaseCondition] = mapped_column(
+        Enum(ReleaseCondition, native_enum=False, length=20)
+    )
+    release_age: Mapped[int | None] = mapped_column(nullable=True)
+    release_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    release_milestone: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[CapsuleStatus] = mapped_column(
+        Enum(CapsuleStatus, native_enum=False, length=20), default=CapsuleStatus.sealed
+    )
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    child: Mapped[Child] = relationship()
+    author: Mapped[User] = relationship()
+    media: Mapped[MediaObject | None] = relationship()
+
+
+class LegacyItem(Base):
+    __tablename__ = "legacy_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    family_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("families.id"), index=True)
+    type: Mapped[LegacyType] = mapped_column(Enum(LegacyType, native_enum=False, length=20))
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("media_objects.id"), nullable=True
+    )
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    media: Mapped[MediaObject | None] = relationship()
+    author: Mapped[User] = relationship()
 
 
 class ConsentRecord(Base):

@@ -59,6 +59,7 @@ export type FeedEventType =
   | "contribution"
   | "memory_added"
   | "capsule_created"
+  | "capsule_released"
   | "member_joined";
 
 export interface FeedEventOut {
@@ -117,6 +118,39 @@ export interface FundOut {
 
 export function formatMoney(cents: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
+}
+
+export type CapsuleType = "letter" | "audio" | "video";
+export type ReleaseCondition = "age" | "date" | "milestone";
+
+export interface CapsuleOut {
+  id: string;
+  type: CapsuleType;
+  status: "sealed" | "released";
+  release_condition: ReleaseCondition;
+  release_age: number | null;
+  release_date: string | null;
+  release_milestone: string | null;
+  created_by_name: string;
+  is_mine: boolean;
+  body: string | null;
+  media_id: string | null;
+  media_content_type: string | null;
+  released_at: string | null;
+  created_at: string;
+}
+
+export type LegacyType = "story" | "recipe" | "document" | "photo" | "wisdom";
+
+export interface LegacyOut {
+  id: string;
+  type: LegacyType;
+  title: string;
+  body: string | null;
+  media_id: string | null;
+  media_content_type: string | null;
+  created_by_name: string;
+  created_at: string;
 }
 
 export class ApiError extends Error {
@@ -248,6 +282,50 @@ export const api = {
   confirmContribution: (contributionId: string) =>
     request<ContributionOut>(`/contributions/${contributionId}/confirm`, { method: "POST" }),
   childFund: (childId: string) => request<FundOut>(`/children/${childId}/fund`),
+
+  listCapsules: (childId: string) => request<CapsuleOut[]>(`/children/${childId}/capsules`),
+  createCapsule: (
+    childId: string,
+    c: {
+      type: CapsuleType;
+      body?: string;
+      media_id?: string;
+      release_condition: ReleaseCondition;
+      release_age?: number;
+      release_date?: string;
+      release_milestone?: string;
+    }
+  ) =>
+    request<CapsuleOut>(`/children/${childId}/capsules`, {
+      method: "POST",
+      body: JSON.stringify(c),
+    }),
+  releaseCapsule: (capsuleId: string) =>
+    request<CapsuleOut>(`/capsules/${capsuleId}/release`, { method: "POST" }),
+
+  listLegacy: (familyId: string) => request<LegacyOut[]>(`/families/${familyId}/legacy`),
+  addLegacy: (
+    familyId: string,
+    item: { type: LegacyType; title: string; body?: string; media_id?: string }
+  ) =>
+    request<LegacyOut>(`/families/${familyId}/legacy`, {
+      method: "POST",
+      body: JSON.stringify(item),
+    }),
+  uploadFamilyMedia: async (familyId: string, file: File): Promise<string> => {
+    const ticket = await request<{ media_id: string; upload_url: string }>(
+      `/families/${familyId}/media`,
+      { method: "POST", body: JSON.stringify({ content_type: file.type }) }
+    );
+    const token = getToken();
+    const res = await fetch(`${API_URL}${ticket.upload_url}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: file,
+    });
+    if (!res.ok) throw new ApiError(res.status, "Upload failed");
+    return ticket.media_id;
+  },
 
   uploadMedia: async (childId: string, file: File): Promise<string> => {
     const ticket = await request<{ media_id: string; upload_url: string }>(

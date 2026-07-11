@@ -25,6 +25,16 @@ function eventLine(e: FeedEventOut): { icon: string; text: string } {
       return { icon: "🌱", text: `${p.member_name} joined the family as a ${p.role}` };
     case "achievement":
       return { icon: "🏅", text: `${p.child_name} reached a goal: ${p.title}` };
+    case "capsule_created":
+      return {
+        icon: "✉️",
+        text: `${p.created_by_name} sealed a time capsule for ${p.child_name}`,
+      };
+    case "capsule_released":
+      return {
+        icon: "💌",
+        text: `A time capsule from ${p.created_by_name} just opened for ${p.child_name}`,
+      };
     case "contribution":
       return {
         icon: "💝",

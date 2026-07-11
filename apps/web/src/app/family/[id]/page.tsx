@@ -75,6 +75,18 @@ export default function FamilyPage() {
         {isParent && <AddChildForm familyId={family.id} onAdded={load} />}
       </section>
 
+      <Card className="transition hover:border-emerald-400">
+        <a href={`/family/${family.id}/legacy`} className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-emerald-900">🌳 Legacy archive</h2>
+            <p className="text-sm text-stone-500">
+              Recipes, stories, and wisdom — your family&apos;s heritage in one place
+            </p>
+          </div>
+          <span className="text-emerald-700">→</span>
+        </a>
+      </Card>
+
       <section className="space-y-3">
         <h2 className="text-xl font-semibold text-stone-800">Family moments</h2>
         <FamilyFeedList events={feed} />

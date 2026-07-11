@@ -49,11 +49,15 @@ Goal: the 60-second grandparent flow works.
 - [x] 13 new tests (40 total): fee math, idempotent confirm, derived balances, append-only corrections, role/outsider denials
 - Deferred within phase: video message on contribution; time-to-contribution instrumentation; real Stripe keys
 
-## Phase 4 — Time Capsules & Legacy Archive
+## Phase 4 — Time Capsules & Legacy Archive ✅ (done 2026-07-10)
 
-- `time_capsules` with age/date/milestone release conditions + release scheduler
-- Family Legacy Archive (`legacy_items`): stories, recipes, documents, wisdom recordings
-- Voice/video recording in-browser for capsules and wisdom
+- [x] `time_capsules` with age/date/milestone release conditions; sealed capsules reveal body/media only to their creator — everyone else sees existence + condition
+- [x] Release: age/date capsules open via a lazy scheduler on access (`release_due_capsules` — an EventBridge cron calls the same function in prod); milestone capsules opened by creator or parent/guardian ("Open now")
+- [x] Release → feed event + email to parents ("A time capsule for Emma just opened")
+- [x] Family Legacy Archive (`legacy_items`): stories, recipes, documents, photos, wisdom — every member contributes; new `/family/[id]/legacy` page
+- [x] Media now scoped to exactly one of child (vault/capsules) or family (legacy); download access follows the scope; family media can't attach to child vaults
+- [x] 14 new tests (54 total): sealed privacy (no body/media leak), auto/manual release rules, permissions, archive access
+- Deferred within phase: in-browser voice/video recording (file upload of audio/video works today; MediaRecorder UI later)
 
 ## Phase 5 — Deploy & Harden
 

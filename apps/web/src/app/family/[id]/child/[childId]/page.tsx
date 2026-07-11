@@ -6,6 +6,7 @@ import {
   api,
   ApiError,
   BadgeOut,
+  CapsuleOut,
   formatMoney,
   FundOut,
   getToken,
@@ -14,6 +15,7 @@ import {
   VaultItemOut,
 } from "@/lib/api";
 import { Button, Card, ErrorNote, Input, Label } from "@/components/ui";
+import { CapsulesSection } from "@/components/capsules";
 
 const TYPE_ICONS: Record<string, string> = {
   photo: "📷",
@@ -32,24 +34,28 @@ export default function ChildVaultPage() {
   const [fund, setFund] = useState<FundOut | null>(null);
   const [goals, setGoals] = useState<GoalOut[]>([]);
   const [badges, setBadges] = useState<BadgeOut[]>([]);
+  const [capsules, setCapsules] = useState<CapsuleOut[]>([]);
   const [isParent, setIsParent] = useState(false);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     try {
-      const [vault, family, me, fundData, goalsData, badgesData] = await Promise.all([
-        api.listVault(childId),
-        api.familyDetail(familyId),
-        api.me(),
-        api.childFund(childId),
-        api.listGoals(childId),
-        api.listBadges(childId),
-      ]);
+      const [vault, family, me, fundData, goalsData, badgesData, capsulesData] =
+        await Promise.all([
+          api.listVault(childId),
+          api.familyDetail(familyId),
+          api.me(),
+          api.childFund(childId),
+          api.listGoals(childId),
+          api.listBadges(childId),
+          api.listCapsules(childId),
+        ]);
       setItems(vault);
       setChildName(family.children.find((c) => c.id === childId)?.first_name ?? "");
       setFund(fundData);
       setGoals(goalsData);
       setBadges(badgesData);
+      setCapsules(capsulesData);
       setIsParent(
         family.members.some(
           (m) => ["parent", "guardian"].includes(m.role) && m.user.email === me.email
@@ -132,6 +138,14 @@ export default function ChildVaultPage() {
         childId={childId}
         childName={childName}
         goals={goals}
+        isParent={isParent}
+        onChanged={load}
+      />
+
+      <CapsulesSection
+        childId={childId}
+        childName={childName}
+        capsules={capsules}
         isParent={isParent}
         onChanged={load}
       />

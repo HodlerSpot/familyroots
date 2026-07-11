@@ -4,13 +4,17 @@ from datetime import date, datetime
 from pydantic import BaseModel, EmailStr, Field
 
 from .models import (
+    CapsuleStatus,
+    CapsuleType,
     ConsentType,
     ContributionStatus,
     FamilyRole,
     FeedEventType,
     GoalStatus,
+    LegacyType,
     MediaStatus,
     MemberStatus,
+    ReleaseCondition,
     RewardType,
     VaultItemType,
 )
@@ -235,3 +239,54 @@ class FundOut(BaseModel):
     currency: str
     balance_cents: int
     entries: list[LedgerEntryOut]
+
+
+# --- time capsules ---
+
+class CapsuleCreate(BaseModel):
+    type: CapsuleType
+    body: str | None = Field(default=None, max_length=20_000)
+    media_id: uuid.UUID | None = None
+    release_condition: ReleaseCondition
+    release_age: int | None = Field(default=None, ge=1, le=120)
+    release_date: date | None = None
+    release_milestone: str | None = Field(default=None, max_length=200)
+
+
+class CapsuleOut(BaseModel):
+    """Sealed capsules from other people: body/media/media_content_type are None."""
+
+    id: uuid.UUID
+    type: CapsuleType
+    status: CapsuleStatus
+    release_condition: ReleaseCondition
+    release_age: int | None
+    release_date: date | None
+    release_milestone: str | None
+    created_by_name: str
+    is_mine: bool
+    body: str | None = None
+    media_id: uuid.UUID | None = None
+    media_content_type: str | None = None
+    released_at: datetime | None = None
+    created_at: datetime
+
+
+# --- legacy archive ---
+
+class LegacyCreate(BaseModel):
+    type: LegacyType
+    title: str = Field(min_length=1, max_length=200)
+    body: str | None = Field(default=None, max_length=20_000)
+    media_id: uuid.UUID | None = None
+
+
+class LegacyOut(BaseModel):
+    id: uuid.UUID
+    type: LegacyType
+    title: str
+    body: str | None
+    media_id: uuid.UUID | None
+    media_content_type: str | None
+    created_by_name: str
+    created_at: datetime
