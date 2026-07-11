@@ -1,4 +1,4 @@
-/* Brand lockup: shield mark (public/logo-mark.svg) + two-tone wordmark.
+/* Brand lockup: shield mark (public/logo-mark.png) + two-tone wordmark.
    Source artwork: docs/brand/FutureRootsLogo.jpg */
 
 const SIZES = {
@@ -20,7 +20,7 @@ export function Logo({
   return (
     <span className={`inline-flex items-center gap-2.5 ${className}`}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/logo-mark.svg" alt="" className={`${s.img} w-auto`} />
+      <img src="/logo-mark.png" alt="" className={`${s.img} w-auto`} />
       <span className="flex flex-col leading-none">
         <span className={`font-extrabold tracking-tight ${s.text}`}>
           <span className="text-[#1FA84D]">Future</span>

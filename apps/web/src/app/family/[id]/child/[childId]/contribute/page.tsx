@@ -100,7 +100,7 @@ export default function ContributePage() {
       <Card className="mx-auto max-w-lg space-y-6">
         <div className="text-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-mark.svg" alt="" className="mx-auto h-14" />
+          <img src="/logo-mark.png" alt="" className="mx-auto h-14" />
           <h1 className="mt-2 text-2xl font-bold text-emerald-900">
             {formatMoney(pendingAmount)} for {childName || "their"} future
           </h1>
@@ -125,7 +125,7 @@ export default function ContributePage() {
     <Card className="mx-auto max-w-lg space-y-6">
       <div className="text-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo-mark.svg" alt="" className="mx-auto h-14" />
+        <img src="/logo-mark.png" alt="" className="mx-auto h-14" />
         <h1 className="mt-2 text-2xl font-bold text-emerald-900">
           Add to {childName || "their"} future
         </h1>
