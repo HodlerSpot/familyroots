@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { Logo } from "@/components/logo";
 
 export const metadata: Metadata = {
   title: "FutureRoots — Building Generational Wealth & Memories",
@@ -12,9 +13,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="min-h-screen bg-stone-50 text-stone-900 antialiased">
         <header className="border-b border-stone-200 bg-white">
-          <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
-            <a href="/" className="text-xl font-bold text-emerald-800">
-              🌱 FutureRoots
+          <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-3">
+            <a href="/" aria-label="FutureRoots home">
+              <Logo size="sm" />
             </a>
             <span className="hidden text-sm text-stone-500 sm:block">
               Building Generational Wealth &amp; Memories

@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getToken } from "@/lib/api";
 import { Button, Card } from "@/components/ui";
+import { Logo } from "@/components/logo";
 
 export default function Home() {
   const router = useRouter();
@@ -14,7 +15,10 @@ export default function Home() {
 
   return (
     <div className="space-y-8 text-center">
-      <div className="space-y-3 pt-8">
+      <div className="space-y-5 pt-6">
+        <div className="flex justify-center">
+          <Logo size="lg" withTagline />
+        </div>
         <h1 className="text-4xl font-bold text-emerald-900">
           Your family&apos;s story, kept for a lifetime
         </h1>
