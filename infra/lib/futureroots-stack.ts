@@ -23,6 +23,11 @@ export class FutureRootsStack extends cdk.Stack {
     const jwtSecret = required("JWT_SECRET");
     const sesFrom = required("SES_FROM_ADDRESS");
     const webBaseUrl = process.env.WEB_BASE_URL ?? "http://localhost:3000";
+    const extraOrigins = (process.env.EXTRA_ORIGINS ?? "")
+      .split(",")
+      .map((o) => o.trim())
+      .filter(Boolean);
+    const allOrigins = [...new Set([webBaseUrl, "http://localhost:3000", ...extraOrigins])];
 
     // --- Network: two isolated AZs, no NAT (cost ceiling), endpoints for AWS services
     const vpc = new ec2.Vpc(this, "Vpc", {
@@ -72,7 +77,7 @@ export class FutureRootsStack extends cdk.Stack {
       cors: [
         {
           allowedMethods: [s3.HttpMethods.PUT, s3.HttpMethods.GET],
-          allowedOrigins: [...new Set([webBaseUrl, "http://localhost:3000"])],
+          allowedOrigins: allOrigins,
           allowedHeaders: ["*"],
           maxAge: 3600,
         },
@@ -107,6 +112,7 @@ export class FutureRootsStack extends cdk.Stack {
         FUTUREROOTS_EMAIL_BACKEND: "ses",
         FUTUREROOTS_SES_FROM_ADDRESS: sesFrom,
         FUTUREROOTS_WEB_BASE_URL: webBaseUrl,
+        FUTUREROOTS_CORS_EXTRA_ORIGINS: extraOrigins.join(","),
       },
     });
     mediaBucket.grantReadWrite(apiFn);

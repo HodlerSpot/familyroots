@@ -17,9 +17,12 @@ from .routers import (
 
 app = FastAPI(title="FutureRoots API", version="0.1.0")
 
+_origins = {settings.web_base_url, "http://localhost:3000"}
+_origins.update(o.strip() for o in settings.cors_extra_origins.split(",") if o.strip())
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.web_base_url],
+    allow_origins=sorted(_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

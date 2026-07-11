@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     email_backend: str = "outbox"  # outbox | ses
     ses_from_address: str = "hello@futureroots.example"
     web_base_url: str = "http://localhost:3000"
+    cors_extra_origins: str = ""  # comma-separated additional allowed origins
 
     model_config = {"env_file": ".env", "env_prefix": "FUTUREROOTS_"}
 
