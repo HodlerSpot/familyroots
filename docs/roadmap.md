@@ -59,12 +59,15 @@ Goal: the 60-second grandparent flow works.
 - [x] 14 new tests (54 total): sealed privacy (no body/media leak), auto/manual release rules, permissions, archive access
 - Deferred within phase: in-browser voice/video recording (file upload of audio/video works today; MediaRecorder UI later)
 
-## Phase 5 — Deploy & Harden
+## Phase 5 — Deploy & Harden ✅ (deployed 2026-07-11)
 
-- AWS serverless deployment (CloudFront, S3, API Gateway + Lambda/Mangum, Cognito, SES, RDS) — infrastructure as code
-- Swap local auth → Cognito, Mailpit → SES, MinIO → S3 (config-only if abstractions held)
-- Security & compliance review (COPPA/GDPR/PIPEDA checklist), data-erasure flow
-- Cost check against the ~$50/month ceiling
+- [x] AWS deployment via CDK (`infra/`), region us-east-1: no-NAT VPC, RDS Postgres 16 t4g.micro (private-only), Lambda/Mangum + HTTP API Gateway, private S3 media bucket, SES via PrivateLink — runbook in `docs/deploy.md`
+- [x] Storage swap local→S3 (presigned up/down) and email swap outbox→SES were config-only — the abstractions held
+- [x] Migrations run in-VPC via a Lambda management command
+- [x] Web on Amplify Hosting (Next 15 — Amplify doesn't support 16 yet), builds from GitHub on push
+- [x] Live: API `https://425w8dkba7.execute-api.us-east-1.amazonaws.com` · Web `https://main.d2eorgdxfwgaam.amplifyapp.com`
+- [x] Cost ~$22–25/month — under the ~$50 ceiling
+- Hardening backlog (see `docs/deploy.md`): Cognito swap, Secrets Manager, SES production access, custom domain + CloudFront/WAF, RDS deletion protection, formal COPPA/GDPR/PIPEDA review before real families
 
 ## Phase 6 — AI & Growth
 
