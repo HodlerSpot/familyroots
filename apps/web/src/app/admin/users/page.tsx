@@ -117,17 +117,19 @@ export default function AdminUsersPage() {
                     View as
                   </button>
                 )}
-                <button
-                  onClick={() => toggleDisabled(u)}
-                  disabled={busyId === u.id}
-                  className={`rounded-lg border px-2.5 py-1 text-xs font-medium disabled:opacity-50 ${
-                    u.disabled
-                      ? "border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-                      : "border-red-200 text-red-600 hover:bg-red-50"
-                  }`}
-                >
-                  {u.disabled ? "Enable" : "Disable"}
-                </button>
+                {u.role !== "admin" && (
+                  <button
+                    onClick={() => toggleDisabled(u)}
+                    disabled={busyId === u.id}
+                    className={`rounded-lg border px-2.5 py-1 text-xs font-medium disabled:opacity-50 ${
+                      u.disabled
+                        ? "border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                        : "border-red-200 text-red-600 hover:bg-red-50"
+                    }`}
+                  >
+                    {u.disabled ? "Enable" : "Disable"}
+                  </button>
+                )}
                 <button
                   onClick={() => toggleRole(u)}
                   disabled={busyId === u.id}

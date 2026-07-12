@@ -11,6 +11,9 @@ const CHIP: Record<AdminBugRow["status"], string> = {
   rejected: "bg-stone-200 text-stone-600",
 };
 
+// Points are a testnet concept; main-site issue reports earn the reporter nothing
+const VERIFY_LABEL = process.env.NEXT_PUBLIC_TESTNET === "1" ? "Verify (+250)" : "Verify";
+
 export default function AdminBugsPage() {
   const [bugs, setBugs] = useState<AdminBugRow[]>([]);
   const [filter, setFilter] = useState<"pending" | "all">("pending");
@@ -74,7 +77,7 @@ export default function AdminBugsPage() {
                     disabled={busyId === b.id}
                     className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
                   >
-                    Verify (+250)
+                    {VERIFY_LABEL}
                   </button>
                   <button
                     onClick={() => decide(b.id, "reject")}

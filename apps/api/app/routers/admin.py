@@ -135,8 +135,10 @@ class AdminFamilyDetail(BaseModel):
     id: uuid.UUID
     name: str
     created_at: datetime
+    fund_cents: int
     members: list["MemberRef"]
     children: list["ChildRef"]
+    contributions: list[MiniContribution]
 
 
 class MemberRef(BaseModel):
@@ -145,6 +147,7 @@ class MemberRef(BaseModel):
     email: str
     role: str
     status: str
+    disabled: bool
 
 
 class ChildRef(BaseModel):
@@ -516,12 +519,25 @@ def family_detail(family_id: uuid.UUID, db: DbSession, admin: AdminUser) -> Admi
         .all()
     )
     children = db.query(Child).filter(Child.family_id == f.id).all()
+    child_ids = [c.id for c in children]
+    contribs = []
+    if child_ids:
+        contribs = (
+            db.query(Contribution, User, Child)
+            .outerjoin(User, Contribution.contributor_user_id == User.id)
+            .outerjoin(Child, Contribution.child_id == Child.id)
+            .filter(Contribution.child_id.in_(child_ids))
+            .order_by(Contribution.created_at.desc())
+            .limit(50)
+            .all()
+        )
     return AdminFamilyDetail(
         id=f.id, name=f.name, created_at=f.created_at,
+        fund_cents=sum(_fund_cents_for_child(db, c.id) for c in children),
         members=[
             MemberRef(
                 user_id=u.id, display_name=u.display_name, email=u.email,
-                role=m.role.value, status=m.status.value,
+                role=m.role.value, status=m.status.value, disabled=u.disabled,
             )
             for m, u in members
         ],
@@ -529,6 +545,7 @@ def family_detail(family_id: uuid.UUID, db: DbSession, admin: AdminUser) -> Admi
             ChildRef(id=c.id, first_name=c.first_name, fund_cents=_fund_cents_for_child(db, c.id))
             for c in children
         ],
+        contributions=[_mini_contribution(c, u, ch) for c, u, ch in contribs],
     )
 
 

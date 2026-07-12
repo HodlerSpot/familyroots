@@ -32,7 +32,12 @@ export default function AdminFamiliesPage() {
         <ul className="divide-y divide-stone-100">
           {rows.map((f) => (
             <li key={f.id} className="flex flex-wrap items-center gap-4 px-4 py-3">
-              <p className="min-w-0 flex-1 truncate font-medium text-stone-900">{f.name}</p>
+              <a
+                href={`/admin/families/${f.id}`}
+                className="min-w-0 flex-1 truncate font-medium text-emerald-800 underline"
+              >
+                {f.name}
+              </a>
               <span className="w-20 text-center tabular-nums text-stone-700">{f.member_count}</span>
               <span className="w-20 text-center tabular-nums text-stone-700">{f.child_count}</span>
               <span className="w-28 text-right font-bold tabular-nums text-emerald-800">

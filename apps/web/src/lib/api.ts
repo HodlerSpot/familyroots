@@ -438,6 +438,23 @@ export interface AdminAuditRow {
   created_at: string;
 }
 
+export interface AdminFamilyDetail {
+  id: string;
+  name: string;
+  created_at: string;
+  fund_cents: number;
+  members: {
+    user_id: string;
+    display_name: string;
+    email: string;
+    role: string;
+    status: string;
+    disabled: boolean;
+  }[];
+  children: { id: string; first_name: string; fund_cents: number }[];
+  contributions: AdminContribution[];
+}
+
 export interface AdminBugRow {
   id: string;
   title: string;
@@ -464,6 +481,7 @@ export const adminApi = {
   users: (q?: string) => request<Page<AdminUserRow>>(`/admin/users${qs({ q })}`),
   user: (id: string) => request<AdminUserDetail>(`/admin/users/${id}`),
   families: (q?: string) => request<Page<AdminFamilyRow>>(`/admin/families${qs({ q })}`),
+  family: (id: string) => request<AdminFamilyDetail>(`/admin/families/${id}`),
   contributions: (q?: string, status?: string) =>
     request<Page<AdminContribution>>(`/admin/contributions${qs({ q, status })}`),
   contributionsCsvUrl: (q?: string, status?: string) =>
