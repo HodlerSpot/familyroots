@@ -3,7 +3,7 @@ import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
 
 export const metadata: Metadata = {
-  title: "FutureRoots — Building Generational Wealth & Memories",
+  title: "FutureRoots: Building Generational Wealth & Memories",
   description:
     "A private space where your family shares memories, celebrates milestones, and builds a future together.",
 };

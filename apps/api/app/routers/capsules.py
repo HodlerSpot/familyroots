@@ -21,6 +21,7 @@ from ..models import (
 )
 from ..schemas import CapsuleCreate, CapsuleOut
 from ..services.email import get_email_sender
+from ..services.email_templates import render_email
 from ..services.feed import emit
 
 router = APIRouter(tags=["capsules"])
@@ -92,7 +93,21 @@ def _release(db, capsule: TimeCapsule, child: Child) -> None:
                 f"{capsule.author.display_name} sealed for {child.first_name} has "
                 f"opened today.\n\n"
                 f"Open it together: {url}\n\n"
-                f"With warmth,\nFutureRoots"
+                f"With warmth,\nThe FutureRoots team"
+            ),
+            html=render_email(
+                preheader=(
+                    f"The time capsule {capsule.author.display_name} sealed for "
+                    f"{child.first_name} has opened today."
+                ),
+                greeting=f"Hi {parent.display_name},",
+                paragraphs=[
+                    f"A moment years in the making: the time capsule "
+                    f"{capsule.author.display_name} sealed for {child.first_name} "
+                    f"has opened today."
+                ],
+                cta_label="Open it together",
+                cta_url=url,
             ),
         )
 

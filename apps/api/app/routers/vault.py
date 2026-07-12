@@ -24,6 +24,7 @@ from ..schemas import (
 )
 from ..security import decode_access_token
 from ..services.email import get_email_sender
+from ..services.email_templates import render_email
 from ..services.feed import emit
 from ..services.storage import get_storage
 
@@ -101,7 +102,7 @@ def complete_media_upload(media_id: uuid.UUID, db: DbSession, user: CurrentUser)
     size = get_storage().confirm_upload(media)
     if size is None:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT, "The file never arrived — please retry"
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "The file never arrived. Please try again"
         )
     if size > MAX_UPLOAD_BYTES:
         get_storage().delete(media.storage_key)
@@ -253,19 +254,33 @@ def post_milestone(
     sender = get_email_sender()
     family_url = f"{settings.web_base_url}/family/{child.family_id}"
     contribute_url = f"{family_url}/child/{child.id}/contribute"
+    highlight = payload.title + (f"\n{payload.description}" if payload.description else "")
     for recipient in recipients:
         sender.send(
             to=recipient.email,
             subject=f"🎉 {child.first_name}: {payload.title}",
             body=(
                 f"Hi {recipient.display_name},\n\n"
-                f"Wonderful news from your family — {child.first_name} just reached a "
-                f"milestone:\n\n"
+                f"Wonderful news from your family: {child.first_name} just reached a "
+                f"milestone.\n\n"
                 f"  {payload.title}\n"
                 + (f"  {payload.description}\n" if payload.description else "")
-                + f"\nShare in the moment: {family_url}\n"
-                f"Celebrate with a gift to {child.first_name}'s future: {contribute_url}\n\n"
-                f"With warmth,\nFutureRoots"
+                + f"\nCelebrate with a gift to {child.first_name}'s future: {contribute_url}\n"
+                f"Share in the moment on the family feed: {family_url}\n\n"
+                f"With warmth,\nThe FutureRoots team"
+            ),
+            html=render_email(
+                preheader=f"{child.first_name} just reached a milestone. Come celebrate!",
+                greeting=f"Hi {recipient.display_name},",
+                paragraphs=[
+                    f"Wonderful news from your family: {child.first_name} just "
+                    f"reached a milestone."
+                ],
+                highlight=highlight,
+                cta_label=f"Celebrate with a gift to {child.first_name}'s future",
+                cta_url=contribute_url,
+                secondary_label="Share in the moment on the family feed",
+                secondary_url=family_url,
             ),
         )
     return _vault_item_out(item)

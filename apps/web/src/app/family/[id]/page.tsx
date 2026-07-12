@@ -80,7 +80,7 @@ export default function FamilyPage() {
           <div>
             <h2 className="text-lg font-semibold text-emerald-900">🌳 Legacy archive</h2>
             <p className="text-sm text-stone-500">
-              Recipes, stories, and wisdom — your family&apos;s heritage in one place
+              Recipes, stories, and wisdom: your family&apos;s heritage in one place
             </p>
           </div>
           <span className="text-emerald-700">→</span>

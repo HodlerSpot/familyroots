@@ -18,7 +18,7 @@ export default function ForgotPasswordPage() {
       await api.forgotPassword(email);
       setSent(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong — please try again");
+      setError(err instanceof ApiError ? err.message : "Something went wrong. Please try again");
       setBusy(false);
     }
   }

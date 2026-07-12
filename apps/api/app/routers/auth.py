@@ -18,6 +18,7 @@ from ..schemas import (
 )
 from ..security import create_access_token, hash_password, verify_password
 from ..services.email import get_email_sender
+from ..services.email_templates import render_email
 
 RESET_TTL_MINUTES = 60
 
@@ -30,21 +31,42 @@ def _send_welcome_email(user: User) -> None:
         subject=f"Welcome to FutureRoots, {user.display_name} 🌱",
         body=(
             f"Hi {user.display_name},\n\n"
-            f"Welcome to FutureRoots — your family's private space for memories, "
+            f"Welcome to FutureRoots, your family's private space for memories, "
             f"milestones, and building a future together.\n\n"
             f"Here's how families use it:\n\n"
-            f"  🏡  Create your family space and add your children — each child gets\n"
+            f"  🏡  Create your family space and add your children. Each child gets\n"
             f"      a vault of memories that stays with them for life.\n"
             f"  💌  Invite grandparents and relatives with a simple email link.\n"
-            f"  🎉  Share milestones — first steps, recitals, big wins — and the\n"
+            f"  🎉  Share milestones (first steps, recitals, big wins) and the\n"
             f"      whole family celebrates with you.\n"
-            f"  🌳  Grow their future fund — family members can add a gift in under\n"
+            f"  🌳  Grow their future fund. Family members can add a gift in under\n"
             f"      a minute, right from a milestone email.\n"
             f"  ✉️  Seal time capsules to be opened at just the right moment,\n"
             f"      years from now.\n\n"
             f"Start here: {settings.web_base_url}/family\n\n"
             f"We're glad your family is here.\n\n"
             f"With warmth,\nThe FutureRoots team"
+        ),
+        html=render_email(
+            preheader="Your family's private space for memories, milestones, and the future.",
+            greeting=f"Hi {user.display_name},",
+            paragraphs=[
+                "Welcome to FutureRoots, your family's private space for memories, "
+                "milestones, and building a future together.",
+                "Here's how families use it:",
+                "🏡 Create your family space and add your children. Each child gets "
+                "a vault of memories that stays with them for life.",
+                "💌 Invite grandparents and relatives with a simple email link.",
+                "🎉 Share milestones (first steps, recitals, big wins) and the "
+                "whole family celebrates with you.",
+                "🌳 Grow their future fund. Family members can add a gift in under "
+                "a minute, right from a milestone email.",
+                "✉️ Seal time capsules to be opened at just the right moment, "
+                "years from now.",
+                "We're glad your family is here.",
+            ],
+            cta_label="Create your family space",
+            cta_url=f"{settings.web_base_url}/family",
         ),
     )
 
@@ -102,9 +124,25 @@ def forgot_password(payload: ForgotPasswordRequest, db: DbSession) -> None:
             f"Choose a new one here:\n\n"
             f"{settings.web_base_url}/reset-password/{token}\n\n"
             f"This link works once and expires in {RESET_TTL_MINUTES} minutes. "
-            f"If you didn't ask for this, you can safely ignore this email — "
-            f"your password won't change.\n\n"
+            f"If you didn't ask for this, you can safely ignore this email. "
+            f"Your password won't change.\n\n"
             f"With warmth,\nThe FutureRoots team"
+        ),
+        html=render_email(
+            preheader="Choose a new password for your FutureRoots account.",
+            greeting=f"Hi {user.display_name},",
+            paragraphs=[
+                "We received a request to reset your FutureRoots password. "
+                "Choose a new one below and you'll be back with your family "
+                "in a moment."
+            ],
+            cta_label="Choose a new password",
+            cta_url=f"{settings.web_base_url}/reset-password/{token}",
+            footnote=(
+                f"This link works once and expires in {RESET_TTL_MINUTES} minutes. "
+                f"If you didn't ask for this, you can safely ignore this email. "
+                f"Your password won't change."
+            ),
         ),
     )
 
@@ -115,14 +153,14 @@ def reset_password(payload: ResetPasswordRequest, db: DbSession) -> None:
     reset = db.query(PasswordReset).filter(PasswordReset.token_hash == token_hash).first()
     if reset is None or reset.used_at is not None:
         raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "That reset link is no longer valid — request a new one"
+            status.HTTP_400_BAD_REQUEST, "That reset link is no longer valid. Please request a new one"
         )
     expires_at = reset.expires_at
     if expires_at.tzinfo is None:  # SQLite loses tz info in tests
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     if expires_at < utcnow():
         raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "That reset link has expired — request a new one"
+            status.HTTP_400_BAD_REQUEST, "That reset link has expired. Please request a new one"
         )
     reset.user.password_hash = hash_password(payload.new_password)
     reset.used_at = utcnow()

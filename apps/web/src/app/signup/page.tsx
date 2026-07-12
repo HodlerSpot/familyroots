@@ -25,7 +25,7 @@ function SignupForm() {
       setToken(access_token);
       router.push(next);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong — please try again");
+      setError(err instanceof ApiError ? err.message : "Something went wrong. Please try again");
       setBusy(false);
     }
   }

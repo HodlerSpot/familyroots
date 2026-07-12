@@ -97,7 +97,7 @@ export default function ChildVaultPage() {
           <div>
             <h3 className="font-semibold text-emerald-900">🌳 Future fund</h3>
             <p className="mt-2 text-3xl font-bold text-emerald-900">
-              {fund ? formatMoney(fund.balance_cents, fund.currency) : "—"}
+              {fund ? formatMoney(fund.balance_cents, fund.currency) : "…"}
             </p>
             <p className="text-sm text-stone-500">
               {fund && fund.entries.length > 0
@@ -159,7 +159,7 @@ export default function ChildVaultPage() {
         <h2 className="text-xl font-semibold text-stone-800">Memories & milestones</h2>
         {items.length === 0 && (
           <p className="text-stone-600">
-            The vault is empty — share the first memory above.
+            The vault is empty. Share the first memory above.
           </p>
         )}
         <div className="space-y-3">
@@ -316,7 +316,7 @@ function GoalsSection({
       {goals.length === 0 && !showForm && (
         <p className="text-stone-600">
           {isParent
-            ? `Set a goal for ${childName || "your child"} — reading, chores, practice — and celebrate when they get there.`
+            ? `Set a goal for ${childName || "your child"} (reading, chores, practice) and celebrate when they get there.`
             : "No goals yet."}
         </p>
       )}

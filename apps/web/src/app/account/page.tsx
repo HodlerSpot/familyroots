@@ -37,7 +37,7 @@ export default function AccountPage() {
       setCurrent("");
       setNext("");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong — please try again");
+      setError(err instanceof ApiError ? err.message : "Something went wrong. Please try again");
     } finally {
       setBusy(false);
     }

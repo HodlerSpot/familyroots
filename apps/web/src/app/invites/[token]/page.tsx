@@ -52,7 +52,7 @@ export default function InvitePage() {
         {preview.invited_by} invited you to join {familyPhrase(preview.family_name)}
       </h1>
       <p className="text-stone-600">
-        You&apos;re joining as a <span className="font-semibold capitalize">{preview.role}</span> —
+        You&apos;re joining as a <span className="font-semibold capitalize">{preview.role}</span> in
         a private space where your family shares memories, celebrates milestones, and
         builds a future together.
       </p>
@@ -62,7 +62,7 @@ export default function InvitePage() {
       </Button>
       {!getToken() && (
         <p className="text-sm text-stone-500">
-          You&apos;ll create your account first — it takes less than a minute.
+          You&apos;ll create your account first. It takes less than a minute.
         </p>
       )}
     </Card>

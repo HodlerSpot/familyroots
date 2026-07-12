@@ -58,7 +58,7 @@ def add_legacy_item(
     if not payload.body and not payload.media_id:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            "Add the story itself — words, a photo, or a recording",
+            "Add the story itself: words, a photo, or a recording",
         )
     if payload.media_id is not None:
         media = db.get(MediaObject, payload.media_id)

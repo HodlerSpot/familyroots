@@ -18,6 +18,7 @@ from ..models import (
 from ..models import FeedEventType
 from ..schemas import FamilySummary, InviteAccept, InviteCreate, InviteOut, InvitePreview
 from ..services.email import get_email_sender
+from ..services.email_templates import render_email
 from ..services.feed import emit
 from ..services.text import family_phrase
 
@@ -69,11 +70,23 @@ def create_invite(
         body=(
             f"Hi!\n\n"
             f"{user.display_name} has invited you to join {family} on "
-            f"FutureRoots — a private space where your family shares memories, celebrates "
+            f"FutureRoots, a private space where your family shares memories, celebrates "
             f"milestones, and builds a future together.\n\n"
             f"Join here: {accept_url}\n\n"
             f"This invitation expires in {settings.invite_ttl_days} days.\n\n"
             f"With warmth,\nThe FutureRoots team"
+        ),
+        html=render_email(
+            preheader=f"{user.display_name} would love for you to join {family}.",
+            greeting="Hi!",
+            paragraphs=[
+                f"{user.display_name} has invited you to join {family} on "
+                f"FutureRoots, a private space where your family shares memories, "
+                f"celebrates milestones, and builds a future together."
+            ],
+            cta_label="Join your family",
+            cta_url=accept_url,
+            footnote=f"This invitation expires in {settings.invite_ttl_days} days.",
         ),
     )
     return InviteOut.model_validate(invite)

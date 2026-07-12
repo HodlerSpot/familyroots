@@ -20,7 +20,7 @@ export default function FamilyDashboard() {
         setToken(null);
         router.replace("/login");
       } else {
-        setError("We couldn't load your families — is the API running?");
+        setError("We couldn't load your families. Is the API running?");
       }
     }
   }, [router]);

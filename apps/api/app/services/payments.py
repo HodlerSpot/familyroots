@@ -36,6 +36,7 @@ from ..models import (
     User,
 )
 from .email import get_email_sender
+from .email_templates import render_email
 from .feed import emit
 
 
@@ -174,6 +175,7 @@ def settle_contribution(db: Session, contribution: Contribution) -> FundLedgerEn
     )
     sender = get_email_sender()
     amount = f"${contribution.amount_cents / 100:,.2f}"
+    family_url = f"{settings.web_base_url}/family/{child.family_id}"
     for parent in parents:
         sender.send(
             to=parent.email,
@@ -187,8 +189,23 @@ def settle_contribution(db: Session, contribution: Contribution) -> FundLedgerEn
                     if contribution.message
                     else ".\n"
                 )
-                + f"\nSee it here: {settings.web_base_url}/family/{child.family_id}\n\n"
-                f"With warmth,\nFutureRoots"
+                + f"\nSee it here: {family_url}\n\n"
+                f"With warmth,\nThe FutureRoots team"
+            ),
+            html=render_email(
+                preheader=(
+                    f"{contributor.display_name} added {amount} to "
+                    f"{child.first_name}'s future fund."
+                ),
+                greeting=f"Hi {parent.display_name},",
+                paragraphs=[
+                    f"{contributor.display_name} contributed {amount} to "
+                    f"{child.first_name}'s future fund"
+                    + (" with a note:" if contribution.message else ".")
+                ],
+                highlight=(f"“{contribution.message}”" if contribution.message else None),
+                cta_label="See it on your family feed",
+                cta_url=family_url,
             ),
         )
     return entry

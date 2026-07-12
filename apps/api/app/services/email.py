@@ -10,20 +10,26 @@ from typing import Protocol
 
 
 class EmailSender(Protocol):
-    def send(self, to: str, subject: str, body: str) -> None: ...
+    def send(self, to: str, subject: str, body: str, html: str | None = None) -> None: ...
 
 
 class OutboxEmailSender:
-    """Dev sender: prints the email and writes it to var/outbox/."""
+    """Dev sender: prints the email and writes it to var/outbox/.
+
+    The plain-text part goes to NNNN.txt (unchanged format — tooling and tests
+    parse it); when a branded HTML part is provided it lands beside it as
+    NNNN.html so it can be opened in a browser."""
 
     def __init__(self, outbox_dir: Path | None = None) -> None:
         self.outbox_dir = outbox_dir or Path(__file__).resolve().parents[2] / "var" / "outbox"
 
-    def send(self, to: str, subject: str, body: str) -> None:
+    def send(self, to: str, subject: str, body: str, html: str | None = None) -> None:
         self.outbox_dir.mkdir(parents=True, exist_ok=True)
         existing = len(list(self.outbox_dir.glob("*.txt")))
         path = self.outbox_dir / f"{existing + 1:04d}.txt"
         path.write_text(f"To: {to}\nSubject: {subject}\n\n{body}\n", encoding="utf-8")
+        if html is not None:
+            path.with_suffix(".html").write_text(html, encoding="utf-8")
         # ascii() because the Windows console (cp1252) chokes on emoji in subjects
         print(f"[email] to={to} subject={ascii(subject)} -> {path}")
 
@@ -37,14 +43,19 @@ class SesEmailSender:
         self.from_address = from_address
         self.client = boto3.client("sesv2")
 
-    def send(self, to: str, subject: str, body: str) -> None:
+    def send(self, to: str, subject: str, body: str, html: str | None = None) -> None:
+        # Text part always carries the complete message; the HTML part is the
+        # branded presentation layered on top when available.
+        body_content: dict = {"Text": {"Data": body, "Charset": "UTF-8"}}
+        if html is not None:
+            body_content["Html"] = {"Data": html, "Charset": "UTF-8"}
         self.client.send_email(
             FromEmailAddress=self.from_address,
             Destination={"ToAddresses": [to]},
             Content={
                 "Simple": {
                     "Subject": {"Data": subject, "Charset": "UTF-8"},
-                    "Body": {"Text": {"Data": body, "Charset": "UTF-8"}},
+                    "Body": body_content,
                 }
             },
         )
@@ -57,9 +68,9 @@ class BestEffortSender:
     def __init__(self, inner: EmailSender) -> None:
         self.inner = inner
 
-    def send(self, to: str, subject: str, body: str) -> None:
+    def send(self, to: str, subject: str, body: str, html: str | None = None) -> None:
         try:
-            self.inner.send(to, subject, body)
+            self.inner.send(to, subject, body, html)
         except Exception as exc:  # noqa: BLE001 — deliberately broad
             print(f"[email] send to {to} failed: {exc!r}")
 

@@ -33,7 +33,7 @@ export default function ContributePage() {
       if (err instanceof ApiError && err.status === 401) {
         router.replace(`/login?next=${encodeURIComponent(location.pathname)}`);
       } else {
-        setError("We couldn't load this page — please try the link again");
+        setError("We couldn't load this page. Please try the link again");
       }
     }
   }, [familyId, childId, router]);
@@ -58,7 +58,7 @@ export default function ContributePage() {
       });
       if (contribution.client_secret) {
         if (!stripePromise) {
-          setError("Payments aren't configured on this site yet — please try again later.");
+          setError("Payments aren't configured on this site yet. Please try again later.");
           setBusy(false);
           return;
         }
@@ -70,7 +70,7 @@ export default function ContributePage() {
         setDone(true);
       }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong — please try again");
+      setError(err instanceof ApiError ? err.message : "Something went wrong. Please try again");
       setBusy(false);
     }
   }
@@ -85,7 +85,7 @@ export default function ContributePage() {
         </h1>
         <p className="text-stone-600">
           Your {formatMoney(finalAmount)} gift{message ? " and your note are" : " is"} on
-          {childName ? ` ${childName}'s` : " their"} timeline for the whole family to see —
+          {childName ? ` ${childName}'s` : " their"} timeline for the whole family to see,
           and it will be waiting for {childName || "them"} for years to come.
         </p>
         <Button onClick={() => router.push(`/family/${familyId}`)} className="w-full">
@@ -197,7 +197,7 @@ function PaymentForm({ amount, onPaid }: { amount: number; onPaid: () => void })
       redirect: "if_required",
     });
     if (result.error) {
-      setError(result.error.message ?? "The payment didn't go through — please try again");
+      setError(result.error.message ?? "The payment didn't go through. Please try again");
       setBusy(false);
     } else {
       onPaid();

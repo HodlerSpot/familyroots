@@ -49,7 +49,7 @@ export function FamilyFeedList({ events }: { events: FeedEventOut[] }) {
   if (events.length === 0) {
     return (
       <p className="text-stone-600">
-        Nothing here yet — add a child, share a memory, or celebrate a milestone and it
+        Nothing here yet. Add a child, share a memory, or celebrate a milestone and it
         will show up for the whole family.
       </p>
     );

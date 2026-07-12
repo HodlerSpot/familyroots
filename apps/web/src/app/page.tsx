@@ -26,7 +26,7 @@ export default function Home() {
         </h1>
         <p className="mx-auto max-w-xl text-lg text-stone-600">
           FutureRoots is a private space where your family shares memories, celebrates
-          milestones, and builds a future together — for the children you love.
+          milestones, and builds a future together, for the children you love.
         </p>
       </div>
       <div className="flex justify-center gap-4">
@@ -46,7 +46,7 @@ export default function Home() {
         <Card>
           <h3 className="font-semibold text-emerald-900">Bring family close</h3>
           <p className="mt-1 text-sm text-stone-600">
-            Grandparents and relatives join in — celebrating achievements the moment they
+            Grandparents and relatives join in, celebrating achievements the moment they
             happen.
           </p>
         </Card>

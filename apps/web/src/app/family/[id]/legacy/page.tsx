@@ -58,9 +58,9 @@ export default function LegacyPage() {
             <h1 className="text-3xl font-bold text-emerald-900">Legacy archive 🌳</h1>
             <p className="text-stone-600">
               {familyName
-                ? `The story of ${familyPhrase(familyName)}`
-                : "Your family story"}{" "}
-              — recipes, wisdom, and history, kept for every generation.
+                ? `The story of ${familyPhrase(familyName)}.`
+                : "Your family story."}{" "}
+              Recipes, wisdom, and history, kept for every generation.
             </p>
           </div>
           <Button onClick={() => setShowForm((v) => !v)}>
@@ -81,7 +81,7 @@ export default function LegacyPage() {
 
       {items.length === 0 && !showForm && (
         <p className="text-stone-600">
-          The archive is waiting for its first treasure — a recipe, a story from the old
+          The archive is waiting for its first treasure: a recipe, a story from the old
           days, a piece of advice worth keeping.
         </p>
       )}

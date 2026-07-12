@@ -64,7 +64,7 @@ export function CapsulesSection({
 
       {capsules.length === 0 && !showForm && (
         <p className="text-stone-600">
-          Seal a letter or recording today — {childName || "they"} will open it years from
+          Seal a letter or recording today. {childName || "They"} will open it years from
           now, right when it matters most.
         </p>
       )}
