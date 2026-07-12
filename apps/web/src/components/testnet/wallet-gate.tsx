@@ -3,9 +3,14 @@
 // The testnet front door: replaces the email login/signup flow with a warm
 // wallet-connect screen. Signature-only sign-in on Base Sepolia; there are
 // no transactions and nothing to spend.
+//
+// Wallet choice uses EIP-6963 discovery (wagmi's multiInjectedProviderDiscovery,
+// on by default): every installed wallet appears as its own connector with its
+// own provider, so picking "MetaMask" reaches MetaMask even when another wallet
+// (Temple, Rabby, ...) has claimed window.ethereum.
 
 import { useState } from "react";
-import { useAccount, useConnect, useDisconnect, useSignMessage } from "wagmi";
+import { Connector, useAccount, useConnect, useDisconnect, useSignMessage } from "wagmi";
 import { setToken } from "@/lib/api";
 import { Button, Card, ErrorNote } from "@/components/ui";
 import { Logo } from "@/components/logo";
@@ -13,13 +18,32 @@ import { testnetApi } from "./api";
 
 export function WalletGate({ onSignedIn }: { onSignedIn: () => void }) {
   const { address, isConnected } = useAccount();
-  const { connect, connectors, isPending: connecting } = useConnect();
+  const { connectors, connectAsync } = useConnect();
   const { disconnect } = useDisconnect();
   const { signMessageAsync } = useSignMessage();
+  const [pendingId, setPendingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const connector = connectors[0];
+  // EIP-6963 wallets each carry a distinct id + name + icon. The generic
+  // "injected" connector is a catch-all fallback; show it only when no
+  // specific wallet was discovered, so users don't see a vague duplicate.
+  const discovered = connectors.filter((c) => c.id !== "injected");
+  const choices = discovered.length > 0 ? discovered : connectors;
+
+  async function pick(connector: Connector) {
+    setError("");
+    setPendingId(connector.uid);
+    try {
+      await connectAsync({ connector });
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "We couldn't reach that wallet. Please try again"
+      );
+    } finally {
+      setPendingId(null);
+    }
+  }
 
   async function signIn() {
     if (!address) return;
@@ -60,19 +84,38 @@ export function WalletGate({ onSignedIn }: { onSignedIn: () => void }) {
             Your wallet is only your tester sign-in on Base Sepolia. You sign one
             message to prove it&apos;s yours. No transactions, no fees, nothing to spend.
           </p>
-          {!connector ? (
-            <p className="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              We couldn&apos;t find a wallet in this browser. Install one (MetaMask or
-              Coinbase Wallet both work), then refresh this page.
-            </p>
-          ) : !isConnected ? (
-            <Button
-              className="w-full"
-              disabled={connecting}
-              onClick={() => connect({ connector })}
-            >
-              {connecting ? "Connecting…" : "Connect wallet"}
-            </Button>
+
+          {!isConnected ? (
+            choices.length === 0 ? (
+              <p className="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                We couldn&apos;t find a wallet in this browser. Install one (MetaMask and
+                Coinbase Wallet both work), then refresh this page.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {choices.map((connector) => (
+                  <button
+                    key={connector.uid}
+                    onClick={() => pick(connector)}
+                    disabled={pendingId !== null}
+                    className="flex w-full items-center gap-3 rounded-xl border border-stone-200 px-4 py-3 text-left font-semibold text-stone-800 transition-colors hover:border-emerald-400 hover:bg-emerald-50 disabled:opacity-50"
+                  >
+                    {connector.icon ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={connector.icon} alt="" className="h-7 w-7 rounded-md" />
+                    ) : (
+                      <span className="flex h-7 w-7 items-center justify-center rounded-md bg-stone-100">
+                        👛
+                      </span>
+                    )}
+                    <span className="flex-1">{connector.name}</span>
+                    {pendingId === connector.uid && (
+                      <span className="text-sm font-normal text-stone-400">Connecting…</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )
           ) : (
             <div className="space-y-3">
               <p className="truncate rounded-lg bg-stone-100 px-4 py-2 text-center font-mono text-sm text-stone-700">
