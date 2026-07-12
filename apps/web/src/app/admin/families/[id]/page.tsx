@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { AdminFamilyDetail, adminApi, formatMoney } from "@/lib/api";
 import { AdminShell } from "@/components/admin/shell";
-import { Card } from "@/components/ui";
+import { Button, Card } from "@/components/ui";
 
 const STATUS_CHIP: Record<string, string> = {
   succeeded: "bg-emerald-100 text-emerald-800",
@@ -21,14 +21,38 @@ export default function AdminFamilyDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [f, setF] = useState<AdminFamilyDetail | null>(null);
   const [error, setError] = useState("");
+  const [limit, setLimit] = useState("");
+  const [savingLimit, setSavingLimit] = useState(false);
+  const [savedLimit, setSavedLimit] = useState(false);
 
   const load = useCallback(() => {
-    adminApi.family(id).then(setF).catch(() => setError("Couldn't load this family."));
+    adminApi
+      .family(id)
+      .then((data) => {
+        setF(data);
+        setLimit(String(data.max_upload_mb));
+      })
+      .catch(() => setError("Couldn't load this family."));
   }, [id]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  async function saveLimit(e: React.FormEvent) {
+    e.preventDefault();
+    const mb = parseInt(limit, 10);
+    if (!(mb >= 1 && mb <= 200)) return;
+    setSavingLimit(true);
+    setSavedLimit(false);
+    try {
+      const updated = await adminApi.setFamilySettings(id, mb);
+      setF(updated);
+      setSavedLimit(true);
+    } finally {
+      setSavingLimit(false);
+    }
+  }
 
   return (
     <AdminShell>
@@ -51,6 +75,36 @@ export default function AdminFamilyDetailPage() {
               </div>
               <div className="text-sm text-stone-500">total future funds</div>
             </div>
+          </Card>
+
+          <Card>
+            <h3 className="mb-1 font-semibold text-emerald-900">Settings</h3>
+            <p className="mb-3 text-sm text-stone-600">
+              Maximum size for a single attachment (photos, videos, recordings) this family
+              can upload.
+            </p>
+            <form onSubmit={saveLimit} className="flex items-end gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-stone-500">
+                  Max upload size (MB)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={limit}
+                  onChange={(e) => {
+                    setLimit(e.target.value);
+                    setSavedLimit(false);
+                  }}
+                  className="w-28 rounded-lg border border-stone-300 px-3 py-2 text-sm"
+                />
+              </div>
+              <Button type="submit" variant="soft" disabled={savingLimit}>
+                {savingLimit ? "Saving…" : "Save"}
+              </Button>
+              {savedLimit && <span className="pb-2 text-sm text-emerald-700">Saved ✓</span>}
+            </form>
           </Card>
 
           <section>

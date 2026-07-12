@@ -6,6 +6,8 @@ from fastapi import APIRouter, HTTPException, Request, status
 from ..config import settings
 from ..deps import CurrentUser, DbSession, get_active_membership, get_child_with_access
 from ..models import (
+    Child,
+    Family,
     FamilyMember,
     FeedEventType,
     MediaObject,
@@ -30,7 +32,20 @@ from ..services.storage import get_storage
 
 router = APIRouter(tags=["vault"])
 
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+DEFAULT_MAX_UPLOAD_MB = 10  # default attachment cap; families can be raised/lowered by an admin
+
+
+def _max_upload_bytes(db, media: MediaObject) -> int:
+    """The attachment size cap for this media, from its owning family's setting
+    (falling back to the default). Tester media (testnet) uses the default."""
+    family = None
+    if media.child_id is not None:
+        child = db.get(Child, media.child_id)
+        family = db.get(Family, child.family_id) if child else None
+    elif media.family_id is not None:
+        family = db.get(Family, media.family_id)
+    mb = family.max_upload_mb if family else DEFAULT_MAX_UPLOAD_MB
+    return mb * 1024 * 1024
 
 
 def _vault_item_out(item: VaultItem) -> VaultItemOut:
@@ -81,10 +96,12 @@ async def upload_media_content(
     if media.status != MediaStatus.pending:
         raise HTTPException(status.HTTP_409_CONFLICT, "This upload is already complete")
 
+    limit = _max_upload_bytes(db, media)
     body = await request.body()
-    if len(body) > MAX_UPLOAD_BYTES:
+    if len(body) > limit:
         raise HTTPException(
-            status.HTTP_413_CONTENT_TOO_LARGE, "That file is too large (25 MB max for now)"
+            status.HTTP_413_CONTENT_TOO_LARGE,
+            f"That file is too large ({limit // (1024 * 1024)} MB max)",
         )
     get_storage().save(media.storage_key, io.BytesIO(body))
     db.commit()
@@ -104,10 +121,12 @@ def complete_media_upload(media_id: uuid.UUID, db: DbSession, user: CurrentUser)
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, "The file never arrived. Please try again"
         )
-    if size > MAX_UPLOAD_BYTES:
+    limit = _max_upload_bytes(db, media)
+    if size > limit:
         get_storage().delete(media.storage_key)
         raise HTTPException(
-            status.HTTP_413_CONTENT_TOO_LARGE, "That file is too large (25 MB max for now)"
+            status.HTTP_413_CONTENT_TOO_LARGE,
+            f"That file is too large ({limit // (1024 * 1024)} MB max)",
         )
     media.byte_size = size
     media.status = MediaStatus.uploaded

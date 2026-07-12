@@ -72,7 +72,13 @@ export default function FamilyPage() {
             </Card>
           ))}
         </div>
-        {isParent && <AddChildForm familyId={family.id} onAdded={load} />}
+        {isParent && (
+          <AddChildForm
+            familyId={family.id}
+            onAdded={load}
+            hasChildren={family.children.length > 0}
+          />
+        )}
       </section>
 
       <Card className="transition hover:border-emerald-400">
@@ -110,12 +116,22 @@ export default function FamilyPage() {
   );
 }
 
-function AddChildForm({ familyId, onAdded }: { familyId: string; onAdded: () => void }) {
+function AddChildForm({
+  familyId,
+  onAdded,
+  hasChildren,
+}: {
+  familyId: string;
+  onAdded: () => void;
+  hasChildren: boolean;
+}) {
   const [name, setName] = useState("");
   const [birthdate, setBirthdate] = useState("");
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Once a family has children, the form starts collapsed to keep the page calm
+  const [open, setOpen] = useState(!hasChildren);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -126,6 +142,7 @@ function AddChildForm({ familyId, onAdded }: { familyId: string; onAdded: () => 
       setName("");
       setBirthdate("");
       setConsent(false);
+      setOpen(false);
       onAdded();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
@@ -134,9 +151,32 @@ function AddChildForm({ familyId, onAdded }: { familyId: string; onAdded: () => 
     }
   }
 
+  const title = hasChildren ? "Add another child" : "Add a child";
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-stone-300 py-3 text-sm font-medium text-stone-500 hover:border-emerald-400 hover:text-emerald-800"
+      >
+        + {title}
+      </button>
+    );
+  }
+
   return (
     <Card>
-      <h3 className="mb-4 font-semibold text-emerald-900">Add a child</h3>
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="font-semibold text-emerald-900">{title}</h3>
+        {hasChildren && (
+          <button
+            onClick={() => setOpen(false)}
+            className="text-sm text-stone-400 hover:text-stone-600"
+          >
+            Close
+          </button>
+        )}
+      </div>
       <form onSubmit={submit} className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <div>

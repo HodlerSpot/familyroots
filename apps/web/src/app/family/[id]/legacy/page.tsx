@@ -6,13 +6,15 @@ import { api, ApiError, getToken, LegacyOut, LegacyType, mediaUrl } from "@/lib/
 import { familyPhrase } from "@/lib/text";
 import { Button, Card, ErrorNote, Input, Label } from "@/components/ui";
 
-const TYPE_META: Record<LegacyType, { icon: string; label: string }> = {
-  story: { icon: "📖", label: "Story" },
-  recipe: { icon: "🥧", label: "Recipe" },
-  document: { icon: "📜", label: "Document" },
-  photo: { icon: "🖼️", label: "Photo" },
-  wisdom: { icon: "🦉", label: "Wisdom" },
+const TYPE_META: Record<LegacyType, { icon: string; label: string; prompt: string }> = {
+  story: { icon: "📖", label: "Story", prompt: "Tell a story from the old days" },
+  recipe: { icon: "🥧", label: "Recipe", prompt: "Pass down a family recipe" },
+  wisdom: { icon: "🦉", label: "Wisdom", prompt: "Record a piece of advice" },
+  photo: { icon: "🖼️", label: "Photo", prompt: "Add a cherished old photo" },
+  document: { icon: "📜", label: "Document", prompt: "Keep an important document safe" },
 };
+
+const TYPE_ORDER: LegacyType[] = ["story", "recipe", "wisdom", "photo", "document"];
 
 export default function LegacyPage() {
   const router = useRouter();
@@ -21,6 +23,8 @@ export default function LegacyPage() {
   const [familyName, setFamilyName] = useState("");
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [presetType, setPresetType] = useState<LegacyType>("story");
+  const autoOpened = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -30,11 +34,21 @@ export default function LegacyPage() {
       ]);
       setItems(legacy);
       setFamilyName(family.name);
+      // First visit with an empty archive: open the form so it's inviting, not blank
+      if (legacy.length === 0 && !autoOpened.current) {
+        autoOpened.current = true;
+        setShowForm(true);
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) router.replace("/login");
       else setError(err instanceof ApiError ? err.message : "Couldn't load the archive");
     }
   }, [familyId, router]);
+
+  function startAdd(type: LegacyType) {
+    setPresetType(type);
+    setShowForm(true);
+  }
 
   useEffect(() => {
     if (!getToken()) {
@@ -71,7 +85,9 @@ export default function LegacyPage() {
 
       {showForm && (
         <LegacyForm
+          key={presetType}
           familyId={familyId}
+          initialType={presetType}
           onAdded={() => {
             setShowForm(false);
             load();
@@ -79,11 +95,46 @@ export default function LegacyPage() {
         />
       )}
 
-      {items.length === 0 && !showForm && (
-        <p className="text-stone-600">
-          The archive is waiting for its first treasure: a recipe, a story from the old
-          days, a piece of advice worth keeping.
-        </p>
+      {/* Inspiration prompts: one tap opens the form pre-set to that kind. Shown
+          prominently when the archive is empty, as a quiet strip once it has items. */}
+      {items.length === 0 ? (
+        <Card className="bg-gradient-to-br from-emerald-50 to-blue-50">
+          <div className="text-center">
+            <div className="text-4xl">🌳</div>
+            <h2 className="mt-2 text-xl font-bold text-emerald-900">
+              Every family has a story. Start yours.
+            </h2>
+            <p className="mx-auto mt-1 max-w-md text-sm text-stone-600">
+              The archive holds the things worth keeping for generations: recipes in a
+              grandparent&apos;s words, the stories behind old photos, the advice you never
+              want lost. Add the first one below, or pick a place to begin.
+            </p>
+          </div>
+          <div className="mt-5 grid gap-2 sm:grid-cols-2">
+            {TYPE_ORDER.map((t) => (
+              <button
+                key={t}
+                onClick={() => startAdd(t)}
+                className="flex items-center gap-3 rounded-xl border border-stone-200 bg-white/70 px-4 py-3 text-left transition hover:border-emerald-400 hover:bg-white"
+              >
+                <span className="text-2xl">{TYPE_META[t].icon}</span>
+                <span className="text-sm font-medium text-stone-800">{TYPE_META[t].prompt}</span>
+              </button>
+            ))}
+          </div>
+        </Card>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {TYPE_ORDER.map((t) => (
+            <button
+              key={t}
+              onClick={() => startAdd(t)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 px-3 py-1.5 text-sm text-stone-600 hover:border-emerald-400 hover:text-emerald-800"
+            >
+              <span>{TYPE_META[t].icon}</span> Add {TYPE_META[t].label.toLowerCase()}
+            </button>
+          ))}
+        </div>
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -127,8 +178,16 @@ export default function LegacyPage() {
   );
 }
 
-function LegacyForm({ familyId, onAdded }: { familyId: string; onAdded: () => void }) {
-  const [type, setType] = useState<LegacyType>("story");
+function LegacyForm({
+  familyId,
+  onAdded,
+  initialType = "story",
+}: {
+  familyId: string;
+  onAdded: () => void;
+  initialType?: LegacyType;
+}) {
+  const [type, setType] = useState<LegacyType>(initialType);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [error, setError] = useState("");

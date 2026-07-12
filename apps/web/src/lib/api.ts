@@ -443,6 +443,7 @@ export interface AdminFamilyDetail {
   name: string;
   created_at: string;
   fund_cents: number;
+  max_upload_mb: number;
   members: {
     user_id: string;
     display_name: string;
@@ -482,6 +483,11 @@ export const adminApi = {
   user: (id: string) => request<AdminUserDetail>(`/admin/users/${id}`),
   families: (q?: string) => request<Page<AdminFamilyRow>>(`/admin/families${qs({ q })}`),
   family: (id: string) => request<AdminFamilyDetail>(`/admin/families/${id}`),
+  setFamilySettings: (id: string, maxUploadMb: number) =>
+    request<AdminFamilyDetail>(`/admin/families/${id}/settings`, {
+      method: "POST",
+      body: JSON.stringify({ max_upload_mb: maxUploadMb }),
+    }),
   contributions: (q?: string, status?: string) =>
     request<Page<AdminContribution>>(`/admin/contributions${qs({ q, status })}`),
   contributionsCsvUrl: (q?: string, status?: string) =>

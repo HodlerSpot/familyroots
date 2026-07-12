@@ -70,10 +70,12 @@ export default function FamilyDashboard() {
 
       {families?.map((f) => (
         <Card key={f.id} className="cursor-pointer transition hover:border-emerald-400">
-          <a href={`/family/${f.id}`} className="flex items-center justify-between">
-            <div>
+          <a href={`/family/${f.id}`} className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
               <h2 className="text-xl font-semibold text-stone-900">{f.name}</h2>
-              <p className="text-sm capitalize text-stone-500">You&apos;re a {f.role}</p>
+              <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold capitalize text-emerald-800">
+                {f.role}
+              </span>
             </div>
             <span className="text-emerald-700">→</span>
           </a>

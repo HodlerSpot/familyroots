@@ -18,7 +18,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 
 from ..deps import AdminUser, DbSession
@@ -136,6 +136,7 @@ class AdminFamilyDetail(BaseModel):
     name: str
     created_at: datetime
     fund_cents: int
+    max_upload_mb: int
     members: list["MemberRef"]
     children: list["ChildRef"]
     contributions: list[MiniContribution]
@@ -534,6 +535,7 @@ def family_detail(family_id: uuid.UUID, db: DbSession, admin: AdminUser) -> Admi
     return AdminFamilyDetail(
         id=f.id, name=f.name, created_at=f.created_at,
         fund_cents=sum(_fund_cents_for_child(db, c.id) for c in children),
+        max_upload_mb=f.max_upload_mb,
         members=[
             MemberRef(
                 user_id=u.id, display_name=u.display_name, email=u.email,
@@ -547,6 +549,23 @@ def family_detail(family_id: uuid.UUID, db: DbSession, admin: AdminUser) -> Admi
         ],
         contributions=[_mini_contribution(c, u, ch) for c, u, ch in contribs],
     )
+
+
+class FamilySettings(BaseModel):
+    max_upload_mb: int = Field(ge=1, le=200)
+
+
+@router.post("/families/{family_id}/settings", response_model=AdminFamilyDetail)
+def update_family_settings(
+    family_id: uuid.UUID, payload: FamilySettings, db: DbSession, admin: AdminUser
+) -> AdminFamilyDetail:
+    f = db.get(Family, family_id)
+    if f is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Family not found")
+    f.max_upload_mb = payload.max_upload_mb
+    _audit(db, admin, "family_settings", f"family:{f.id}", {"max_upload_mb": payload.max_upload_mb})
+    db.commit()
+    return family_detail(family_id, db, admin)
 
 
 # --- contributions ---

@@ -168,6 +168,7 @@ class Family(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(120))
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    max_upload_mb: Mapped[int] = mapped_column(default=10)  # per-family attachment size cap
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     members: Mapped[list["FamilyMember"]] = relationship(back_populates="family")
