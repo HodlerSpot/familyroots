@@ -5,8 +5,146 @@ import { useRouter } from "next/navigation";
 import { api, ApiError, getToken, UserOut } from "@/lib/api";
 import { Button, Card, ErrorNote, Label, PasswordInput } from "@/components/ui";
 import { PasswordRules, passwordMeetsRules } from "@/components/password-rules";
+import { QuestBoard, testnetApi } from "@/components/testnet/api";
+
+const IS_TESTNET = process.env.NEXT_PUBLIC_TESTNET === "1";
 
 export default function AccountPage() {
+  return IS_TESTNET ? <TestnetAccount /> : <FamilyAccount />;
+}
+
+// --- Wallet-based tester account (testnet only) ---
+
+function shortWallet(addr: string): string {
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+function TestnetAccount() {
+  const router = useRouter();
+  const [board, setBoard] = useState<QuestBoard | null>(null);
+  const [name, setName] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!getToken()) {
+      router.replace("/login?next=/account");
+      return;
+    }
+    testnetApi
+      .quests()
+      .then((b) => {
+        setBoard(b);
+        setName(b.display_name ?? "");
+      })
+      .catch(() => router.replace("/login?next=/account"));
+  }, [router]);
+
+  async function saveName(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    setSaved(false);
+    try {
+      await testnetApi.setProfile(name.trim());
+      setSaved(true);
+      setBoard((b) => (b ? { ...b, display_name: name.trim() } : b));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong. Please try again");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function copyWallet() {
+    if (!board) return;
+    navigator.clipboard?.writeText(board.wallet_address);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  if (!board) return <p className="text-stone-500">Loading…</p>;
+
+  return (
+    <div className="mx-auto max-w-md space-y-6">
+      <div>
+        <a href="/family" className="text-sm text-stone-500 underline">
+          Back to testing
+        </a>
+        <h1 className="mt-2 text-3xl font-bold text-emerald-900">Your tester account</h1>
+      </div>
+
+      <Card className="space-y-5">
+        <div className="flex items-center gap-4">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-2xl">
+            👛
+          </div>
+          <div className="min-w-0">
+            <p className="text-lg font-bold text-stone-900">
+              {board.display_name || shortWallet(board.wallet_address)}
+            </p>
+            <button
+              onClick={copyWallet}
+              className="mt-0.5 font-mono text-sm text-stone-500 hover:text-stone-700"
+              title="Copy full address"
+            >
+              {shortWallet(board.wallet_address)}
+              <span className="ml-2 text-xs">{copied ? "copied ✓" : "copy"}</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between rounded-xl bg-emerald-50 px-4 py-3">
+          <span className="text-sm font-medium text-emerald-900">Points earned</span>
+          <span className="text-2xl font-extrabold tabular-nums text-emerald-900">
+            {board.total_points}
+          </span>
+        </div>
+        <a
+          href="/leaderboard"
+          className="block text-center text-sm font-medium text-emerald-700 underline"
+        >
+          See the leaderboard
+        </a>
+      </Card>
+
+      <Card>
+        <h2 className="mb-1 text-lg font-semibold text-emerald-900">Leaderboard name</h2>
+        <p className="mb-4 text-sm text-stone-600">
+          Choose how you appear to other testers. Leave it blank to stay a shortened wallet.
+        </p>
+        <form onSubmit={saveName} className="space-y-4">
+          <div>
+            <Label htmlFor="name">Display name</Label>
+            <input
+              id="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={40}
+              placeholder={shortWallet(board.wallet_address)}
+              className="w-full rounded-lg border border-stone-300 bg-white px-4 py-3 text-base text-stone-900 placeholder-stone-400 focus:border-emerald-600 focus:outline-none"
+            />
+          </div>
+          {saved && (
+            <p className="rounded-lg bg-emerald-50 px-4 py-2 text-sm text-emerald-900">
+              Saved ✓
+            </p>
+          )}
+          <ErrorNote>{error}</ErrorNote>
+          <Button type="submit" disabled={busy || !name.trim()} className="w-full">
+            {busy ? "Saving…" : "Save name"}
+          </Button>
+        </form>
+      </Card>
+    </div>
+  );
+}
+
+// --- Email/password family account (the product) ---
+
+function FamilyAccount() {
   const router = useRouter();
   const [me, setMe] = useState<UserOut | null>(null);
   const [current, setCurrent] = useState("");
@@ -49,7 +187,7 @@ export default function AccountPage() {
     <div className="mx-auto max-w-md space-y-6">
       <div>
         <a href="/family" className="text-sm text-stone-500 underline">
-          ← Back to your families
+          Back to your families
         </a>
         <h1 className="mt-2 text-3xl font-bold text-emerald-900">Your account</h1>
         <p className="text-stone-600">
