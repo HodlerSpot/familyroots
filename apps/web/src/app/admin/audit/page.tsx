@@ -12,7 +12,10 @@ const ACTION_LABEL: Record<string, string> = {
   role_changed: "changed a role",
   impersonate: "viewed as a user",
   contribution_refunded: "refunded a contribution",
+  contribution_reconciled: "reconciled a contribution",
   contributions_exported: "exported contributions",
+  user_disabled: "disabled a user",
+  user_enabled: "re-enabled a user",
 };
 
 export default function AdminAuditPage() {
@@ -103,10 +106,20 @@ export default function AdminAuditPage() {
                   {ACTION_LABEL[r.action] ?? r.action}
                   {r.target ? <span className="text-stone-400"> · {r.target}</span> : null}
                 </p>
-                {Object.keys(r.detail).length > 0 && (
-                  <p className="mt-0.5 truncate font-mono text-xs text-stone-400">
-                    {JSON.stringify(r.detail)}
-                  </p>
+                {Object.entries(r.detail).filter(([, v]) => v !== null && v !== "").length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {Object.entries(r.detail)
+                      .filter(([, v]) => v !== null && v !== "")
+                      .map(([k, v]) => (
+                        <span
+                          key={k}
+                          className="rounded bg-stone-100 px-1.5 py-0.5 text-[11px] text-stone-600"
+                        >
+                          <span className="text-stone-400">{k.replace(/_/g, " ")}:</span>{" "}
+                          {String(v)}
+                        </span>
+                      ))}
+                  </div>
                 )}
               </div>
               <span className="shrink-0 text-xs text-stone-400">

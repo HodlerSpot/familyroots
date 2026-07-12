@@ -26,7 +26,12 @@ async def stripe_webhook(
     except (stripe.error.SignatureVerificationError, ValueError):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid signature")
 
-    if event["type"] in ("payment_intent.succeeded", "payment_intent.payment_failed"):
+    handled = {
+        "payment_intent.succeeded",
+        "payment_intent.payment_failed",
+        "payment_intent.canceled",
+    }
+    if event["type"] in handled:
         intent = event["data"]["object"]
         contribution = (
             db.query(Contribution)
@@ -42,6 +47,7 @@ async def stripe_webhook(
                 settle_contribution(db, contribution)
                 db.commit()
         else:
+            # failed or canceled: a payment that never settled becomes failed
             if contribution.status == ContributionStatus.pending:
                 contribution.status = ContributionStatus.failed
                 db.commit()

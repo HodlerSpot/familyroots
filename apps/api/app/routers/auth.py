@@ -92,6 +92,8 @@ def login(payload: LoginRequest, db: DbSession) -> TokenResponse:
     user = db.query(User).filter(User.email == payload.email.lower()).first()
     if user is None or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect email or password")
+    if user.disabled:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "This account has been disabled")
     return TokenResponse(access_token=create_access_token(user.id))
 
 

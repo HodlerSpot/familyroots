@@ -380,12 +380,14 @@ export interface AdminOverview {
 
 export interface AdminContribution {
   id: string;
+  contributor_id: string | null;
   contributor_name: string;
   child_name: string;
   amount_cents: number;
   refunded_cents: number;
   currency: string;
   status: string;
+  provider_payment_id: string | null;
   created_at: string;
 }
 
@@ -394,9 +396,21 @@ export interface AdminUserRow {
   display_name: string;
   email: string;
   role: "user" | "admin";
+  disabled: boolean;
   family_count: number;
   child_count: number;
   created_at: string;
+}
+
+export interface AdminUserDetail {
+  id: string;
+  display_name: string;
+  email: string;
+  role: "user" | "admin";
+  disabled: boolean;
+  created_at: string;
+  families: { id: string; name: string; role: string }[];
+  contributions: AdminContribution[];
 }
 
 export interface AdminFamilyRow {
@@ -442,6 +456,7 @@ function qs(params: Record<string, string | undefined>): string {
 export const adminApi = {
   overview: () => request<AdminOverview>("/admin/overview"),
   users: (q?: string) => request<Page<AdminUserRow>>(`/admin/users${qs({ q })}`),
+  user: (id: string) => request<AdminUserDetail>(`/admin/users/${id}`),
   families: (q?: string) => request<Page<AdminFamilyRow>>(`/admin/families${qs({ q })}`),
   contributions: (q?: string, status?: string) =>
     request<Page<AdminContribution>>(`/admin/contributions${qs({ q, status })}`),
@@ -451,6 +466,10 @@ export const adminApi = {
     request<AdminContribution>(`/admin/contributions/${contributionId}/refund`, {
       method: "POST",
       body: JSON.stringify({ amount_cents: amountCents ?? null }),
+    }),
+  reconcile: (contributionId: string) =>
+    request<AdminContribution>(`/admin/contributions/${contributionId}/reconcile`, {
+      method: "POST",
     }),
   bugs: (status?: string) => request<AdminBugRow[]>(`/admin/bugs${qs({ status })}`),
   auditActions: () => request<string[]>("/admin/audit/actions"),
@@ -462,6 +481,11 @@ export const adminApi = {
     request<{ id: string; role: string }>(`/admin/users/${userId}/role`, {
       method: "POST",
       body: JSON.stringify({ role }),
+    }),
+  setStatus: (userId: string, disabled: boolean) =>
+    request<{ id: string; disabled: boolean }>(`/admin/users/${userId}/status`, {
+      method: "POST",
+      body: JSON.stringify({ disabled }),
     }),
   impersonate: (userId: string) =>
     request<{ access_token: string; expires_in_minutes: number; display_name: string; email: string }>(

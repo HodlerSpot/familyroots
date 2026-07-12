@@ -39,7 +39,7 @@ from ..models import (
     utcnow,
 )
 from ..security import create_impersonation_token
-from ..services.payments import fund_balance_cents, refund_contribution
+from ..services.payments import fund_balance_cents, reconcile_contribution, refund_contribution
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -76,17 +76,20 @@ class MiniUser(BaseModel):
     display_name: str
     email: str
     role: UserRole
+    disabled: bool = False
     created_at: datetime
 
 
 class MiniContribution(BaseModel):
     id: uuid.UUID
+    contributor_id: uuid.UUID | None
     contributor_name: str
     child_name: str
     amount_cents: int
     refunded_cents: int
     currency: str
     status: ContributionStatus
+    provider_payment_id: str | None  # Stripe PaymentIntent id, for off-site tracing
     created_at: datetime
 
 
@@ -95,6 +98,7 @@ class AdminUserRow(BaseModel):
     display_name: str
     email: str
     role: UserRole
+    disabled: bool
     family_count: int
     child_count: int
     created_at: datetime
@@ -105,6 +109,7 @@ class AdminUserDetail(BaseModel):
     display_name: str
     email: str
     role: UserRole
+    disabled: bool
     created_at: datetime
     families: list["FamilyRef"]
     contributions: list[MiniContribution]
@@ -194,12 +199,14 @@ def _fund_cents_for_child(db, child_id: uuid.UUID) -> int:
 def _mini_contribution(c: Contribution, contributor: User | None, child: Child | None) -> MiniContribution:
     return MiniContribution(
         id=c.id,
+        contributor_id=c.contributor_user_id,
         contributor_name=contributor.display_name if contributor else "Unknown",
         child_name=child.first_name if child else "Unknown",
         amount_cents=c.amount_cents,
         refunded_cents=c.refunded_cents,
         currency=c.currency,
         status=c.status,
+        provider_payment_id=c.provider_payment_id,
         created_at=c.created_at,
     )
 
@@ -250,7 +257,7 @@ def overview(db: DbSession, admin: AdminUser) -> OverviewOut:
         recent_signups=[
             MiniUser(
                 id=u.id, display_name=u.display_name, email=u.email, role=u.role,
-                created_at=u.created_at,
+                disabled=u.disabled, created_at=u.created_at,
             )
             for u in recent_users
         ],
@@ -289,7 +296,7 @@ def list_users(
         rows.append(
             AdminUserRow(
                 id=u.id, display_name=u.display_name, email=u.email, role=u.role,
-                family_count=fam, child_count=kids, created_at=u.created_at,
+                disabled=u.disabled, family_count=fam, child_count=kids, created_at=u.created_at,
             )
         )
     return Page(total=total, items=rows)
@@ -316,7 +323,7 @@ def user_detail(user_id: uuid.UUID, db: DbSession, admin: AdminUser) -> AdminUse
     )
     return AdminUserDetail(
         id=u.id, display_name=u.display_name, email=u.email, role=u.role,
-        created_at=u.created_at,
+        disabled=u.disabled, created_at=u.created_at,
         families=[FamilyRef(id=f.id, name=f.name, role=m.role.value) for f, m in memberships],
         contributions=[_mini_contribution(c, u, ch) for c, ch in contribs],
     )
@@ -429,11 +436,38 @@ def set_user_role(
             status.HTTP_400_BAD_REQUEST, "You can't remove your own admin access"
         )
     u.role = payload.role
-    _audit(db, admin, "role_changed", f"user:{u.id}", {"role": payload.role.value})
+    _audit(db, admin, "role_changed", f"user:{u.id}", {"user": u.email, "new_role": payload.role.value})
     db.commit()
     return MiniUser(
         id=u.id, display_name=u.display_name, email=u.email, role=u.role,
-        created_at=u.created_at,
+        disabled=u.disabled, created_at=u.created_at,
+    )
+
+
+class StatusUpdate(BaseModel):
+    disabled: bool
+
+
+@router.post("/users/{user_id}/status", response_model=MiniUser)
+def set_user_status(
+    user_id: uuid.UUID, payload: StatusUpdate, db: DbSession, admin: AdminUser
+) -> MiniUser:
+    """Enable or disable a user's ability to sign in. A disabled account is
+    locked out immediately, even mid-session. Audit-logged; can't disable self."""
+    u = db.get(User, user_id)
+    if u is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if u.id == admin.id and payload.disabled:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "You can't disable your own account")
+    u.disabled = payload.disabled
+    _audit(
+        db, admin, "user_disabled" if payload.disabled else "user_enabled",
+        f"user:{u.id}", {"email": u.email},
+    )
+    db.commit()
+    return MiniUser(
+        id=u.id, display_name=u.display_name, email=u.email, role=u.role,
+        disabled=u.disabled, created_at=u.created_at,
     )
 
 
@@ -542,7 +576,8 @@ def export_contributions_csv(
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(
-        ["created_at", "contributor", "contributor_email", "child", "amount", "fee", "currency", "status", "id"]
+        ["created_at", "contributor", "contributor_email", "child", "amount", "fee",
+         "refunded", "currency", "status", "stripe_payment_id", "id"]
     )
     for c, u, ch in rows:
         w.writerow([
@@ -552,8 +587,10 @@ def export_contributions_csv(
             ch.first_name if ch else "",
             f"{c.amount_cents / 100:.2f}",
             f"{c.fee_cents / 100:.2f}",
+            f"{c.refunded_cents / 100:.2f}",
             c.currency,
             c.status.value,
+            c.provider_payment_id or "",
             str(c.id),
         ])
     _audit(db, admin, "contributions_exported", None, {"rows": len(rows)})
@@ -593,15 +630,45 @@ def refund(
             f"Refund must be between 1 and {remaining} cents",
         )
     refunded_now = amount if amount is not None else remaining
+    u = db.get(User, c.contributor_user_id)
+    ch = db.get(Child, c.child_id)
     if not refund_contribution(db, c, amount):
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The refund could not be processed")
     _audit(
         db, admin, "contribution_refunded", f"contribution:{c.id}",
-        {"refunded_cents": refunded_now, "partial": c.status == ContributionStatus.succeeded},
+        {
+            "amount": f"${refunded_now / 100:,.2f}",
+            "contributor": u.email if u else None,
+            "child": ch.first_name if ch else None,
+            "partial": c.status == ContributionStatus.succeeded,
+        },
     )
     db.commit()
+    return _mini_contribution(c, u, ch)
+
+
+@router.post("/contributions/{contribution_id}/reconcile", response_model=MiniContribution)
+def reconcile(contribution_id: uuid.UUID, db: DbSession, admin: AdminUser) -> MiniContribution:
+    """Resolve a stuck 'pending' contribution against the payment provider's
+    live status (a cancelled or failed payment becomes failed; a settled one
+    settles). Fixes records left behind by a missed webhook. Audit-logged."""
+    c = db.get(Contribution, contribution_id)
+    if c is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Contribution not found")
+    before = c.status.value
     u = db.get(User, c.contributor_user_id)
     ch = db.get(Child, c.child_id)
+    after = reconcile_contribution(db, c)
+    _audit(
+        db, admin, "contribution_reconciled", f"contribution:{c.id}",
+        {
+            "from": before, "to": after,
+            "amount": f"${c.amount_cents / 100:,.2f}",
+            "contributor": u.email if u else None,
+            "child": ch.first_name if ch else None,
+        },
+    )
+    db.commit()
     return _mini_contribution(c, u, ch)
 
 
@@ -649,7 +716,10 @@ def decide_bug(
             report.points_awarded = True
     else:
         report.status = "rejected"
-    _audit(db, admin, f"bug_{decision}", f"bug:{report.id}", {"title": report.title})
+    _audit(
+        db, admin, f"bug_{decision}", f"bug:{report.id}",
+        {"title": report.title, "reporter": tester.x_username or tester.wallet_address[:10]},
+    )
     db.commit()
     db.refresh(report)
     return AdminBugRow(

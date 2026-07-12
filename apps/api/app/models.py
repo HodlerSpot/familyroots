@@ -137,6 +137,7 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(
         Enum(UserRole, native_enum=False, length=20), default=UserRole.user
     )
+    disabled: Mapped[bool] = mapped_column(default=False)  # admin can lock an account out
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     memberships: Mapped[list["FamilyMember"]] = relationship(

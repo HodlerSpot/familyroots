@@ -60,6 +60,10 @@ class PaymentProvider(Protocol):
         """Refund `amount_cents` (gross) of a settled payment; True on success."""
         ...
 
+    def payment_status(self, contribution: Contribution) -> str | None:
+        """Live provider status of the payment (for reconciling stuck records)."""
+        ...
+
 
 class LocalPaymentProvider:
     """Dev-only simulated card processor. Always succeeds."""
@@ -74,6 +78,9 @@ class LocalPaymentProvider:
 
     def refund_payment(self, contribution: Contribution, amount_cents: int) -> bool:
         return True
+
+    def payment_status(self, contribution: Contribution) -> str | None:
+        return "succeeded"
 
 
 class StripePaymentProvider:
@@ -112,6 +119,14 @@ class StripePaymentProvider:
             }
         )
         return True
+
+    def payment_status(self, contribution: Contribution) -> str | None:
+        if not contribution.provider_payment_id:
+            return None
+        try:
+            return self.client.payment_intents.retrieve(contribution.provider_payment_id).status
+        except Exception:
+            return None
 
 
 def _build_provider() -> PaymentProvider:
@@ -188,6 +203,22 @@ def refund_contribution(db: Session, contribution: Contribution, amount_cents: i
         )
     )
     return True
+
+
+def reconcile_contribution(db: Session, contribution: Contribution) -> str:
+    """Resolve a stuck pending contribution against the provider's live status
+    (for cases where a webhook was missed or the payment was cancelled). Only
+    acts on pending records. Returns the resulting status string."""
+    if contribution.status != ContributionStatus.pending:
+        return contribution.status.value
+    live = get_payment_provider().payment_status(contribution)
+    if live == "succeeded":
+        settle_contribution(db, contribution)  # sets status + ledger + feed + emails
+    elif live in ("canceled", "cancelled"):
+        contribution.status = ContributionStatus.failed
+    # other live states (processing, requires_payment_method, requires_action)
+    # are genuinely still open, so we leave the record pending
+    return contribution.status.value
 
 
 def settle_contribution(db: Session, contribution: Contribution) -> FundLedgerEntry:

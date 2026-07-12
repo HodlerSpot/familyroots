@@ -63,6 +63,16 @@ export default function AdminContributionsPage() {
     }
   }
 
+  async function reconcile(c: AdminContribution) {
+    setBusyId(c.id);
+    try {
+      await adminApi.reconcile(c.id);
+      load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <AdminShell>
       <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -109,9 +119,25 @@ export default function AdminContributionsPage() {
         <ul className="divide-y divide-stone-100">
           {rows.map((c) => (
             <li key={c.id} className="flex flex-wrap items-center gap-4 px-4 py-3">
-              <p className="min-w-0 flex-1 truncate font-medium text-stone-900">
-                {c.contributor_name}
-              </p>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium">
+                  {c.contributor_id ? (
+                    <a href={`/admin/users/${c.contributor_id}`} className="text-emerald-800 underline">
+                      {c.contributor_name}
+                    </a>
+                  ) : (
+                    <span className="text-stone-900">{c.contributor_name}</span>
+                  )}
+                </p>
+                {c.provider_payment_id && (
+                  <p
+                    className="truncate font-mono text-[11px] text-stone-400"
+                    title="Stripe PaymentIntent id"
+                  >
+                    {c.provider_payment_id}
+                  </p>
+                )}
+              </div>
               <p className="w-28 truncate text-sm text-stone-600">{c.child_name}</p>
               <span className="w-24 text-center">
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${CHIP[c.status] ?? "bg-stone-100 text-stone-600"}`}>
@@ -136,6 +162,16 @@ export default function AdminContributionsPage() {
                     className="text-xs font-medium text-red-600 underline hover:text-red-700 disabled:opacity-50"
                   >
                     {c.refunded_cents > 0 ? "Refund more" : "Refund"}
+                  </button>
+                )}
+                {c.status === "pending" && (
+                  <button
+                    onClick={() => reconcile(c)}
+                    disabled={busyId === c.id}
+                    className="text-xs font-medium text-emerald-700 underline hover:text-emerald-800 disabled:opacity-50"
+                    title="Check the live payment status and resolve this record"
+                  >
+                    Reconcile
                   </button>
                 )}
               </span>

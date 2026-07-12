@@ -173,6 +173,48 @@ def test_audit_log_lists_actions(client):
     assert csv_resp.status_code == 200 and "text/csv" in csv_resp.headers["content-type"]
 
 
+def test_disable_and_enable_user(client):
+    admin = make_admin(client)
+    signup(client, "target@example.com")
+    from app.models import User
+
+    with TestingSession() as db:
+        tid = str(db.query(User).filter(User.email == "target@example.com").first().id)
+        aid = str(db.query(User).filter(User.email == "admin@example.com").first().id)
+
+    # disable -> login blocked (403) and any live token is rejected
+    assert client.post(f"/admin/users/{tid}/status", json={"disabled": True}, headers=admin).status_code == 200
+    login = client.post("/auth/login", json={"email": "target@example.com", "password": "Password123!"})
+    assert login.status_code == 403
+
+    # re-enable -> can log in again
+    assert client.post(f"/admin/users/{tid}/status", json={"disabled": False}, headers=admin).status_code == 200
+    assert client.post(
+        "/auth/login", json={"email": "target@example.com", "password": "Password123!"}
+    ).status_code == 200
+
+    # an admin can't disable themselves (lockout guard)
+    assert client.post(f"/admin/users/{aid}/status", json={"disabled": True}, headers=admin).status_code == 400
+
+
+def test_reconcile_pending_contribution(client, monkeypatch):
+    # local provider reports "succeeded"; a pending contribution reconciles to settled
+    from app.services import payments as pay
+
+    admin = make_admin(client)
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    child_id = add_child(client, parent, family_id)
+    # create (pending) but do NOT confirm -> stuck pending like a missed webhook
+    c = client.post(
+        f"/children/{child_id}/contributions", json={"amount_cents": 1000}, headers=parent
+    ).json()
+
+    monkeypatch.setattr(pay._provider, "payment_status", lambda contribution: "canceled")
+    r = client.post(f"/admin/contributions/{c['id']}/reconcile", headers=admin)
+    assert r.status_code == 200 and r.json()["status"] == "failed"
+
+
 def test_role_management_and_self_protection(client):
     admin = make_admin(client)
     from app.models import User

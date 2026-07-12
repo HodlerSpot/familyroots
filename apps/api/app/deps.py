@@ -35,6 +35,9 @@ def get_current_user(
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown user")
+    if user.disabled:
+        # a disabled account is locked out immediately, even with a live token
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "This account has been disabled")
     return user
 
 
