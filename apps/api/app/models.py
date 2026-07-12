@@ -423,6 +423,21 @@ class LegacyItem(Base):
     author: Mapped[User] = relationship()
 
 
+class PasswordReset(Base):
+    """Single-use, short-lived reset tokens; only the SHA-256 of the token is stored."""
+
+    __tablename__ = "password_resets"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped[User] = relationship()
+
+
 class ConsentRecord(Base):
     __tablename__ = "consent_records"
 

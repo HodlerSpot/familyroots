@@ -59,7 +59,7 @@ def signup(client, email: str, name: str = "Test User") -> dict:
     """Create a user and return auth headers."""
     r = client.post(
         "/auth/signup",
-        json={"email": email, "display_name": name, "password": "password123"},
+        json={"email": email, "display_name": name, "password": "Password123!"},
     )
     assert r.status_code == 201, r.text
     return {"Authorization": f"Bearer {r.json()['access_token']}"}

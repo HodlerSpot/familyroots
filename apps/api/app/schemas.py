@@ -1,7 +1,9 @@
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from .security import validate_password_complexity
 
 from .models import (
     CapsuleStatus,
@@ -25,12 +27,32 @@ from .models import (
 class SignupRequest(BaseModel):
     email: EmailStr
     display_name: str = Field(min_length=1, max_length=120)
-    password: str = Field(min_length=8, max_length=128)
+    password: str = Field(max_length=128)
+
+    _pw = field_validator("password")(validate_password_complexity)
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(max_length=128)
+
+    _pw = field_validator("new_password")(validate_password_complexity)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(max_length=128)
+
+    _pw = field_validator("new_password")(validate_password_complexity)
 
 
 class TokenResponse(BaseModel):

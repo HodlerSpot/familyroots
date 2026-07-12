@@ -50,7 +50,12 @@ function LoginForm() {
           {busy ? "Signing in…" : "Sign in"}
         </Button>
       </form>
-      <p className="mt-4 text-center text-sm text-stone-600">
+      <p className="mt-3 text-center text-sm">
+        <a className="text-stone-500 underline" href="/forgot-password">
+          Forgot your password?
+        </a>
+      </p>
+      <p className="mt-3 text-center text-sm text-stone-600">
         New to FutureRoots?{" "}
         <a className="font-medium text-emerald-800 underline" href={`/signup?next=${encodeURIComponent(next)}`}>
           Create an account

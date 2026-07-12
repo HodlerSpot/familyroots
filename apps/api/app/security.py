@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -5,6 +6,22 @@ import bcrypt
 import jwt
 
 from .config import settings
+
+PASSWORD_RULES = [
+    (r".{8,}", "at least 8 characters"),
+    (r"[a-z]", "a lowercase letter"),
+    (r"[A-Z]", "an uppercase letter"),
+    (r"[0-9]", "a number"),
+    (r"[^A-Za-z0-9]", "a symbol"),
+]
+
+
+def validate_password_complexity(password: str) -> str:
+    """Pydantic-compatible validator; raises ValueError listing what's missing."""
+    missing = [label for pattern, label in PASSWORD_RULES if not re.search(pattern, password)]
+    if missing:
+        raise ValueError(f"Password needs {', '.join(missing)}")
+    return password
 
 
 def hash_password(password: str) -> str:

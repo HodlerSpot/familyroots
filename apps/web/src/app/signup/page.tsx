@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, ApiError, setToken } from "@/lib/api";
 import { Button, Card, ErrorNote, Input, Label, PasswordInput } from "@/components/ui";
+import { PasswordRules, passwordMeetsRules } from "@/components/password-rules";
 
 function SignupForm() {
   const router = useRouter();
@@ -47,13 +48,12 @@ function SignupForm() {
             id="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            minLength={8}
             required
           />
-          <p className="mt-1 text-xs text-stone-500">At least 8 characters</p>
+          <PasswordRules password={password} />
         </div>
         <ErrorNote>{error}</ErrorNote>
-        <Button type="submit" disabled={busy} className="w-full">
+        <Button type="submit" disabled={busy || !passwordMeetsRules(password)} className="w-full">
           {busy ? "Creating…" : "Create account"}
         </Button>
       </form>

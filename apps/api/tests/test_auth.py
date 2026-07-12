@@ -5,7 +5,7 @@ def test_signup_login_me(client):
     signup(client, "parent@example.com", "Pat Parent")
 
     r = client.post(
-        "/auth/login", json={"email": "parent@example.com", "password": "password123"}
+        "/auth/login", json={"email": "parent@example.com", "password": "Password123!"}
     )
     assert r.status_code == 200
     headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
@@ -20,7 +20,7 @@ def test_duplicate_email_rejected(client):
     signup(client, "parent@example.com")
     r = client.post(
         "/auth/signup",
-        json={"email": "parent@example.com", "display_name": "X", "password": "password123"},
+        json={"email": "parent@example.com", "display_name": "X", "password": "Password123!"},
     )
     assert r.status_code == 409
 

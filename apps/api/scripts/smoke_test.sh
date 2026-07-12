@@ -16,7 +16,7 @@ curl -sf "$API/health" >/dev/null || fail "health"
 
 echo "2. parent signup + family + child"
 PARENT=$(curl -sf -X POST "$API/auth/signup" -H 'Content-Type: application/json' \
-  -d "{\"email\":\"$PARENT_EMAIL\",\"display_name\":\"Smoke Parent\",\"password\":\"password123\"}" | tok)
+  -d "{\"email\":\"$PARENT_EMAIL\",\"display_name\":\"Smoke Parent\",\"password\":\"Password123!\"}" | tok)
 FAMILY_ID=$(curl -sf -X POST "$API/families" -H "Authorization: Bearer $PARENT" \
   -H 'Content-Type: application/json' -d '{"name":"Smoke Family"}' | id)
 CHILD_ID=$(curl -sf -X POST "$API/families/$FAMILY_ID/children" -H "Authorization: Bearer $PARENT" \

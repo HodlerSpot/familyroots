@@ -55,9 +55,14 @@ export default function FamilyDashboard() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-emerald-900">Your families</h1>
-        <button onClick={signOut} className="text-sm text-stone-500 underline">
-          Sign out
-        </button>
+        <span className="space-x-4 text-sm">
+          <a href="/account" className="text-stone-500 underline">
+            Account
+          </a>
+          <button onClick={signOut} className="text-stone-500 underline">
+            Sign out
+          </button>
+        </span>
       </div>
       <ErrorNote>{error}</ErrorNote>
 
