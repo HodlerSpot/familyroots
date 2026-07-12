@@ -56,6 +56,10 @@ class PaymentProvider(Protocol):
         """Local backend only: verify the simulated payment succeeded."""
         ...
 
+    def refund_payment(self, contribution: Contribution) -> bool:
+        """Refund a settled payment at the provider; True on success."""
+        ...
+
 
 class LocalPaymentProvider:
     """Dev-only simulated card processor. Always succeeds."""
@@ -67,6 +71,9 @@ class LocalPaymentProvider:
 
     def confirm_payment(self, contribution: Contribution) -> bool:
         return contribution.provider_payment_id is not None
+
+    def refund_payment(self, contribution: Contribution) -> bool:
+        return True
 
 
 class StripePaymentProvider:
@@ -94,6 +101,14 @@ class StripePaymentProvider:
 
     def confirm_payment(self, contribution: Contribution) -> bool:
         raise NotImplementedError("Stripe settles via the signed webhook only")
+
+    def refund_payment(self, contribution: Contribution) -> bool:
+        if not contribution.provider_payment_id:
+            return False
+        self.client.refunds.create(
+            params={"payment_intent": contribution.provider_payment_id}
+        )
+        return True
 
 
 def _build_provider() -> PaymentProvider:
@@ -124,6 +139,31 @@ def fund_balance_cents(db: Session, account_id: uuid.UUID) -> int:
         .filter(FundLedgerEntry.account_id == account_id)
         .scalar()
     )
+
+
+def refund_contribution(db: Session, contribution: Contribution) -> bool:
+    """Refund a succeeded contribution at the provider, then reverse it in the
+    ledger with a compensating (negative) entry — never by mutating or deleting
+    the original, so the append-only ledger and derived balances stay intact.
+    Returns False if the provider refund fails (nothing is changed then)."""
+    if contribution.status != ContributionStatus.succeeded:
+        return False
+    if not get_payment_provider().refund_payment(contribution):
+        return False
+    contribution.status = ContributionStatus.refunded
+    account = get_or_create_fund_account(db, contribution.child_id, contribution.currency)
+    # compensating entry: source_contribution_id stays null (the unique original
+    # already holds it); the adjustment reverses the settled net amount
+    db.add(
+        FundLedgerEntry(
+            account_id=account.id,
+            amount_cents=-(contribution.amount_cents - contribution.fee_cents),
+            entry_type=LedgerEntryType.adjustment,
+            source_contribution_id=None,
+            anchor_ref=None,
+        )
+    )
+    return True
 
 
 def settle_contribution(db: Session, contribution: Contribution) -> FundLedgerEntry:

@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AdminUserRow, adminApi } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { AdminUserRow, adminApi, beginImpersonation } from "@/lib/api";
 import { AdminShell } from "@/components/admin/shell";
 import { Card } from "@/components/ui";
 
 export default function AdminUsersPage() {
+  const router = useRouter();
   const [rows, setRows] = useState<AdminUserRow[]>([]);
   const [total, setTotal] = useState(0);
   const [q, setQ] = useState("");
@@ -32,6 +34,17 @@ export default function AdminUsersPage() {
       await adminApi.setRole(u.id, u.role === "admin" ? "user" : "admin");
       load();
     } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function viewAs(u: AdminUserRow) {
+    setBusyId(u.id);
+    try {
+      const session = await adminApi.impersonate(u.id);
+      beginImpersonation(session.access_token, session.display_name || session.email);
+      router.push("/family");
+    } catch {
       setBusyId(null);
     }
   }
@@ -64,6 +77,16 @@ export default function AdminUsersPage() {
               </div>
               <span className="w-20 text-center tabular-nums text-stone-700">{u.family_count}</span>
               <span className="w-20 text-center tabular-nums text-stone-700">{u.child_count}</span>
+              {u.role !== "admin" && (
+                <button
+                  onClick={() => viewAs(u)}
+                  disabled={busyId === u.id}
+                  className="rounded-lg border border-stone-300 px-2.5 py-1 text-xs font-medium text-stone-600 hover:bg-stone-50 disabled:opacity-50"
+                  title="View the app as this user (support mode)"
+                >
+                  View as
+                </button>
+              )}
               <button
                 onClick={() => toggleRole(u)}
                 disabled={busyId === u.id}

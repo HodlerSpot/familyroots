@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AdminContribution, adminApi, formatMoney } from "@/lib/api";
+import { useCallback, useEffect, useState } from "react";
+import { AdminContribution, adminApi, downloadCsv, formatMoney } from "@/lib/api";
 import { AdminShell } from "@/components/admin/shell";
-import { Card } from "@/components/ui";
+import { Button, Card } from "@/components/ui";
 
 const CHIP: Record<string, string> = {
   succeeded: "bg-emerald-100 text-emerald-800",
@@ -12,29 +12,83 @@ const CHIP: Record<string, string> = {
   refunded: "bg-stone-200 text-stone-600",
 };
 
+const STATUSES = ["", "succeeded", "pending", "failed", "refunded"];
+
 export default function AdminContributionsPage() {
   const [rows, setRows] = useState<AdminContribution[]>([]);
   const [total, setTotal] = useState(0);
+  const [q, setQ] = useState("");
+  const [status, setStatus] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     adminApi
-      .contributions()
+      .contributions(q || undefined, status || undefined)
       .then((p) => {
         setRows(p.items);
         setTotal(p.total);
       })
       .catch(() => {});
-  }, []);
+  }, [q, status]);
+
+  useEffect(() => {
+    const t = setTimeout(load, 250);
+    return () => clearTimeout(t);
+  }, [load]);
+
+  async function refund(c: AdminContribution) {
+    if (!confirm(`Refund ${formatMoney(c.amount_cents, c.currency)} from ${c.contributor_name}? This reverses it in ${c.child_name}'s fund.`)) return;
+    setBusyId(c.id);
+    try {
+      await adminApi.refund(c.id);
+      load();
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   return (
     <AdminShell>
-      <div className="mb-4 text-sm text-stone-500">{total} contributions</div>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search contributor or child"
+          className="w-56 rounded-lg border border-stone-300 px-3 py-2 text-sm"
+        />
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          className="rounded-lg border border-stone-300 px-3 py-2 text-sm"
+        >
+          {STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {s === "" ? "All statuses" : s}
+            </option>
+          ))}
+        </select>
+        <span className="text-sm text-stone-500">{total} total</span>
+        <Button
+          variant="soft"
+          className="ml-auto"
+          onClick={() =>
+            downloadCsv(
+              adminApi.contributionsCsvUrl(q || undefined, status || undefined),
+              "futureroots-contributions.csv"
+            )
+          }
+        >
+          Download CSV
+        </Button>
+      </div>
+
       <Card className="overflow-hidden p-0">
         <div className="hidden items-center gap-4 border-b border-stone-200 bg-stone-50 px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-stone-500 sm:flex">
           <span className="flex-1">Contributor</span>
-          <span className="w-32">For child</span>
+          <span className="w-28">For child</span>
           <span className="w-24 text-center">Status</span>
           <span className="w-24 text-right">Amount</span>
+          <span className="w-20" />
         </div>
         <ul className="divide-y divide-stone-100">
           {rows.map((c) => (
@@ -42,7 +96,7 @@ export default function AdminContributionsPage() {
               <p className="min-w-0 flex-1 truncate font-medium text-stone-900">
                 {c.contributor_name}
               </p>
-              <p className="w-32 truncate text-sm text-stone-600">{c.child_name}</p>
+              <p className="w-28 truncate text-sm text-stone-600">{c.child_name}</p>
               <span className="w-24 text-center">
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${CHIP[c.status] ?? "bg-stone-100 text-stone-600"}`}>
                   {c.status}
@@ -51,10 +105,21 @@ export default function AdminContributionsPage() {
               <span className="w-24 text-right font-bold tabular-nums text-emerald-800">
                 {formatMoney(c.amount_cents, c.currency)}
               </span>
+              <span className="w-20 text-right">
+                {c.status === "succeeded" && (
+                  <button
+                    onClick={() => refund(c)}
+                    disabled={busyId === c.id}
+                    className="text-xs font-medium text-red-600 underline hover:text-red-700 disabled:opacity-50"
+                  >
+                    Refund
+                  </button>
+                )}
+              </span>
             </li>
           ))}
           {rows.length === 0 && (
-            <li className="px-4 py-8 text-center text-sm text-stone-500">No contributions yet.</li>
+            <li className="px-4 py-8 text-center text-sm text-stone-500">No contributions found.</li>
           )}
         </ul>
       </Card>

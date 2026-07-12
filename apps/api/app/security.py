@@ -40,6 +40,18 @@ def create_access_token(user_id: uuid.UUID) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
+def create_impersonation_token(user_id: uuid.UUID, admin_id: uuid.UUID, minutes: int = 30) -> str:
+    """Short-lived token for an admin to view the app as a user. Carries an
+    'imp' claim naming the acting admin for traceability; the product treats
+    the holder as `user_id`."""
+    payload = {
+        "sub": str(user_id),
+        "imp": str(admin_id),
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=minutes),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
 def decode_access_token(token: str) -> uuid.UUID | None:
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])

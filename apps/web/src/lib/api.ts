@@ -407,6 +407,16 @@ export interface AdminFamilyRow {
   created_at: string;
 }
 
+export interface AdminAuditRow {
+  id: string;
+  admin_name: string;
+  admin_email: string;
+  action: string;
+  target: string | null;
+  detail: Record<string, unknown>;
+  created_at: string;
+}
+
 export interface AdminBugRow {
   id: string;
   title: string;
@@ -423,14 +433,24 @@ interface Page<T> {
   items: T[];
 }
 
+function qs(params: Record<string, string | undefined>): string {
+  const p = Object.entries(params).filter(([, v]) => v);
+  return p.length ? "?" + p.map(([k, v]) => `${k}=${encodeURIComponent(v as string)}`).join("&") : "";
+}
+
 export const adminApi = {
   overview: () => request<AdminOverview>("/admin/overview"),
-  users: (q?: string) =>
-    request<Page<AdminUserRow>>(`/admin/users${q ? `?q=${encodeURIComponent(q)}` : ""}`),
-  families: () => request<Page<AdminFamilyRow>>("/admin/families"),
-  contributions: () => request<Page<AdminContribution>>("/admin/contributions"),
-  bugs: (status?: string) =>
-    request<AdminBugRow[]>(`/admin/bugs${status ? `?status=${status}` : ""}`),
+  users: (q?: string) => request<Page<AdminUserRow>>(`/admin/users${qs({ q })}`),
+  families: (q?: string) => request<Page<AdminFamilyRow>>(`/admin/families${qs({ q })}`),
+  contributions: (q?: string, status?: string) =>
+    request<Page<AdminContribution>>(`/admin/contributions${qs({ q, status })}`),
+  contributionsCsvUrl: (q?: string, status?: string) =>
+    `${API_URL}/admin/contributions.csv${qs({ q, status })}`,
+  refund: (contributionId: string) =>
+    request<AdminContribution>(`/admin/contributions/${contributionId}/refund`, {
+      method: "POST",
+    }),
+  bugs: (status?: string) => request<AdminBugRow[]>(`/admin/bugs${qs({ status })}`),
   decideBug: (bugId: string, decision: "verify" | "reject") =>
     request<AdminBugRow>(`/admin/bugs/${bugId}/${decision}`, { method: "POST" }),
   setRole: (userId: string, role: "user" | "admin") =>
@@ -438,7 +458,51 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify({ role }),
     }),
+  impersonate: (userId: string) =>
+    request<{ access_token: string; expires_in_minutes: number; display_name: string; email: string }>(
+      `/admin/users/${userId}/impersonate`,
+      { method: "POST" }
+    ),
+  audit: () => request<Page<AdminAuditRow>>("/admin/audit"),
 };
+
+// --- impersonation ("view as") session management ---
+
+const ADMIN_BACKUP_KEY = "futureroots_admin_token";
+const IMPERSONATING_KEY = "futureroots_impersonating";
+
+/** Enter view-as: stash the admin token, activate the user token. */
+export function beginImpersonation(userToken: string, label: string) {
+  const current = getToken();
+  if (current) localStorage.setItem(ADMIN_BACKUP_KEY, current);
+  localStorage.setItem(IMPERSONATING_KEY, label);
+  setToken(userToken);
+}
+
+/** Exit view-as: restore the admin token. */
+export function endImpersonation() {
+  const backup = localStorage.getItem(ADMIN_BACKUP_KEY);
+  localStorage.removeItem(IMPERSONATING_KEY);
+  localStorage.removeItem(ADMIN_BACKUP_KEY);
+  setToken(backup);
+}
+
+export function impersonationLabel(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(IMPERSONATING_KEY);
+}
+
+/** The CSV download must carry the token; fetch as a blob and save. */
+export async function downloadCsv(url: string, filename: string) {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${getToken()}` } });
+  if (!res.ok) throw new ApiError(res.status, "Download failed");
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 
 /** URL an <img>/<video> tag can load (tags can't send auth headers). */
 export function mediaUrl(mediaId: string): string {

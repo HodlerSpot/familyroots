@@ -9,12 +9,15 @@ database, so on the family site this shows real families and on testnet it
 shows testers and their test data.
 """
 
+import csv
+import io
 import uuid
 from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import func
 
 from ..deps import AdminUser, DbSession
@@ -34,7 +37,8 @@ from ..models import (
     UserRole,
     utcnow,
 )
-from ..services.payments import fund_balance_cents
+from ..security import create_impersonation_token
+from ..services.payments import fund_balance_cents, refund_contribution
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -150,6 +154,23 @@ class AdminBugRow(BaseModel):
 
 class RoleUpdate(BaseModel):
     role: UserRole
+
+
+class AuditRow(BaseModel):
+    id: uuid.UUID
+    admin_name: str
+    admin_email: str
+    action: str
+    target: str | None
+    detail: dict
+    created_at: datetime
+
+
+class ImpersonationOut(BaseModel):
+    access_token: str
+    expires_in_minutes: int
+    display_name: str
+    email: str
 
 
 class Page(BaseModel):
@@ -294,6 +315,56 @@ def user_detail(user_id: uuid.UUID, db: DbSession, admin: AdminUser) -> AdminUse
     )
 
 
+@router.post("/users/{user_id}/impersonate", response_model=ImpersonationOut)
+def impersonate(user_id: uuid.UUID, db: DbSession, admin: AdminUser) -> ImpersonationOut:
+    """Issue a short-lived token to view the app as a user, for support. Never
+    for another admin (avoids privilege games), always audit-logged. The token
+    carries an 'imp' claim naming the acting admin."""
+    u = db.get(User, user_id)
+    if u is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if u.role == UserRole.admin:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "You can't impersonate another admin")
+    _audit(db, admin, "impersonate", f"user:{u.id}", {"email": u.email})
+    db.commit()
+    return ImpersonationOut(
+        access_token=create_impersonation_token(u.id, admin.id, minutes=30),
+        expires_in_minutes=30,
+        display_name=u.display_name,
+        email=u.email,
+    )
+
+
+@router.get("/audit", response_model=Page)
+def audit_log(
+    db: DbSession, admin: AdminUser, limit: int = Query(default=100, le=500), offset: int = 0
+) -> Page:
+    total = db.query(func.count(AdminAuditLog.id)).scalar()
+    rows = (
+        db.query(AdminAuditLog, User)
+        .outerjoin(User, AdminAuditLog.admin_user_id == User.id)
+        .order_by(AdminAuditLog.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return Page(
+        total=total,
+        items=[
+            AuditRow(
+                id=log.id,
+                admin_name=u.display_name if u else "Unknown",
+                admin_email=u.email if u else "",
+                action=log.action,
+                target=log.target,
+                detail=log.detail,
+                created_at=log.created_at,
+            )
+            for log, u in rows
+        ],
+    )
+
+
 @router.post("/users/{user_id}/role", response_model=MiniUser)
 def set_user_role(
     user_id: uuid.UUID, payload: RoleUpdate, db: DbSession, admin: AdminUser
@@ -318,10 +389,17 @@ def set_user_role(
 
 @router.get("/families", response_model=Page)
 def list_families(
-    db: DbSession, admin: AdminUser, limit: int = Query(default=50, le=200), offset: int = 0
+    db: DbSession,
+    admin: AdminUser,
+    q: str | None = None,
+    limit: int = Query(default=50, le=200),
+    offset: int = 0,
 ) -> Page:
-    total = db.query(func.count(Family.id)).scalar()
-    families = db.query(Family).order_by(Family.created_at.desc()).offset(offset).limit(limit).all()
+    query = db.query(Family)
+    if q:
+        query = query.filter(func.lower(Family.name).like(f"%{q.lower()}%"))
+    total = query.count()
+    families = query.order_by(Family.created_at.desc()).offset(offset).limit(limit).all()
     rows = []
     for f in families:
         members = db.query(func.count(FamilyMember.id)).filter(
@@ -368,24 +446,92 @@ def family_detail(family_id: uuid.UUID, db: DbSession, admin: AdminUser) -> Admi
 
 # --- contributions ---
 
-@router.get("/contributions", response_model=Page)
-def list_contributions(
-    db: DbSession, admin: AdminUser, limit: int = Query(default=50, le=200), offset: int = 0
-) -> Page:
-    total = db.query(func.count(Contribution.id)).scalar()
-    rows = (
+def _contribution_query(db, q: str | None, status_filter: str | None):
+    query = (
         db.query(Contribution, User, Child)
         .outerjoin(User, Contribution.contributor_user_id == User.id)
         .outerjoin(Child, Contribution.child_id == Child.id)
-        .order_by(Contribution.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
     )
+    if status_filter in {s.value for s in ContributionStatus}:
+        query = query.filter(Contribution.status == status_filter)
+    if q:
+        like = f"%{q.lower()}%"
+        query = query.filter(
+            func.lower(User.display_name).like(like) | func.lower(Child.first_name).like(like)
+        )
+    return query
+
+
+@router.get("/contributions", response_model=Page)
+def list_contributions(
+    db: DbSession,
+    admin: AdminUser,
+    q: str | None = None,
+    status: str | None = Query(default=None),
+    limit: int = Query(default=50, le=200),
+    offset: int = 0,
+) -> Page:
+    query = _contribution_query(db, q, status)
+    total = query.count()
+    rows = query.order_by(Contribution.created_at.desc()).offset(offset).limit(limit).all()
     return Page(
         total=total,
         items=[_mini_contribution(c, u, ch) for c, u, ch in rows],
     )
+
+
+@router.get("/contributions.csv")
+def export_contributions_csv(
+    db: DbSession, admin: AdminUser, q: str | None = None, status: str | None = None
+) -> StreamingResponse:
+    """Download contributions as CSV for bookkeeping. The export itself is
+    audit-logged, since it takes contributor and money data off-platform."""
+    rows = _contribution_query(db, q, status).order_by(Contribution.created_at.desc()).all()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(
+        ["created_at", "contributor", "contributor_email", "child", "amount", "fee", "currency", "status", "id"]
+    )
+    for c, u, ch in rows:
+        w.writerow([
+            c.created_at.isoformat(),
+            u.display_name if u else "",
+            u.email if u else "",
+            ch.first_name if ch else "",
+            f"{c.amount_cents / 100:.2f}",
+            f"{c.fee_cents / 100:.2f}",
+            c.currency,
+            c.status.value,
+            str(c.id),
+        ])
+    _audit(db, admin, "contributions_exported", None, {"rows": len(rows)})
+    db.commit()
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=futureroots-contributions.csv"},
+    )
+
+
+@router.post("/contributions/{contribution_id}/refund", response_model=MiniContribution)
+def refund(contribution_id: uuid.UUID, db: DbSession, admin: AdminUser) -> MiniContribution:
+    """Refund a settled contribution: reverses it at the payment provider and
+    writes a compensating (append-only) ledger entry. Audit-logged."""
+    c = db.get(Contribution, contribution_id)
+    if c is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Contribution not found")
+    if c.status != ContributionStatus.succeeded:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Only a settled contribution can be refunded"
+        )
+    if not refund_contribution(db, c):
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The refund could not be processed")
+    _audit(db, admin, "contribution_refunded", f"contribution:{c.id}", {"amount_cents": c.amount_cents})
+    db.commit()
+    u = db.get(User, c.contributor_user_id)
+    ch = db.get(Child, c.child_id)
+    return _mini_contribution(c, u, ch)
 
 
 # --- bug reports ---

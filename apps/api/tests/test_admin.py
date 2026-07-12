@@ -54,6 +54,87 @@ def test_users_and_family_detail(client):
     assert r.json()["children"][0]["first_name"] == "Emma"
 
 
+def _succeeded_contribution(client, parent, child_id, amount=2500):
+    c = client.post(
+        f"/children/{child_id}/contributions", json={"amount_cents": amount}, headers=parent
+    ).json()
+    client.post(f"/contributions/{c['id']}/confirm", headers=parent)
+    return c
+
+
+def test_refund_reverses_ledger(client):
+    admin = make_admin(client)
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    child_id = add_child(client, parent, family_id)
+    c = _succeeded_contribution(client, parent, child_id, 2500)
+
+    fund = client.get(f"/children/{child_id}/fund", headers=parent).json()
+    assert fund["balance_cents"] == 2500 - 62  # net of the 2.5% fee
+
+    r = client.post(f"/admin/contributions/{c['id']}/refund", headers=admin)
+    assert r.status_code == 200 and r.json()["status"] == "refunded"
+
+    fund = client.get(f"/children/{child_id}/fund", headers=parent).json()
+    assert fund["balance_cents"] == 0  # compensating entry reverses it
+    assert len(fund["entries"]) == 2  # original + adjustment (append-only)
+
+    # a second refund is refused (not succeeded anymore)
+    assert client.post(f"/admin/contributions/{c['id']}/refund", headers=admin).status_code == 409
+
+
+def test_contribution_status_filter_and_csv(client):
+    admin = make_admin(client)
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    child_id = add_child(client, parent, family_id)
+    _succeeded_contribution(client, parent, child_id)
+
+    r = client.get("/admin/contributions?status=succeeded", headers=admin)
+    assert r.status_code == 200 and r.json()["total"] >= 1
+    assert client.get("/admin/contributions?status=refunded", headers=admin).json()["total"] == 0
+
+    csv_resp = client.get("/admin/contributions.csv", headers=admin)
+    assert csv_resp.status_code == 200
+    assert "text/csv" in csv_resp.headers["content-type"]
+    assert "contributor_email" in csv_resp.text
+
+
+def test_impersonation(client):
+    admin = make_admin(client)
+    parent = signup(client, "parent@example.com", "Pat")
+    from app.models import User
+
+    with TestingSession() as db:
+        parent_id = str(db.query(User).filter(User.email == "parent@example.com").first().id)
+        admin_id = str(db.query(User).filter(User.email == "admin@example.com").first().id)
+
+    r = client.post(f"/admin/users/{parent_id}/impersonate", headers=admin)
+    assert r.status_code == 200
+    imp_token = r.json()["access_token"]
+    # the token acts as the impersonated user
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {imp_token}"})
+    assert me.json()["email"] == "parent@example.com"
+    # cannot impersonate another admin
+    assert client.post(f"/admin/users/{admin_id}/impersonate", headers=admin).status_code == 400
+
+
+def test_audit_log_lists_actions(client):
+    admin = make_admin(client)
+    parent = signup(client, "parent@example.com")
+    from app.models import User
+
+    with TestingSession() as db:
+        parent_id = str(db.query(User).filter(User.email == "parent@example.com").first().id)
+    client.post(f"/admin/users/{parent_id}/impersonate", headers=admin)
+
+    r = client.get("/admin/audit", headers=admin)
+    assert r.status_code == 200
+    actions = [row["action"] for row in r.json()["items"]]
+    assert "impersonate" in actions
+    assert all(row["admin_email"] == "admin@example.com" for row in r.json()["items"])
+
+
 def test_role_management_and_self_protection(client):
     admin = make_admin(client)
     from app.models import User
