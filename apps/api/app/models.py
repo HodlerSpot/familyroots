@@ -487,6 +487,24 @@ class PointEvent(Base):
     )
 
 
+class BugReport(Base):
+    """A tester-submitted bug. Append-only-friendly: submission never scores.
+    The bug_verified points are awarded only when a human reviewer verifies the
+    report (the admin verify endpoint), and points_awarded guards against ever
+    awarding twice for the same report."""
+
+    __tablename__ = "bug_reports"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tester_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("testers.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|verified|rejected
+    points_awarded: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ConsentRecord(Base):
     __tablename__ = "consent_records"
 

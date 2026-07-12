@@ -47,6 +47,7 @@ QUESTS: tuple[Quest, ...] = (
     Quest("achievement", "Celebrate an achievement", "Mark a child's goal complete", 50, 5),
     Quest("capsule_created", "Seal a time capsule", "Seal a letter or recording for the future", 60, 3),
     Quest("capsule_released", "Open a time capsule", "A capsule you sealed gets released", 75, 3),
+    Quest("bug_verified", "Squash a real bug", "Report a bug our team confirms is real", 250, 5),
 )
 
 QUESTS_BY_ACTION: dict[str, Quest] = {q.action: q for q in QUESTS}

@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # Testnet harness (testnet.futureroots.app only). Gates the /testnet
     # endpoints and the points engine; the family product runs with this off.
     testnet_mode: bool = False
+    # Shared secret gating the admin-only bug-verification endpoint. When empty,
+    # no bug can ever be verified (so no bug_verified points can be awarded).
+    testnet_admin_token: str = ""
 
     model_config = {"env_file": ".env", "env_prefix": "FUTUREROOTS_"}
 

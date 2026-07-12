@@ -38,6 +38,15 @@ export interface Leaderboard {
   my_points: number | null;
 }
 
+export interface BugReport {
+  id: string;
+  title: string;
+  body: string;
+  status: "pending" | "verified" | "rejected";
+  created_at: string;
+  reviewed_at: string | null;
+}
+
 async function req<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const res = await fetch(`${API_URL}${path}`, {
@@ -79,4 +88,10 @@ export const testnetApi = {
       method: "POST",
       body: JSON.stringify({ display_name }),
     }),
+  submitBug: (bug: { title: string; body: string }) =>
+    req<BugReport>("/testnet/bugs", {
+      method: "POST",
+      body: JSON.stringify(bug),
+    }),
+  myBugs: () => req<BugReport[]>("/testnet/bugs"),
 };

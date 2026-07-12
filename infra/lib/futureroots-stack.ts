@@ -177,6 +177,7 @@ export class FutureRootsStack extends cdk.Stack {
         FUTUREROOTS_CORS_EXTRA_ORIGINS: "http://localhost:3000",
         FUTUREROOTS_PAYMENT_BACKEND: "local",
         FUTUREROOTS_TESTNET_MODE: "1",
+        FUTUREROOTS_TESTNET_ADMIN_TOKEN: process.env.TESTNET_ADMIN_TOKEN ?? "",
       },
     });
     mediaBucket.grantReadWrite(testnetFn);

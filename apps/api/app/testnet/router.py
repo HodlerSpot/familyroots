@@ -12,18 +12,19 @@ JWT, so the entire existing product API works for testers unchanged.
 
 import re
 import secrets
-from datetime import timedelta, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 
 from eth_account import Account
 from eth_account.messages import encode_defunct
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func
-from typing import Annotated
+from typing import Annotated, Literal
 
 from ..config import settings
 from ..deps import CurrentUser, DbSession, bearer_scheme
-from ..models import PointEvent, Tester, User, WalletNonce, utcnow
+from ..models import BugReport, PointEvent, Tester, User, WalletNonce, utcnow
 from ..schemas import TokenResponse
 from ..security import create_access_token, decode_access_token, hash_password
 from .service import (
@@ -41,10 +42,30 @@ SIGN_IN_MESSAGE = (
 )
 
 
+MAX_PENDING_BUGS = 20  # a tester can't sit on more than this many unreviewed reports
+
+
 def require_testnet() -> None:
     """The wall: outside testnet mode, these endpoints do not exist."""
     if not settings.testnet_mode:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+
+
+def require_admin(
+    x_admin_token: Annotated[str | None, Header(alias="X-Admin-Token")] = None,
+) -> None:
+    """Gate the human-only bug-verification endpoint on a shared secret.
+
+    Constant-time compare. If no token is configured, verification is
+    impossible by design (so bug_verified points can never be awarded without
+    an operator explicitly setting FUTUREROOTS_TESTNET_ADMIN_TOKEN)."""
+    expected = settings.testnet_admin_token
+    if (
+        not expected
+        or not x_admin_token
+        or not secrets.compare_digest(x_admin_token, expected)
+    ):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Admin token required")
 
 
 router = APIRouter(
@@ -127,6 +148,34 @@ class ProfileUpdate(BaseModel):
 class ProfileOut(BaseModel):
     wallet_address: str
     display_name: str | None
+
+
+class BugSubmit(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=5000)
+
+    @field_validator("title", "body")
+    @classmethod
+    def _trim(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Please add a little more detail")
+        return value
+
+
+class BugReportOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    body: str
+    status: str
+    created_at: datetime
+    reviewed_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class VerifyDecision(BaseModel):
+    decision: Literal["verified", "rejected"]
 
 
 # --- auth ---
@@ -352,3 +401,88 @@ def set_profile(payload: ProfileUpdate, db: DbSession, user: CurrentUser) -> Pro
     return ProfileOut(
         wallet_address=tester.wallet_address, display_name=tester.display_name
     )
+
+
+# --- bug reports ---
+#
+# The anti-gaming rule that matters most here: submitting a bug scores nothing.
+# A tester can file reports freely, but the 250-point bug_verified award fires
+# only when a human reviewer hits the admin verify endpoint below. Submission
+# is never a scoring path.
+
+
+@router.post("/bugs", response_model=BugReportOut, status_code=status.HTTP_201_CREATED)
+def submit_bug(payload: BugSubmit, db: DbSession, user: CurrentUser) -> BugReport:
+    """File a bug report. Creates a pending report for the caller's tester and
+    awards no points — verification (a human action) is the only scoring path."""
+    tester = get_tester_for_user(db, user.id)
+    if tester is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "Connect a wallet to join the testing crew"
+        )
+
+    pending = (
+        db.query(func.count(BugReport.id))
+        .filter(BugReport.tester_id == tester.id, BugReport.status == "pending")
+        .scalar()
+    )
+    if pending >= MAX_PENDING_BUGS:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "You have plenty of reports awaiting review already. Thanks for the help",
+        )
+
+    report = BugReport(tester_id=tester.id, title=payload.title, body=payload.body)
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return report
+
+
+@router.get("/bugs", response_model=list[BugReportOut])
+def my_bugs(db: DbSession, user: CurrentUser) -> list[BugReport]:
+    """The caller's own bug reports, newest first, with their review status."""
+    tester = get_tester_for_user(db, user.id)
+    if tester is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "Connect a wallet to join the testing crew"
+        )
+    return (
+        db.query(BugReport)
+        .filter(BugReport.tester_id == tester.id)
+        .order_by(BugReport.created_at.desc())
+        .all()
+    )
+
+
+@router.post("/bugs/{bug_id}/verify", response_model=BugReportOut)
+def verify_bug(
+    bug_id: uuid.UUID,
+    payload: VerifyDecision,
+    db: DbSession,
+    _admin: Annotated[None, Depends(require_admin)],
+) -> BugReport:
+    """Human review of a bug report — the ONLY path that awards bug_verified.
+
+    On "verified": mark the report verified and, if it has not already scored,
+    award the reporting tester 250 points (subject to award()'s own daily cap).
+    points_awarded is the per-report idempotency guard, so re-verifying can
+    never double-award. On "rejected": mark rejected; no points, ever."""
+    report = db.query(BugReport).filter(BugReport.id == bug_id).first()
+    if report is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Bug report not found")
+
+    report.reviewed_at = utcnow()
+    if payload.decision == "verified":
+        report.status = "verified"
+        if not report.points_awarded:
+            tester = db.query(Tester).filter(Tester.id == report.tester_id).first()
+            if tester is not None:
+                award(db, tester.user_id, "bug_verified")
+            report.points_awarded = True
+    else:  # "rejected"
+        report.status = "rejected"
+
+    db.commit()
+    db.refresh(report)
+    return report

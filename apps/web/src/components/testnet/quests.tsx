@@ -4,21 +4,37 @@
 // Polls every 5 seconds so points tick up in near real time as actions land.
 
 import { useCallback, useEffect, useState } from "react";
-import { QuestBoard, testnetApi } from "./api";
+import { BugReport, QuestBoard, testnetApi } from "./api";
 
 function shortWallet(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
+
+const BUG_STATUS_CHIP: Record<BugReport["status"], { label: string; className: string }> = {
+  pending: { label: "In review", className: "bg-amber-100 text-amber-800" },
+  verified: { label: "Verified +250", className: "bg-emerald-100 text-emerald-800" },
+  rejected: { label: "Not a bug", className: "bg-stone-200 text-stone-600" },
+};
 
 export function QuestsButton() {
   const [open, setOpen] = useState(false);
   const [board, setBoard] = useState<QuestBoard | null>(null);
   const [savingName, setSavingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
+  const [bugs, setBugs] = useState<BugReport[]>([]);
+  const [bugTitle, setBugTitle] = useState("");
+  const [bugBody, setBugBody] = useState("");
+  const [submittingBug, setSubmittingBug] = useState(false);
+  const [bugError, setBugError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      setBoard(await testnetApi.quests());
+      const [nextBoard, nextBugs] = await Promise.all([
+        testnetApi.quests(),
+        testnetApi.myBugs(),
+      ]);
+      setBoard(nextBoard);
+      setBugs(nextBugs);
     } catch {
       // transient; the next poll retries
     }
@@ -40,6 +56,23 @@ export function QuestsButton() {
       await refresh();
     } finally {
       setSavingName(false);
+    }
+  }
+
+  async function submitBug(e: React.FormEvent) {
+    e.preventDefault();
+    if (!bugTitle.trim() || !bugBody.trim()) return;
+    setSubmittingBug(true);
+    setBugError(null);
+    try {
+      await testnetApi.submitBug({ title: bugTitle.trim(), body: bugBody.trim() });
+      setBugTitle("");
+      setBugBody("");
+      await refresh();
+    } catch (err) {
+      setBugError(err instanceof Error ? err.message : "Something went wrong. Please try again");
+    } finally {
+      setSubmittingBug(false);
     }
   }
 
@@ -160,6 +193,62 @@ export function QuestsButton() {
                     );
                   })}
                 </ul>
+
+                <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4">
+                  <h3 className="font-semibold text-emerald-900">Found a bug?</h3>
+                  <p className="mt-0.5 text-xs text-stone-500">
+                    Tell us what broke. When our team confirms it is a real bug, you earn 250
+                    points. Thank you for helping us build something better.
+                  </p>
+                  <form onSubmit={submitBug} className="mt-3 space-y-2">
+                    <input
+                      value={bugTitle}
+                      onChange={(e) => setBugTitle(e.target.value)}
+                      placeholder="What went wrong?"
+                      maxLength={200}
+                      className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
+                    />
+                    <textarea
+                      value={bugBody}
+                      onChange={(e) => setBugBody(e.target.value)}
+                      placeholder="Steps to see it, and what you expected instead"
+                      maxLength={5000}
+                      rows={3}
+                      className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
+                    />
+                    {bugError && <p className="text-xs text-red-600">{bugError}</p>}
+                    <button
+                      type="submit"
+                      disabled={submittingBug || !bugTitle.trim() || !bugBody.trim()}
+                      className="w-full rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-800 disabled:opacity-50"
+                    >
+                      {submittingBug ? "Sending…" : "Send bug report"}
+                    </button>
+                  </form>
+
+                  {bugs.length > 0 && (
+                    <ul className="mt-4 space-y-2">
+                      {bugs.map((bug) => {
+                        const chip = BUG_STATUS_CHIP[bug.status];
+                        return (
+                          <li
+                            key={bug.id}
+                            className="flex items-start justify-between gap-3 rounded-xl border border-stone-200 bg-white p-3"
+                          >
+                            <p className="min-w-0 flex-1 truncate text-sm font-medium text-stone-800">
+                              {bug.title}
+                            </p>
+                            <span
+                              className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${chip.className}`}
+                            >
+                              {chip.label}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
               </>
             )}
           </div>

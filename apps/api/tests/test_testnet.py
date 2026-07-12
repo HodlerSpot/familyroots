@@ -23,9 +23,25 @@ if not any(getattr(r, "path", "").startswith("/testnet") for r in app.router.rou
     app.include_router(_testnet_routes)
 
 
+ADMIN_TOKEN = "test-admin-secret"
+BOGUS_ID = "00000000-0000-0000-0000-000000000000"
+
+
 @pytest.fixture()
 def testnet_on(monkeypatch):
     monkeypatch.setattr(settings, "testnet_mode", True)
+
+
+@pytest.fixture()
+def admin_token(monkeypatch):
+    monkeypatch.setattr(settings, "testnet_admin_token", ADMIN_TOKEN)
+    return {"X-Admin-Token": ADMIN_TOKEN}
+
+
+def submit_bug(client, headers, title="Feed crashes on open", body="Open the feed and it goes blank"):
+    r = client.post("/testnet/bugs", json={"title": title, "body": body}, headers=headers)
+    assert r.status_code == 201, r.text
+    return r.json()
 
 
 def wallet_login(client, acct=None):
@@ -284,3 +300,125 @@ def test_capsule_quests_award_the_creator(testnet_on, client):
 
     assert quest(client, headers, "capsule_created")["points_earned"] == 60
     assert quest(client, headers, "capsule_released")["points_earned"] == 75
+
+
+# --- bug-report quest: submission never scores; only human verify awards ---
+
+
+def test_bug_endpoints_404_when_flag_off(client):
+    assert client.post("/testnet/bugs", json={"title": "x", "body": "y"}).status_code == 404
+    assert client.get("/testnet/bugs").status_code == 404
+    assert (
+        client.post(f"/testnet/bugs/{BOGUS_ID}/verify", json={"decision": "verified"}).status_code
+        == 404
+    )
+
+
+def test_submitting_a_bug_awards_no_points(testnet_on, client):
+    _, headers = wallet_login(client)  # +25 connect_wallet
+    bug = submit_bug(client, headers)
+    assert bug["status"] == "pending"
+
+    # Submission is not a scoring path.
+    assert total_points(client, headers) == 25
+    assert quest(client, headers, "bug_verified")["times_completed"] == 0
+
+    reports = client.get("/testnet/bugs", headers=headers).json()
+    assert len(reports) == 1
+    assert reports[0]["status"] == "pending"
+    assert reports[0]["reviewed_at"] is None
+
+
+def test_admin_verify_awards_and_shows_on_leaderboard(testnet_on, admin_token, client):
+    _, headers = wallet_login(client)
+    bug = submit_bug(client, headers)
+
+    r = client.post(
+        f"/testnet/bugs/{bug['id']}/verify",
+        json={"decision": "verified"},
+        headers=admin_token,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "verified"
+    assert r.json()["reviewed_at"] is not None
+
+    assert total_points(client, headers) == 25 + 250
+    assert quest(client, headers, "bug_verified")["points_earned"] == 250
+
+    board = client.get("/testnet/leaderboard", headers=headers).json()
+    assert board["my_points"] == 275
+    assert board["entries"][0]["points"] == 275
+
+    assert client.get("/testnet/bugs", headers=headers).json()[0]["status"] == "verified"
+
+
+def test_verify_with_wrong_or_missing_admin_token_awards_nothing(testnet_on, admin_token, client):
+    _, headers = wallet_login(client)
+    bug = submit_bug(client, headers)
+    url = f"/testnet/bugs/{bug['id']}/verify"
+
+    assert client.post(url, json={"decision": "verified"}).status_code == 401  # missing
+    assert (
+        client.post(url, json={"decision": "verified"}, headers={"X-Admin-Token": "nope"}).status_code
+        == 401
+    )  # wrong
+
+    assert total_points(client, headers) == 25
+    assert client.get("/testnet/bugs", headers=headers).json()[0]["status"] == "pending"
+
+
+def test_verify_impossible_when_no_admin_token_configured(testnet_on, client):
+    # No admin_token fixture -> settings.testnet_admin_token is "".
+    _, headers = wallet_login(client)
+    bug = submit_bug(client, headers)
+    r = client.post(
+        f"/testnet/bugs/{bug['id']}/verify",
+        json={"decision": "verified"},
+        headers={"X-Admin-Token": "anything"},
+    )
+    assert r.status_code == 401
+    assert total_points(client, headers) == 25
+
+
+def test_double_verify_does_not_double_award(testnet_on, admin_token, client):
+    _, headers = wallet_login(client)
+    bug = submit_bug(client, headers)
+    url = f"/testnet/bugs/{bug['id']}/verify"
+    assert client.post(url, json={"decision": "verified"}, headers=admin_token).status_code == 200
+    assert client.post(url, json={"decision": "verified"}, headers=admin_token).status_code == 200
+    assert total_points(client, headers) == 25 + 250  # still one award
+
+
+def test_rejected_bug_awards_nothing(testnet_on, admin_token, client):
+    _, headers = wallet_login(client)
+    bug = submit_bug(client, headers)
+    r = client.post(
+        f"/testnet/bugs/{bug['id']}/verify",
+        json={"decision": "rejected"},
+        headers=admin_token,
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "rejected"
+    assert total_points(client, headers) == 25
+
+
+def test_invalid_decision_rejected(testnet_on, admin_token, client):
+    _, headers = wallet_login(client)
+    bug = submit_bug(client, headers)
+    r = client.post(
+        f"/testnet/bugs/{bug['id']}/verify",
+        json={"decision": "maybe"},
+        headers=admin_token,
+    )
+    assert r.status_code == 422
+
+
+def test_pending_bug_reports_are_capped(testnet_on, client):
+    _, headers = wallet_login(client)
+    for i in range(20):
+        submit_bug(client, headers, title=f"Bug {i}")
+    r = client.post(
+        "/testnet/bugs", json={"title": "One too many", "body": "spammy"}, headers=headers
+    )
+    assert r.status_code == 429
+
