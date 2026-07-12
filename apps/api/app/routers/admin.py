@@ -102,6 +102,7 @@ class AdminUserRow(BaseModel):
     family_count: int
     child_count: int
     created_at: datetime
+    last_login_at: datetime | None
 
 
 class AdminUserDetail(BaseModel):
@@ -296,7 +297,8 @@ def list_users(
         rows.append(
             AdminUserRow(
                 id=u.id, display_name=u.display_name, email=u.email, role=u.role,
-                disabled=u.disabled, family_count=fam, child_count=kids, created_at=u.created_at,
+                disabled=u.disabled, family_count=fam, child_count=kids,
+                created_at=u.created_at, last_login_at=u.last_login_at,
             )
         )
     return Page(total=total, items=rows)
@@ -674,21 +676,34 @@ def reconcile(contribution_id: uuid.UUID, db: DbSession, admin: AdminUser) -> Mi
 
 # --- bug reports ---
 
+def _bug_reporter(tester: Tester | None, reporter: User | None) -> str:
+    if tester is not None:
+        return tester.x_username or tester.display_name or tester.wallet_address[:10]
+    if reporter is not None:
+        return f"{reporter.display_name} ({reporter.email})"
+    return "Unknown"
+
+
 @router.get("/bugs", response_model=list[AdminBugRow])
 def list_bugs(
     db: DbSession, admin: AdminUser, status_filter: str | None = Query(default=None, alias="status")
 ) -> list[AdminBugRow]:
-    query = db.query(BugReport, Tester).join(Tester, Tester.id == BugReport.tester_id)
+    # reports come from testers (testnet) OR main-site users; left-join both
+    query = (
+        db.query(BugReport, Tester, User)
+        .outerjoin(Tester, Tester.id == BugReport.tester_id)
+        .outerjoin(User, User.id == BugReport.reporter_user_id)
+    )
     if status_filter in ("pending", "verified", "rejected"):
         query = query.filter(BugReport.status == status_filter)
     rows = query.order_by(BugReport.created_at.desc()).limit(200).all()
     return [
         AdminBugRow(
             id=r.id, title=r.title, body=r.body, status=r.status,
-            reporter=(t.x_username or t.display_name or t.wallet_address[:10]),
+            reporter=_bug_reporter(t, ru),
             media_id=r.media_id, created_at=r.created_at, reviewed_at=r.reviewed_at,
         )
-        for r, t in rows
+        for r, t, ru in rows
     ]
 
 
@@ -702,28 +717,28 @@ def decide_bug(
 
     if decision not in ("verify", "reject"):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
-    row = db.query(BugReport, Tester).join(Tester, Tester.id == BugReport.tester_id).filter(
-        BugReport.id == bug_id
-    ).first()
-    if row is None:
+    report = db.get(BugReport, bug_id)
+    if report is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Bug report not found")
-    report, tester = row
+    tester = db.get(Tester, report.tester_id) if report.tester_id else None
+    reporter = db.get(User, report.reporter_user_id) if report.reporter_user_id else None
     report.reviewed_at = utcnow()
     if decision == "verify":
         report.status = "verified"
-        if not report.points_awarded:
+        # points are a testnet concept; only a tester-reported bug awards them
+        if tester is not None and not report.points_awarded:
             award(db, tester.user_id, "bug_verified")
             report.points_awarded = True
     else:
         report.status = "rejected"
     _audit(
         db, admin, f"bug_{decision}", f"bug:{report.id}",
-        {"title": report.title, "reporter": tester.x_username or tester.wallet_address[:10]},
+        {"title": report.title, "reporter": _bug_reporter(tester, reporter)},
     )
     db.commit()
     db.refresh(report)
     return AdminBugRow(
         id=report.id, title=report.title, body=report.body, status=report.status,
-        reporter=(tester.x_username or tester.display_name or tester.wallet_address[:10]),
+        reporter=_bug_reporter(tester, reporter),
         media_id=report.media_id, created_at=report.created_at, reviewed_at=report.reviewed_at,
     )

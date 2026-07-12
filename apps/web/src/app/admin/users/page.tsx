@@ -98,6 +98,10 @@ export default function AdminUsersPage() {
                   )}
                 </p>
                 <p className="truncate text-xs text-stone-500">{u.email}</p>
+                <p className="truncate text-[11px] text-stone-400">
+                  Joined {new Date(u.created_at).toLocaleDateString()} · Last login{" "}
+                  {u.last_login_at ? new Date(u.last_login_at).toLocaleDateString() : "never"}
+                </p>
               </div>
               <span className="w-16 text-center tabular-nums text-stone-700">{u.family_count}</span>
               <span className="w-16 text-center tabular-nums text-stone-700">{u.child_count}</span>

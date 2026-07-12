@@ -3,6 +3,7 @@ import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
 import { TestnetRoot } from "@/components/testnet/root";
 import { ImpersonationBanner } from "@/components/impersonation-banner";
+import { ReportIssue } from "@/components/report-issue";
 
 export const metadata: Metadata = {
   title: "FutureRoots: Building Generational Wealth & Memories",
@@ -18,6 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <ImpersonationBanner />
           <SiteHeader />
           <main className="mx-auto max-w-3xl px-6 py-10">{children}</main>
+          <ReportIssue />
         </TestnetRoot>
       </body>
     </html>

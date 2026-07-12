@@ -94,6 +94,8 @@ def login(payload: LoginRequest, db: DbSession) -> TokenResponse:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect email or password")
     if user.disabled:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "This account has been disabled")
+    user.last_login_at = utcnow()
+    db.commit()
     return TokenResponse(access_token=create_access_token(user.id))
 
 

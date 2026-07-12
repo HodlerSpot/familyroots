@@ -138,6 +138,7 @@ class User(Base):
         Enum(UserRole, native_enum=False, length=20), default=UserRole.user
     )
     disabled: Mapped[bool] = mapped_column(default=False)  # admin can lock an account out
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     memberships: Mapped[list["FamilyMember"]] = relationship(
@@ -546,7 +547,13 @@ class BugReport(Base):
     __tablename__ = "bug_reports"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    tester_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("testers.id"), index=True)
+    # a report comes from exactly one of: a testnet tester, or a main-site user
+    tester_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("testers.id"), nullable=True, index=True
+    )
+    reporter_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     title: Mapped[str] = mapped_column(String(200))
     body: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|verified|rejected

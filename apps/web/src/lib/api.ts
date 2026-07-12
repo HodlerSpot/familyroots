@@ -223,6 +223,11 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   me: () => request<UserOut>("/auth/me"),
+  reportIssue: (title: string, body: string) =>
+    request<{ id: string; title: string; status: string }>("/issues", {
+      method: "POST",
+      body: JSON.stringify({ title, body }),
+    }),
   forgotPassword: (email: string) =>
     request<void>("/auth/forgot-password", {
       method: "POST",
@@ -400,6 +405,7 @@ export interface AdminUserRow {
   family_count: number;
   child_count: number;
   created_at: string;
+  last_login_at: string | null;
 }
 
 export interface AdminUserDetail {

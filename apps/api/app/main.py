@@ -12,6 +12,7 @@ from .routers import (
     feed,
     goals,
     invites,
+    issues,
     legacy,
     vault,
     webhooks,
@@ -41,6 +42,7 @@ app.include_router(contributions.router)
 app.include_router(capsules.router)
 app.include_router(legacy.router)
 app.include_router(webhooks.router)
+app.include_router(issues.router)
 app.include_router(admin.router)
 
 if settings.testnet_mode:
