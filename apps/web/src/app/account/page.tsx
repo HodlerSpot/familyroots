@@ -6,6 +6,7 @@ import { api, ApiError, getToken, UserOut } from "@/lib/api";
 import { Button, Card, ErrorNote, Label, PasswordInput } from "@/components/ui";
 import { PasswordRules, passwordMeetsRules } from "@/components/password-rules";
 import { QuestBoard, testnetApi } from "@/components/testnet/api";
+import { Avatar } from "@/components/testnet/identicon";
 
 const IS_TESTNET = process.env.NEXT_PUBLIC_TESTNET === "1";
 
@@ -27,6 +28,9 @@ function TestnetAccount() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [xBusy, setXBusy] = useState(false);
+  const [xUnavailable, setXUnavailable] = useState(false);
+  const [xError, setXError] = useState("");
 
   useEffect(() => {
     if (!getToken()) {
@@ -65,6 +69,25 @@ function TestnetAccount() {
     setTimeout(() => setCopied(false), 1500);
   }
 
+  async function connectX() {
+    setXBusy(true);
+    setXError("");
+    try {
+      const { authorize_url } = await testnetApi.xStart();
+      window.location.assign(authorize_url);
+    } catch (err) {
+      // A 503 means X isn't set up on this deployment: hide the button. Any
+      // other failure is transient, so surface a gentle retry message.
+      const message = err instanceof Error ? err.message : "";
+      if (message.includes("isn't set up")) {
+        setXUnavailable(true);
+      } else {
+        setXError("We couldn't reach X just now. Please try again");
+      }
+      setXBusy(false);
+    }
+  }
+
   if (!board) return <p className="text-stone-500">Loading…</p>;
 
   return (
@@ -78,12 +101,10 @@ function TestnetAccount() {
 
       <Card className="space-y-5">
         <div className="flex items-center gap-4">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-2xl">
-            👛
-          </div>
+          <Avatar seed={board.wallet_address} src={board.avatar_url} size={64} />
           <div className="min-w-0">
             <p className="text-lg font-bold text-stone-900">
-              {board.display_name || shortWallet(board.wallet_address)}
+              {board.x_username || board.display_name || shortWallet(board.wallet_address)}
             </p>
             <button
               onClick={copyWallet}
@@ -109,6 +130,36 @@ function TestnetAccount() {
           See the leaderboard
         </a>
       </Card>
+
+      {!xUnavailable && (
+        <Card>
+          <h2 className="mb-1 text-lg font-semibold text-emerald-900">Bring your crew</h2>
+          {board.x_username ? (
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium text-stone-900">{board.x_username}</p>
+                <p className="text-sm text-stone-600">
+                  Your X picture and handle show on the leaderboard.
+                </p>
+              </div>
+              <span className="shrink-0 rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-800">
+                Connected ✓
+              </span>
+            </div>
+          ) : (
+            <>
+              <p className="mb-4 text-sm text-stone-600">
+                Connect your X account to swap your identicon for your real profile picture
+                and @handle. It is worth 100 points, and it is easy to undo later.
+              </p>
+              <Button onClick={connectX} disabled={xBusy} className="w-full">
+                {xBusy ? "Opening X…" : "Connect X"}
+              </Button>
+              <ErrorNote>{xError}</ErrorNote>
+            </>
+          )}
+        </Card>
+      )}
 
       <Card>
         <h2 className="mb-1 text-lg font-semibold text-emerald-900">Leaderboard name</h2>

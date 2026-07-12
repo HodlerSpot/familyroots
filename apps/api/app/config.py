@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     # Shared secret gating the admin-only bug-verification endpoint. When empty,
     # no bug can ever be verified (so no bug_verified points can be awarded).
     testnet_admin_token: str = ""
+    # X (Twitter) OAuth 2.0 confidential-client credentials for the optional
+    # tester "Connect X" quest. When x_client_id is empty, the connect flow is
+    # unavailable (the start endpoint 503s and the UI hides the button). The
+    # main session sets these in the testnet Lambda env.
+    x_client_id: str = ""
+    x_client_secret: str = ""
 
     model_config = {"env_file": ".env", "env_prefix": "FUTUREROOTS_"}
 

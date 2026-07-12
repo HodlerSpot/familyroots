@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Leaderboard, testnetApi } from "@/components/testnet/api";
+import { Avatar } from "@/components/testnet/identicon";
 import { Card } from "@/components/ui";
 
 export default function LeaderboardPage() {
@@ -61,6 +62,7 @@ export default function LeaderboardPage() {
                 >
                   {e.rank <= 3 ? ["🥇", "🥈", "🥉"][e.rank - 1] : e.rank}
                 </span>
+                <Avatar seed={e.wallet} src={e.avatar_url} size={36} />
                 <span className="flex-1 font-medium text-stone-900">
                   {e.display_name}
                   {e.is_me && (

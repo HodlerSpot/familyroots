@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { BugReport, QuestBoard, testnetApi } from "./api";
+import { Avatar } from "./identicon";
 
 function shortWallet(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -98,12 +99,18 @@ export function QuestsButton() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between">
-              <div>
-                <h2 className="text-2xl font-bold text-emerald-900">Your quests</h2>
-                <p className="text-sm text-stone-500">
-                  {board?.display_name ??
-                    (board ? shortWallet(board.wallet_address) : "Loading…")}
-                </p>
+              <div className="flex items-center gap-3">
+                {board && (
+                  <Avatar seed={board.wallet_address} src={board.avatar_url} size={44} />
+                )}
+                <div>
+                  <h2 className="text-2xl font-bold text-emerald-900">Your quests</h2>
+                  <p className="text-sm text-stone-500">
+                    {board?.x_username ??
+                      board?.display_name ??
+                      (board ? shortWallet(board.wallet_address) : "Loading…")}
+                  </p>
+                </div>
               </div>
               <button
                 onClick={() => setOpen(false)}

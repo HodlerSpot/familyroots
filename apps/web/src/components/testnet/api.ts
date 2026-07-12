@@ -23,6 +23,9 @@ export interface QuestBoard {
   invite_email: string;
   total_points: number;
   quests: QuestOut[];
+  x_username: string | null;
+  // X profile picture when connected; null means render the wallet identicon.
+  avatar_url: string | null;
 }
 
 export interface LeaderboardEntry {
@@ -30,6 +33,9 @@ export interface LeaderboardEntry {
   display_name: string;
   points: number;
   is_me: boolean;
+  // Full lowercase wallet address: the identicon seed when avatar_url is null.
+  wallet: string;
+  avatar_url: string | null;
 }
 
 export interface Leaderboard {
@@ -94,4 +100,16 @@ export const testnetApi = {
       body: JSON.stringify(bug),
     }),
   myBugs: () => req<BugReport[]>("/testnet/bugs"),
+  xStart: () =>
+    req<{ authorize_url: string }>("/testnet/auth/x/start", { method: "POST" }),
+  xCallback: (code: string, state: string) =>
+    req<{
+      wallet_address: string;
+      display_name: string | null;
+      x_username: string | null;
+      x_avatar_url: string | null;
+    }>("/testnet/auth/x/callback", {
+      method: "POST",
+      body: JSON.stringify({ code, state }),
+    }),
 };

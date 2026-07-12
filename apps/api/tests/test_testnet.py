@@ -6,10 +6,13 @@ provisioning, the award flow across real product actions, daily caps, and the
 derived leaderboard.
 """
 
+from urllib.parse import parse_qs, urlparse
+
 import pytest
 from eth_account import Account
 from eth_account.messages import encode_defunct
 
+import app.testnet.router as testnet_router
 from app.config import settings
 from app.main import app
 from app.testnet.router import router as _testnet_routes  # name must not start with "test"
@@ -421,4 +424,161 @@ def test_pending_bug_reports_are_capped(testnet_on, client):
         "/testnet/bugs", json={"title": "One too many", "body": "spammy"}, headers=headers
     )
     assert r.status_code == 429
+
+
+# --- avatars + optional X connection ---
+#
+# Every tester has an avatar (a deterministic wallet identicon, a frontend
+# concern). Connecting X is the optional connect_x quest and replaces the
+# identicon with the tester's real X picture + @handle. All network calls are
+# patched out so no test ever hits X.
+
+
+def connect_x(
+    client,
+    monkeypatch,
+    headers,
+    *,
+    x_user_id="42",
+    username="grandpajoe",
+    avatar="https://pbs.twimg.com/profile_images/1/pic_normal.jpg",
+):
+    """Drive the full start -> callback handshake with X's HTTP calls stubbed."""
+    monkeypatch.setattr(settings, "x_client_id", "test-client-id")
+    monkeypatch.setattr(settings, "x_client_secret", "test-client-secret")
+    monkeypatch.setattr(
+        testnet_router, "_x_token_exchange", lambda code, verifier: {"access_token": "tok"}
+    )
+    monkeypatch.setattr(
+        testnet_router,
+        "_x_fetch_me",
+        lambda token: {"id": x_user_id, "username": username, "profile_image_url": avatar},
+    )
+    r = client.post("/testnet/auth/x/start", headers=headers)
+    assert r.status_code == 200, r.text
+    state = parse_qs(urlparse(r.json()["authorize_url"]).query)["state"][0]
+    return client.post(
+        "/testnet/auth/x/callback",
+        json={"code": "auth-code", "state": state},
+        headers=headers,
+    )
+
+
+def test_x_endpoints_404_when_flag_off(client):
+    assert client.post("/testnet/auth/x/start").status_code == 404
+    assert (
+        client.post(
+            "/testnet/auth/x/callback", json={"code": "c", "state": "s"}
+        ).status_code
+        == 404
+    )
+
+
+def test_x_start_503_when_not_configured(testnet_on, client):
+    _, headers = wallet_login(client)
+    r = client.post("/testnet/auth/x/start", headers=headers)
+    assert r.status_code == 503  # UI hides/disables the button on this
+
+
+def test_x_start_returns_authorize_url_when_configured(testnet_on, client, monkeypatch):
+    _, headers = wallet_login(client)
+    monkeypatch.setattr(settings, "x_client_id", "my-client-id")
+    r = client.post("/testnet/auth/x/start", headers=headers)
+    assert r.status_code == 200, r.text
+    url = r.json()["authorize_url"]
+    assert url.startswith("https://twitter.com/i/oauth2/authorize?")
+    q = parse_qs(urlparse(url).query)
+    assert q["response_type"] == ["code"]
+    assert q["client_id"] == ["my-client-id"]
+    assert q["scope"] == ["users.read tweet.read"]
+    assert q["code_challenge_method"] == ["S256"]
+    assert q["redirect_uri"] == [f"{settings.web_base_url}/x/callback"]
+    assert q["state"][0] and q["code_challenge"][0]
+
+
+def test_avatar_url_null_before_connecting(testnet_on, client):
+    acct, headers = wallet_login(client)
+    board = client.get("/testnet/quests", headers=headers).json()
+    assert board["avatar_url"] is None  # identicon is the frontend default
+    assert board["x_username"] is None
+    entry = client.get("/testnet/leaderboard", headers=headers).json()["entries"][0]
+    assert entry["avatar_url"] is None
+    assert entry["wallet"] == acct.address.lower()  # the identicon seed
+
+
+def test_x_callback_links_account_and_awards_connect_x(testnet_on, client, monkeypatch):
+    _, headers = wallet_login(client)
+    r = connect_x(client, monkeypatch, headers)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["x_username"] == "@grandpajoe"
+    # higher-res avatar: _normal is swapped for _400x400
+    assert body["x_avatar_url"].endswith("pic_400x400.jpg")
+    assert "_normal" not in body["x_avatar_url"]
+
+    assert quest(client, headers, "connect_x")["points_earned"] == 100
+
+    board = client.get("/testnet/quests", headers=headers).json()
+    assert board["x_username"] == "@grandpajoe"
+    assert board["avatar_url"] == body["x_avatar_url"]
+
+    me_entry = next(
+        e for e in client.get("/testnet/leaderboard", headers=headers).json()["entries"]
+        if e["is_me"]
+    )
+    assert me_entry["avatar_url"] == body["x_avatar_url"]
+
+
+def test_second_x_connect_does_not_double_award(testnet_on, client, monkeypatch):
+    _, headers = wallet_login(client)
+    assert connect_x(client, monkeypatch, headers).status_code == 200
+    assert total_points(client, headers) == 25 + 100
+    # Re-connecting the same X account to the same tester re-links but the
+    # once-ever connect_x never scores twice.
+    assert connect_x(client, monkeypatch, headers).status_code == 200
+    assert quest(client, headers, "connect_x")["times_completed"] == 1
+    assert total_points(client, headers) == 25 + 100
+
+
+def test_one_x_account_per_tester(testnet_on, client, monkeypatch):
+    _, alice = wallet_login(client)
+    assert connect_x(client, monkeypatch, alice, x_user_id="777", username="alice").status_code == 200
+
+    _, bob = wallet_login(client)
+    r = connect_x(client, monkeypatch, bob, x_user_id="777", username="alice")
+    assert r.status_code == 409  # that X account is already linked
+    # Bob earned nothing for the failed link
+    assert quest(client, bob, "connect_x")["times_completed"] == 0
+
+
+def test_x_callback_bad_state_rejected(testnet_on, client, monkeypatch):
+    _, headers = wallet_login(client)
+    monkeypatch.setattr(settings, "x_client_id", "cid")
+    r = client.post(
+        "/testnet/auth/x/callback",
+        json={"code": "auth-code", "state": "never-issued"},
+        headers=headers,
+    )
+    assert r.status_code == 400
+
+
+def test_x_callback_api_failure_is_friendly(testnet_on, client, monkeypatch):
+    _, headers = wallet_login(client)
+    monkeypatch.setattr(settings, "x_client_id", "cid")
+    monkeypatch.setattr(settings, "x_client_secret", "sec")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("X is down")
+
+    monkeypatch.setattr(testnet_router, "_x_token_exchange", boom)
+    r = client.post("/testnet/auth/x/start", headers=headers)
+    state = parse_qs(urlparse(r.json()["authorize_url"]).query)["state"][0]
+    r = client.post(
+        "/testnet/auth/x/callback",
+        json={"code": "auth-code", "state": state},
+        headers=headers,
+    )
+    assert r.status_code == 502
+    # No partial link, no award
+    assert quest(client, headers, "connect_x")["times_completed"] == 0
 

@@ -10,8 +10,13 @@ login, no transactions, no funds. The verify step returns a normal platform
 JWT, so the entire existing product API works for testers unchanged.
 """
 
+import base64
+import hashlib
+import json
 import re
 import secrets
+import urllib.parse
+import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -24,7 +29,7 @@ from typing import Annotated, Literal
 
 from ..config import settings
 from ..deps import CurrentUser, DbSession, bearer_scheme
-from ..models import BugReport, PointEvent, Tester, User, WalletNonce, utcnow
+from ..models import BugReport, PointEvent, Tester, User, WalletNonce, XAuthState, utcnow
 from ..schemas import TokenResponse
 from ..security import create_access_token, decode_access_token, hash_password
 from .service import (
@@ -43,6 +48,57 @@ SIGN_IN_MESSAGE = (
 
 
 MAX_PENDING_BUGS = 20  # a tester can't sit on more than this many unreviewed reports
+
+# --- X (Twitter) OAuth 2.0 (Authorization Code + PKCE, confidential client) ---
+
+X_AUTHORIZE_URL = "https://twitter.com/i/oauth2/authorize"
+X_TOKEN_URL = "https://api.twitter.com/2/oauth2/token"  # noqa: S105 (URL, not a secret)
+X_ME_URL = "https://api.twitter.com/2/users/me?user.fields=profile_image_url"
+X_SCOPES = "users.read tweet.read"
+X_STATE_TTL_MINUTES = 10
+
+
+def _x_redirect_uri() -> str:
+    return f"{settings.web_base_url}/x/callback"
+
+
+def _pkce_challenge(verifier: str) -> str:
+    """S256 code challenge: base64url(sha256(verifier)), padding stripped."""
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def _x_token_exchange(code: str, code_verifier: str) -> dict:
+    """Exchange an authorization code for an access token at X's token endpoint.
+
+    Confidential client: HTTP Basic auth with client_id:client_secret. Patched
+    out in tests so no real network call happens."""
+    body = urllib.parse.urlencode(
+        {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": _x_redirect_uri(),
+            "code_verifier": code_verifier,
+        }
+    ).encode("ascii")
+    basic = base64.b64encode(
+        f"{settings.x_client_id}:{settings.x_client_secret}".encode()
+    ).decode("ascii")
+    req = urllib.request.Request(X_TOKEN_URL, data=body, method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    req.add_header("Authorization", f"Basic {basic}")
+    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 (fixed https host)
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _x_fetch_me(access_token: str) -> dict:
+    """Fetch the connected user's X profile. Returns the `data` object with
+    id, username, and profile_image_url. Patched out in tests."""
+    req = urllib.request.Request(X_ME_URL, method="GET")
+    req.add_header("Authorization", f"Bearer {access_token}")
+    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 (fixed https host)
+        data = json.loads(resp.read().decode("utf-8"))
+    return data["data"]
 
 
 def require_testnet() -> None:
@@ -118,6 +174,10 @@ class QuestBoardOut(BaseModel):
     invite_email: str
     total_points: int
     quests: list[QuestOut]
+    x_username: str | None = None
+    # The X profile picture when connected; null means the frontend renders a
+    # deterministic identicon seeded on the wallet address.
+    avatar_url: str | None = None
 
 
 class LeaderboardEntry(BaseModel):
@@ -125,6 +185,10 @@ class LeaderboardEntry(BaseModel):
     display_name: str
     points: int
     is_me: bool
+    # Full lowercase wallet address (public on testnet) — the identicon seed
+    # used when avatar_url is null.
+    wallet: str
+    avatar_url: str | None = None
 
 
 class LeaderboardOut(BaseModel):
@@ -148,6 +212,22 @@ class ProfileUpdate(BaseModel):
 class ProfileOut(BaseModel):
     wallet_address: str
     display_name: str | None
+
+
+class XStartOut(BaseModel):
+    authorize_url: str
+
+
+class XCallbackRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=2000)
+    state: str = Field(min_length=1, max_length=64)
+
+
+class XProfileOut(BaseModel):
+    wallet_address: str
+    display_name: str | None
+    x_username: str | None
+    x_avatar_url: str | None
 
 
 class BugSubmit(BaseModel):
@@ -320,6 +400,8 @@ def quest_board(db: DbSession, user: CurrentUser) -> QuestBoardOut:
         invite_email=user.email,
         total_points=sum(entry[1] for entry in totals.values()),
         quests=quests,
+        x_username=tester.x_username,
+        avatar_url=tester.x_avatar_url,
     )
 
 
@@ -355,6 +437,8 @@ def leaderboard(
             display_name=tester.display_name or short_wallet(tester.wallet_address),
             points=points,
             is_me=me is not None and tester.id == me.id,
+            wallet=tester.wallet_address,
+            avatar_url=tester.x_avatar_url,
         )
         for i, (tester, points) in enumerate(rows, start=1)
     ]
@@ -400,6 +484,128 @@ def set_profile(payload: ProfileUpdate, db: DbSession, user: CurrentUser) -> Pro
     db.commit()
     return ProfileOut(
         wallet_address=tester.wallet_address, display_name=tester.display_name
+    )
+
+
+# --- X (Twitter) connection (optional avatar + handle) ---
+#
+# OAuth 2.0 Authorization Code + PKCE, confidential client. Connecting X is
+# itself the connect_x quest. The identicon stays the default; a connected X
+# account simply replaces it with the tester's real avatar and @handle.
+
+
+@router.post("/auth/x/start", response_model=XStartOut)
+def x_start(db: DbSession, user: CurrentUser) -> XStartOut:
+    """Begin the X connect handshake: store PKCE state, return the authorize URL.
+
+    503 when X isn't configured so the UI can hide/disable the button."""
+    tester = get_tester_for_user(db, user.id)
+    if tester is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "Connect a wallet to join the testing crew"
+        )
+    if not settings.x_client_id:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "X connection isn't set up yet"
+        )
+
+    state = secrets.token_urlsafe(32)  # <= 64 chars
+    code_verifier = secrets.token_urlsafe(64)  # <= 128 chars, RFC 7636 range
+    db.add(
+        XAuthState(tester_id=tester.id, state=state, code_verifier=code_verifier)
+    )
+    db.commit()
+
+    query = urllib.parse.urlencode(
+        {
+            "response_type": "code",
+            "client_id": settings.x_client_id,
+            "redirect_uri": _x_redirect_uri(),
+            "scope": X_SCOPES,
+            "state": state,
+            "code_challenge": _pkce_challenge(code_verifier),
+            "code_challenge_method": "S256",
+        }
+    )
+    return XStartOut(authorize_url=f"{X_AUTHORIZE_URL}?{query}")
+
+
+@router.post("/auth/x/callback", response_model=XProfileOut)
+def x_callback(
+    payload: XCallbackRequest, db: DbSession, user: CurrentUser
+) -> XProfileOut:
+    """Complete the X connect handshake: consume the PKCE state, exchange the
+    code, fetch the profile, and link X to this tester (awarding connect_x)."""
+    tester = get_tester_for_user(db, user.id)
+    if tester is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "Connect a wallet to join the testing crew"
+        )
+
+    row = (
+        db.query(XAuthState)
+        .filter(
+            XAuthState.tester_id == tester.id, XAuthState.state == payload.state
+        )
+        .first()
+    )
+    if row is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "That X sign-in didn't match. Please start again",
+        )
+
+    created_at = row.created_at
+    if created_at.tzinfo is None:  # SQLite loses tz info in tests
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    expired = created_at < utcnow() - timedelta(minutes=X_STATE_TTL_MINUTES)
+    code_verifier = row.code_verifier
+    db.delete(row)  # single use, whether it succeeds or not
+    if expired:
+        db.commit()
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "That X sign-in expired. Please start again",
+        )
+
+    try:
+        token_data = _x_token_exchange(payload.code, code_verifier)
+        access_token = token_data["access_token"]
+        me = _x_fetch_me(access_token)
+        x_user_id = str(me["id"])
+        username = str(me["username"])
+        avatar = me.get("profile_image_url")
+    except Exception:
+        db.commit()  # release the consumed state; the tester can retry cleanly
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "We couldn't reach X just now. Please try again",
+        )
+
+    # One X account per tester.
+    clash = (
+        db.query(Tester)
+        .filter(Tester.x_user_id == x_user_id, Tester.id != tester.id)
+        .first()
+    )
+    if clash is not None:
+        db.commit()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "That X account is already linked to another tester",
+        )
+
+    tester.x_user_id = x_user_id
+    tester.x_username = f"@{username}"
+    # Ask X for a larger image than the default "_normal" (48px) thumbnail.
+    tester.x_avatar_url = avatar.replace("_normal", "_400x400") if avatar else None
+    award(db, user.id, "connect_x")
+    db.commit()
+    return XProfileOut(
+        wallet_address=tester.wallet_address,
+        display_name=tester.display_name,
+        x_username=tester.x_username,
+        x_avatar_url=tester.x_avatar_url,
     )
 
 

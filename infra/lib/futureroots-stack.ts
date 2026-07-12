@@ -178,6 +178,8 @@ export class FutureRootsStack extends cdk.Stack {
         FUTUREROOTS_PAYMENT_BACKEND: "local",
         FUTUREROOTS_TESTNET_MODE: "1",
         FUTUREROOTS_TESTNET_ADMIN_TOKEN: process.env.TESTNET_ADMIN_TOKEN ?? "",
+        FUTUREROOTS_X_CLIENT_ID: process.env.X_CLIENT_ID ?? "",
+        FUTUREROOTS_X_CLIENT_SECRET: process.env.X_CLIENT_SECRET ?? "",
       },
     });
     mediaBucket.grantReadWrite(testnetFn);

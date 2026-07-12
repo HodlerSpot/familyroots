@@ -85,6 +85,7 @@ contribution — is worth 525 points in one sitting. Repeatable low-effort actio
 |---|---|---|---|---|
 | `connect_wallet` | Join the testing crew | First wallet sign-in | 25 | once ever |
 | `set_display_name` | Pick your tester name | Set a display name in the quests panel | 10 | once ever |
+| `connect_x` | Bring your crew | Connect your X (Twitter) account | 100 | once ever |
 | `create_family` | Plant your family tree | Create a family space | 75 | 2 |
 | `add_child` | Start a child's vault | Add a child profile (with consent) | 60 | 3 |
 | `invite_grandparent` | Invite a grandparent | Send an invitation with the grandparent role | 150 | 5 |
@@ -108,6 +109,63 @@ reviewer confirms the bug is real. Submission is never a scoring path — see
 Maximum score on day one (full caps, both once-ever quests, five full north-star
 chains): a determined tester touches every module to get there — which is the
 coverage we want.
+
+## Avatars and the optional X (Twitter) connection
+
+Every tester has an avatar so the leaderboard and quests panel feel personal.
+There is no upload path:
+
+- **Default: a deterministic identicon.** Seeded on the tester's lowercase
+  wallet address (public on the testnet, so a fine seed), a small stable hash
+  picks two brand-adjacent gradient colors and a symmetric 5x5 glyph, rendered
+  as inline SVG (`apps/web/src/components/testnet/identicon.tsx`, no
+  `Math.random`, no network). The same wallet always draws the same picture.
+- **Optional upgrade: connect X.** A tester can link their X account to replace
+  the identicon with their real profile picture and show their `@handle`.
+  Connecting X is itself the `connect_x` quest (100 points, once ever) — a
+  gentle nudge that also exercises a real OAuth round trip.
+
+The wall holds: avatar plumbing is entirely inside the testnet router and the
+testnet web components, and the API only ever returns an `avatar_url` (X image
+or null) plus the wallet seed. The identicon is purely a frontend concern.
+
+### X OAuth 2.0 (Authorization Code + PKCE, confidential client)
+
+Two authenticated, `require_testnet`-gated endpoints run the handshake. No
+scopes beyond read are requested; the connection is only used to read the
+tester's public profile.
+
+1. `POST /testnet/auth/x/start` — generates a `state` (`token_urlsafe`) and a
+   PKCE `code_verifier` with an S256 `code_challenge`, stores a single-use
+   `XAuthState` row (10-minute TTL, one per handshake), and returns
+   `{authorize_url}` pointing at `https://twitter.com/i/oauth2/authorize` with
+   `response_type=code`, `client_id`, `redirect_uri={web_base_url}/x/callback`,
+   `scope="users.read tweet.read"`, `state`, `code_challenge`, and
+   `code_challenge_method=S256`. If `settings.x_client_id` is empty it returns
+   **503** with a friendly "X connection isn't set up yet" so the UI hides the
+   button — X is optional and deployments without credentials simply don't
+   offer it.
+2. The browser sends the tester to `authorize_url`; X redirects back to
+   `/x/callback?code&state`.
+3. `POST /testnet/auth/x/callback {code, state}` — looks up and **consumes**
+   the caller's `XAuthState` (rejecting missing/expired/mismatched with 400),
+   exchanges the code at `https://api.twitter.com/2/oauth2/token` (POST,
+   `application/x-www-form-urlencoded`, HTTP Basic `client_id:client_secret`,
+   body `grant_type=authorization_code`, `code`, `redirect_uri`,
+   `code_verifier`), then `GET https://api.twitter.com/2/users/me?user.fields=profile_image_url`
+   with the bearer token. It stores `x_user_id`, `x_username = "@"+username`,
+   and `x_avatar_url` (the `_normal` thumbnail rewritten to `_400x400` for a
+   crisp image), awards `connect_x`, and returns the updated profile. Network
+   calls use stdlib `urllib` (no runtime dep) behind two module-level helpers
+   (`_x_token_exchange`, `_x_fetch_me`) so tests patch them out; any X API
+   failure surfaces as a friendly **502**.
+
+Anti-gaming for this quest: **one X account per tester** —
+`testers.x_user_id` is unique and the callback rejects (409) an id already
+linked to a different tester; the PKCE state is single-use and short-lived; and
+`connect_x` is a once-ever award, so re-linking never re-scores. Both
+`QuestBoardOut` (`x_username`, `avatar_url`) and `LeaderboardEntry`
+(`avatar_url`, `wallet`) carry the avatar data the frontend needs.
 
 ## Award mechanics (server-verified only)
 
@@ -135,7 +193,8 @@ Wiring:
 - Explicit one-line awards for actions that have no feed event: `create_family`,
   `add_child`, `create_goal`, and `create_invite` (grandparent role scores as
   `invite_grandparent`, everything else as `invite_family`).
-- `connect_wallet` and `set_display_name` are awarded inside the testnet router.
+- `connect_wallet`, `set_display_name`, and `connect_x` are awarded inside the
+  testnet router (`connect_x` fires only after a verified X token exchange).
 - `bug_verified` is awarded **only** by the admin bug-verification endpoint, never
   by the tester who submitted the report — the one action a human, not the server,
   gatekeeps.
@@ -213,15 +272,19 @@ points-for-glory testnet with no monetary rewards.
 | `GET /testnet/quests` | bearer | Catalog plus the caller's per-quest counts, today's counts, and total |
 | `GET /testnet/leaderboard` | optional | Top 50 plus caller's own rank when authed |
 | `POST /testnet/profile` | bearer | Set tester display name (max 40 chars) |
+| `POST /testnet/auth/x/start` | bearer | Begin X connect (PKCE); 503 when X isn't configured |
+| `POST /testnet/auth/x/callback` | bearer | Finish X connect, link profile, award `connect_x` |
 | `POST /testnet/bugs` | bearer | File a bug report (pending, awards nothing; capped at 20 open) |
 | `GET /testnet/bugs` | bearer | The caller's own bug reports with status, newest first |
 | `POST /testnet/bugs/{id}/verify` | `X-Admin-Token` | Human review; `verified` awards `bug_verified`, `rejected` does not |
 
-Data model (`app/models.py`): `Tester` (wallet 1:1 user), `WalletNonce`
-(single-use login nonces), `PointEvent` (append-only, indexed by tester), and
-`BugReport` (tester-submitted bugs with review status and an idempotent
-`points_awarded` flag). Migration is autogenerated by the main session, not by
-hand.
+Data model (`app/models.py`): `Tester` (wallet 1:1 user, plus optional
+`x_user_id`/`x_username`/`x_avatar_url` for a linked X account, `x_user_id`
+unique), `WalletNonce` (single-use login nonces), `XAuthState` (single-use,
+short-lived PKCE handshake state for the X connect flow), `PointEvent`
+(append-only, indexed by tester), and `BugReport` (tester-submitted bugs with
+review status and an idempotent `points_awarded` flag). Migration is
+autogenerated by the main session, not by hand.
 
 ## Frontend harness (`NEXT_PUBLIC_TESTNET=1` builds only)
 
@@ -235,8 +298,13 @@ hand.
   the normal app.
 - **Quests panel** — a floating "🎮 Quests" button (bottom right, every page)
   opens the catalog with checkmarks, per-quest points and daily progress, the
-  tester's display name editor, their invite address, and a link to the
-  leaderboard.
+  tester's avatar and display name editor, their invite address, and a link to
+  the leaderboard.
+- **Avatars** — every tester shows an avatar in the quests panel header, on
+  the account page, and on each leaderboard row: their connected X picture when
+  present, otherwise a wallet-seeded identicon (`components/testnet/identicon.tsx`,
+  `<Avatar seed src size/>`). The account page also hosts the "Connect X" flow;
+  `/x/callback` completes the OAuth round trip and returns to `/account`.
 - **`/leaderboard`** — top 50, the tester's own row highlighted, own rank shown
   even outside the top 50, polling every 5 seconds.
 - Providers (wagmi + react-query) mount only inside the dynamically imported
@@ -258,6 +326,12 @@ hand.
 3. **Tester onboarding copy** lives on the wallet gate; testers need only an
    injected wallet (MetaMask, Coinbase Wallet) — no funds, Base Sepolia is
    signature-only here.
+   - **X connection (optional):** set `FUTUREROOTS_X_CLIENT_ID` and
+     `FUTUREROOTS_X_CLIENT_SECRET` on the testnet API (an X developer app,
+     OAuth 2.0 confidential client, with `{web_base_url}/x/callback`
+     whitelisted as a redirect URI) to enable the `connect_x` quest. Leave them
+     unset and the start endpoint 503s and the UI hides the button — everyone
+     still gets a wallet identicon.
 4. **Resets/seasons**: to start a fresh season, truncate `point_events` (testers
    and their vaults survive). Point values can be tuned in
    `app/testnet/service.py` — the catalog is data, not schema.

@@ -35,6 +35,7 @@ class Quest:
 QUESTS: tuple[Quest, ...] = (
     Quest("connect_wallet", "Join the testing crew", "Connect your wallet and sign in for the first time", 25, 1, once=True),
     Quest("set_display_name", "Pick your tester name", "Choose a display name in the quests panel", 10, 1, once=True),
+    Quest("connect_x", "Bring your crew", "Connect your X account", 100, 1, once=True),
     Quest("create_family", "Plant your family tree", "Create a family space", 75, 2),
     Quest("add_child", "Start a child's vault", "Add a child profile to your family", 60, 3),
     Quest("invite_grandparent", "Invite a grandparent", "Send a family invitation with the grandparent role", 150, 5),

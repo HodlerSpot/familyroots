@@ -455,9 +455,29 @@ class Tester(Base):
     wallet_address: Mapped[str] = mapped_column(String(42), unique=True, index=True)
     display_name: Mapped[str | None] = mapped_column(String(40), nullable=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), unique=True)
+    # Optional X (Twitter) connection. When linked, the tester's X profile
+    # picture and @handle replace the deterministic wallet identicon. One X
+    # account per tester (x_user_id is unique).
+    x_user_id: Mapped[str | None] = mapped_column(String(40), unique=True, nullable=True)
+    x_username: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    x_avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     user: Mapped[User] = relationship()
+
+
+class XAuthState(Base):
+    """Single-use, short-lived PKCE handshake state for the X OAuth 2.0
+    connect flow. A row is created when a tester starts the connect flow and
+    consumed (deleted) on callback; expires after 10 minutes."""
+
+    __tablename__ = "x_auth_states"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tester_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("testers.id"), index=True)
+    state: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    code_verifier: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class WalletNonce(Base):
