@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .routers import (
+    admin,
     auth,
     capsules,
     children,
@@ -40,6 +41,7 @@ app.include_router(contributions.router)
 app.include_router(capsules.router)
 app.include_router(legacy.router)
 app.include_router(webhooks.router)
+app.include_router(admin.router)
 
 if settings.testnet_mode:
     # The wall (docs/testnet.md): the gamified testing harness exists only on

@@ -27,7 +27,19 @@ export function QuestsButton() {
   const [bugBody, setBugBody] = useState("");
   const [submittingBug, setSubmittingBug] = useState(false);
   const [bugError, setBugError] = useState<string | null>(null);
+  const [pastedImage, setPastedImage] = useState<File | null>(null);
   const bugImageRef = useRef<HTMLInputElement>(null);
+
+  // Paste a screenshot straight into the report (Cmd/Ctrl+V) without saving a file
+  function onBugPaste(e: React.ClipboardEvent) {
+    const item = Array.from(e.clipboardData.items).find((i) => i.type.startsWith("image/"));
+    if (!item) return;
+    const file = item.getAsFile();
+    if (file) {
+      e.preventDefault();
+      setPastedImage(file);
+    }
+  }
 
   const refresh = useCallback(async () => {
     try {
@@ -67,11 +79,12 @@ export function QuestsButton() {
     setSubmittingBug(true);
     setBugError(null);
     try {
-      const file = bugImageRef.current?.files?.[0];
+      const file = pastedImage ?? bugImageRef.current?.files?.[0];
       const media_id = file ? await testnetApi.uploadBugImage(file) : undefined;
       await testnetApi.submitBug({ title: bugTitle.trim(), body: bugBody.trim(), media_id });
       setBugTitle("");
       setBugBody("");
+      setPastedImage(null);
       if (bugImageRef.current) bugImageRef.current.value = "";
       await refresh();
     } catch (err) {
@@ -211,7 +224,7 @@ export function QuestsButton() {
                     Tell us what broke. When our team confirms it is a real bug, you earn 250
                     points. Thank you for helping us build something better.
                   </p>
-                  <form onSubmit={submitBug} className="mt-3 space-y-2">
+                  <form onSubmit={submitBug} onPaste={onBugPaste} className="mt-3 space-y-2">
                     <input
                       value={bugTitle}
                       onChange={(e) => setBugTitle(e.target.value)}
@@ -227,15 +240,34 @@ export function QuestsButton() {
                       rows={3}
                       className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
                     />
-                    <label className="block text-xs text-stone-500">
-                      Add a screenshot (optional)
-                      <input
-                        ref={bugImageRef}
-                        type="file"
-                        accept="image/*"
-                        className="mt-1 block w-full text-xs text-stone-600 file:mr-2 file:rounded-md file:border-0 file:bg-emerald-100 file:px-2 file:py-1 file:text-emerald-800"
-                      />
-                    </label>
+                    {pastedImage ? (
+                      <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={URL.createObjectURL(pastedImage)}
+                          alt="pasted screenshot"
+                          className="h-10 w-10 rounded-md object-cover"
+                        />
+                        <span className="flex-1 text-xs text-emerald-900">Screenshot pasted</span>
+                        <button
+                          type="button"
+                          onClick={() => setPastedImage(null)}
+                          className="text-xs text-stone-500 underline"
+                        >
+                          remove
+                        </button>
+                      </div>
+                    ) : (
+                      <label className="block text-xs text-stone-500">
+                        Add a screenshot (optional): choose a file, or paste one with Ctrl/Cmd+V
+                        <input
+                          ref={bugImageRef}
+                          type="file"
+                          accept="image/*"
+                          className="mt-1 block w-full text-xs text-stone-600 file:mr-2 file:rounded-md file:border-0 file:bg-emerald-100 file:px-2 file:py-1 file:text-emerald-800"
+                        />
+                      </label>
+                    )}
                     {bugError && <p className="text-xs text-red-600">{bugError}</p>}
                     <button
                       type="submit"

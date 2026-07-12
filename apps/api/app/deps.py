@@ -6,7 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from .db import SessionLocal
-from .models import Child, Family, FamilyMember, FamilyRole, MemberStatus, User
+from .models import Child, Family, FamilyMember, FamilyRole, MemberStatus, User, UserRole
 from .security import decode_access_token
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -39,6 +39,18 @@ def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def get_admin_user(user: CurrentUser) -> User:
+    """Gate for the admin command center. Admin is a role on the user record,
+    granted only out-of-band (the set_role management command), never
+    self-serve."""
+    if user.role != UserRole.admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin access required")
+    return user
+
+
+AdminUser = Annotated[User, Depends(get_admin_user)]
 
 
 def get_active_membership(db: Session, family_id: uuid.UUID, user: User) -> FamilyMember:

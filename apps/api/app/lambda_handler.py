@@ -55,6 +55,24 @@ def _run_migrations() -> dict:
     return {"status": "migrated"}
 
 
+def _set_role(email: str, role: str) -> dict:
+    """Grant or revoke a user's role. The secure bootstrap for the first admin:
+    only someone who can invoke this Lambda (i.e. holds AWS credentials) can
+    mint an admin, after which admins manage each other in the console."""
+    from .db import SessionLocal
+    from .models import User, UserRole
+
+    if role not in (UserRole.user.value, UserRole.admin.value):
+        return {"error": "role must be 'user' or 'admin'"}
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == email.lower()).first()
+        if user is None:
+            return {"error": f"no user with email {email}"}
+        user.role = UserRole(role)
+        db.commit()
+        return {"status": "ok", "email": user.email, "role": user.role.value}
+
+
 def handler(event, context):
     if isinstance(event, dict):
         cmd = event.get("futureroots_command")
@@ -62,4 +80,6 @@ def handler(event, context):
             return _run_migrations()
         if cmd == "create_database":
             return _create_database(event.get("name", ""))
+        if cmd == "set_role":
+            return _set_role(event.get("email", ""), event.get("role", ""))
     return _mangum(event, context)

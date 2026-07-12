@@ -36,6 +36,11 @@ class MemberStatus(str, enum.Enum):
     removed = "removed"
 
 
+class UserRole(str, enum.Enum):
+    user = "user"
+    admin = "admin"  # platform operator; access to the admin command center
+
+
 class ConsentType(str, enum.Enum):
     profile_creation = "profile_creation"
     media_storage = "media_storage"
@@ -129,10 +134,29 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(120))
     password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[UserRole] = mapped_column(
+        Enum(UserRole, native_enum=False, length=20), default=UserRole.user
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     memberships: Mapped[list["FamilyMember"]] = relationship(
         back_populates="user", foreign_keys="FamilyMember.user_id"
+    )
+
+
+class AdminAuditLog(Base):
+    """A record of every consequential admin action, for accountability over
+    the sensitive data (children, money) the command center exposes."""
+
+    __tablename__ = "admin_audit_log"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    admin_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    action: Mapped[str] = mapped_column(String(60))  # e.g. bug_verified, role_changed
+    target: Mapped[str | None] = mapped_column(String(120), nullable=True)  # e.g. "user:<id>"
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
     )
 
 

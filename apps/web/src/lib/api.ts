@@ -6,6 +6,7 @@ export interface UserOut {
   id: string;
   email: string;
   display_name: string;
+  role: "user" | "admin";
 }
 
 export interface FamilySummary {
@@ -360,6 +361,83 @@ export const api = {
     );
     return putAndComplete(ticket, file);
   },
+};
+
+// --- Admin command center (role-gated on the server) ---
+
+export interface AdminOverview {
+  users: number;
+  admins: number;
+  families: number;
+  children: number;
+  contributors: number;
+  contributions: number;
+  contributed_cents: number;
+  pending_bugs: number;
+  recent_signups: { id: string; display_name: string; email: string; role: string; created_at: string }[];
+  recent_contributions: AdminContribution[];
+}
+
+export interface AdminContribution {
+  id: string;
+  contributor_name: string;
+  child_name: string;
+  amount_cents: number;
+  currency: string;
+  status: string;
+  created_at: string;
+}
+
+export interface AdminUserRow {
+  id: string;
+  display_name: string;
+  email: string;
+  role: "user" | "admin";
+  family_count: number;
+  child_count: number;
+  created_at: string;
+}
+
+export interface AdminFamilyRow {
+  id: string;
+  name: string;
+  member_count: number;
+  child_count: number;
+  fund_cents: number;
+  created_at: string;
+}
+
+export interface AdminBugRow {
+  id: string;
+  title: string;
+  body: string;
+  status: "pending" | "verified" | "rejected";
+  reporter: string;
+  media_id: string | null;
+  created_at: string;
+  reviewed_at: string | null;
+}
+
+interface Page<T> {
+  total: number;
+  items: T[];
+}
+
+export const adminApi = {
+  overview: () => request<AdminOverview>("/admin/overview"),
+  users: (q?: string) =>
+    request<Page<AdminUserRow>>(`/admin/users${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  families: () => request<Page<AdminFamilyRow>>("/admin/families"),
+  contributions: () => request<Page<AdminContribution>>("/admin/contributions"),
+  bugs: (status?: string) =>
+    request<AdminBugRow[]>(`/admin/bugs${status ? `?status=${status}` : ""}`),
+  decideBug: (bugId: string, decision: "verify" | "reject") =>
+    request<AdminBugRow>(`/admin/bugs/${bugId}/${decision}`, { method: "POST" }),
+  setRole: (userId: string, role: "user" | "admin") =>
+    request<{ id: string; role: string }>(`/admin/users/${userId}/role`, {
+      method: "POST",
+      body: JSON.stringify({ role }),
+    }),
 };
 
 /** URL an <img>/<video> tag can load (tags can't send auth headers). */

@@ -18,6 +18,7 @@ from .models import (
     MemberStatus,
     ReleaseCondition,
     RewardType,
+    UserRole,
     VaultItemType,
 )
 
@@ -64,6 +65,7 @@ class UserOut(BaseModel):
     id: uuid.UUID
     email: EmailStr
     display_name: str
+    role: UserRole = UserRole.user
 
     model_config = {"from_attributes": True}
 
