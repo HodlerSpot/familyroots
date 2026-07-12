@@ -37,10 +37,11 @@ class OutboxEmailSender:
 class SesEmailSender:
     """Production sender via the SES v2 API (reached through a VPC endpoint)."""
 
-    def __init__(self, from_address: str) -> None:
+    def __init__(self, from_address: str, from_name: str = "FutureRoots") -> None:
         import boto3
 
-        self.from_address = from_address
+        # Friendly display name so inboxes show "FutureRoots", not the address
+        self.from_address = f"{from_name} <{from_address}>"
         self.client = boto3.client("sesv2")
 
     def send(self, to: str, subject: str, body: str, html: str | None = None) -> None:
