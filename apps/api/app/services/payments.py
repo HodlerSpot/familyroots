@@ -56,8 +56,8 @@ class PaymentProvider(Protocol):
         """Local backend only: verify the simulated payment succeeded."""
         ...
 
-    def refund_payment(self, contribution: Contribution) -> bool:
-        """Refund a settled payment at the provider; True on success."""
+    def refund_payment(self, contribution: Contribution, amount_cents: int) -> bool:
+        """Refund `amount_cents` (gross) of a settled payment; True on success."""
         ...
 
 
@@ -72,7 +72,7 @@ class LocalPaymentProvider:
     def confirm_payment(self, contribution: Contribution) -> bool:
         return contribution.provider_payment_id is not None
 
-    def refund_payment(self, contribution: Contribution) -> bool:
+    def refund_payment(self, contribution: Contribution, amount_cents: int) -> bool:
         return True
 
 
@@ -102,11 +102,14 @@ class StripePaymentProvider:
     def confirm_payment(self, contribution: Contribution) -> bool:
         raise NotImplementedError("Stripe settles via the signed webhook only")
 
-    def refund_payment(self, contribution: Contribution) -> bool:
+    def refund_payment(self, contribution: Contribution, amount_cents: int) -> bool:
         if not contribution.provider_payment_id:
             return False
         self.client.refunds.create(
-            params={"payment_intent": contribution.provider_payment_id}
+            params={
+                "payment_intent": contribution.provider_payment_id,
+                "amount": amount_cents,  # partial when < the full charge
+            }
         )
         return True
 
@@ -141,23 +144,44 @@ def fund_balance_cents(db: Session, account_id: uuid.UUID) -> int:
     )
 
 
-def refund_contribution(db: Session, contribution: Contribution) -> bool:
-    """Refund a succeeded contribution at the provider, then reverse it in the
-    ledger with a compensating (negative) entry — never by mutating or deleting
-    the original, so the append-only ledger and derived balances stay intact.
+def _net_reversed_for(contribution: Contribution, gross_refunded: int) -> int:
+    """Cumulative NET (fee-adjusted) reversed once `gross_refunded` gross has
+    been refunded. Rounding is applied to the cumulative figure so successive
+    partial refunds always sum to exactly the full net at 100% refunded."""
+    net_total = contribution.amount_cents - contribution.fee_cents
+    return round(gross_refunded * net_total / contribution.amount_cents)
+
+
+def refund_contribution(db: Session, contribution: Contribution, amount_cents: int | None = None) -> bool:
+    """Refund a settled contribution, in full or in part, at the provider, then
+    reverse the proportional net in the ledger with a compensating (negative)
+    append-only entry — never by mutating the original. `amount_cents` is the
+    gross to return to the contributor; None means the full remaining amount.
     Returns False if the provider refund fails (nothing is changed then)."""
-    if contribution.status != ContributionStatus.succeeded:
+    if contribution.status not in (ContributionStatus.succeeded,):
         return False
-    if not get_payment_provider().refund_payment(contribution):
+    remaining = contribution.amount_cents - contribution.refunded_cents
+    if remaining <= 0:
         return False
-    contribution.status = ContributionStatus.refunded
+    refund_gross = remaining if amount_cents is None else amount_cents
+    if refund_gross <= 0 or refund_gross > remaining:
+        return False
+    if not get_payment_provider().refund_payment(contribution, refund_gross):
+        return False
+
+    # reverse only the incremental net for this refund, keeping cumulative exact
+    net_before = _net_reversed_for(contribution, contribution.refunded_cents)
+    contribution.refunded_cents += refund_gross
+    net_after = _net_reversed_for(contribution, contribution.refunded_cents)
+    reversal = net_after - net_before
+    if contribution.refunded_cents >= contribution.amount_cents:
+        contribution.status = ContributionStatus.refunded
+
     account = get_or_create_fund_account(db, contribution.child_id, contribution.currency)
-    # compensating entry: source_contribution_id stays null (the unique original
-    # already holds it); the adjustment reverses the settled net amount
     db.add(
         FundLedgerEntry(
             account_id=account.id,
-            amount_cents=-(contribution.amount_cents - contribution.fee_cents),
+            amount_cents=-reversal,
             entry_type=LedgerEntryType.adjustment,
             source_contribution_id=None,
             anchor_ref=None,

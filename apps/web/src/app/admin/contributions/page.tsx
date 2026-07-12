@@ -37,10 +37,26 @@ export default function AdminContributionsPage() {
   }, [load]);
 
   async function refund(c: AdminContribution) {
-    if (!confirm(`Refund ${formatMoney(c.amount_cents, c.currency)} from ${c.contributor_name}? This reverses it in ${c.child_name}'s fund.`)) return;
+    const remaining = c.amount_cents - c.refunded_cents;
+    const input = prompt(
+      `Refund amount for ${c.contributor_name} (in dollars, up to ${formatMoney(remaining, c.currency)}). ` +
+        `Leave blank to refund the full remaining amount.`,
+      ""
+    );
+    if (input === null) return; // cancelled
+    let amountCents: number | undefined;
+    if (input.trim() !== "") {
+      const dollars = parseFloat(input);
+      if (!(dollars > 0)) return;
+      amountCents = Math.round(dollars * 100);
+      if (amountCents > remaining) {
+        alert(`That's more than the ${formatMoney(remaining, c.currency)} remaining.`);
+        return;
+      }
+    }
     setBusyId(c.id);
     try {
-      await adminApi.refund(c.id);
+      await adminApi.refund(c.id, amountCents);
       load();
     } finally {
       setBusyId(null);
@@ -102,8 +118,15 @@ export default function AdminContributionsPage() {
                   {c.status}
                 </span>
               </span>
-              <span className="w-24 text-right font-bold tabular-nums text-emerald-800">
-                {formatMoney(c.amount_cents, c.currency)}
+              <span className="w-24 text-right tabular-nums">
+                <span className="font-bold text-emerald-800">
+                  {formatMoney(c.amount_cents, c.currency)}
+                </span>
+                {c.refunded_cents > 0 && (
+                  <span className="block text-[11px] font-medium text-stone-400">
+                    {formatMoney(c.refunded_cents, c.currency)} refunded
+                  </span>
+                )}
               </span>
               <span className="w-20 text-right">
                 {c.status === "succeeded" && (
@@ -112,7 +135,7 @@ export default function AdminContributionsPage() {
                     disabled={busyId === c.id}
                     className="text-xs font-medium text-red-600 underline hover:text-red-700 disabled:opacity-50"
                   >
-                    Refund
+                    {c.refunded_cents > 0 ? "Refund more" : "Refund"}
                   </button>
                 )}
               </span>

@@ -355,6 +355,7 @@ class Contribution(Base):
     amount_cents: Mapped[int] = mapped_column(BigInteger)
     currency: Mapped[str] = mapped_column(String(3), default="USD")
     fee_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    refunded_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # cumulative gross refunded
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
     media_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("media_objects.id"), nullable=True

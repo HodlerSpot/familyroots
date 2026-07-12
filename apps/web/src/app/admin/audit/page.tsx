@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AdminAuditRow, adminApi } from "@/lib/api";
+import { useCallback, useEffect, useState } from "react";
+import { AdminAuditRow, adminApi, downloadCsv } from "@/lib/api";
 import { AdminShell } from "@/components/admin/shell";
-import { Card } from "@/components/ui";
+import { Button, Card } from "@/components/ui";
 
 const ACTION_LABEL: Record<string, string> = {
   bug_verify: "verified a bug",
@@ -18,22 +18,81 @@ const ACTION_LABEL: Record<string, string> = {
 export default function AdminAuditPage() {
   const [rows, setRows] = useState<AdminAuditRow[]>([]);
   const [total, setTotal] = useState(0);
+  const [actions, setActions] = useState<string[]>([]);
+  const [action, setAction] = useState("");
+  const [since, setSince] = useState("");
+  const [until, setUntil] = useState("");
 
   useEffect(() => {
+    adminApi.auditActions().then(setActions).catch(() => {});
+  }, []);
+
+  const load = useCallback(() => {
     adminApi
-      .audit()
+      .audit(action || undefined, since || undefined, until ? `${until}T23:59:59` : undefined)
       .then((p) => {
         setRows(p.items);
         setTotal(p.total);
       })
       .catch(() => {});
-  }, []);
+  }, [action, since, until]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   return (
     <AdminShell>
-      <div className="mb-4 text-sm text-stone-500">
-        {total} logged actions. Every consequential admin action is recorded here.
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <select
+          value={action}
+          onChange={(e) => setAction(e.target.value)}
+          className="rounded-lg border border-stone-300 px-3 py-2 text-sm"
+        >
+          <option value="">All actions</option>
+          {actions.map((a) => (
+            <option key={a} value={a}>
+              {a}
+            </option>
+          ))}
+        </select>
+        <label className="text-sm text-stone-500">
+          From{" "}
+          <input
+            type="date"
+            value={since}
+            onChange={(e) => setSince(e.target.value)}
+            className="rounded-lg border border-stone-300 px-2 py-1.5 text-sm"
+          />
+        </label>
+        <label className="text-sm text-stone-500">
+          To{" "}
+          <input
+            type="date"
+            value={until}
+            onChange={(e) => setUntil(e.target.value)}
+            className="rounded-lg border border-stone-300 px-2 py-1.5 text-sm"
+          />
+        </label>
+        <span className="text-sm text-stone-500">{total} actions</span>
+        <Button
+          variant="soft"
+          className="ml-auto"
+          onClick={() =>
+            downloadCsv(
+              adminApi.auditCsvUrl(
+                action || undefined,
+                since || undefined,
+                until ? `${until}T23:59:59` : undefined
+              ),
+              "futureroots-audit-log.csv"
+            )
+          }
+        >
+          Download CSV
+        </Button>
       </div>
+
       <Card className="p-0">
         <ul className="divide-y divide-stone-100">
           {rows.map((r) => (
@@ -56,7 +115,9 @@ export default function AdminAuditPage() {
             </li>
           ))}
           {rows.length === 0 && (
-            <li className="px-4 py-8 text-center text-sm text-stone-500">No actions logged yet.</li>
+            <li className="px-4 py-8 text-center text-sm text-stone-500">
+              No actions match these filters.
+            </li>
           )}
         </ul>
       </Card>

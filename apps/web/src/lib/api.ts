@@ -383,6 +383,7 @@ export interface AdminContribution {
   contributor_name: string;
   child_name: string;
   amount_cents: number;
+  refunded_cents: number;
   currency: string;
   status: string;
   created_at: string;
@@ -446,11 +447,15 @@ export const adminApi = {
     request<Page<AdminContribution>>(`/admin/contributions${qs({ q, status })}`),
   contributionsCsvUrl: (q?: string, status?: string) =>
     `${API_URL}/admin/contributions.csv${qs({ q, status })}`,
-  refund: (contributionId: string) =>
+  refund: (contributionId: string, amountCents?: number) =>
     request<AdminContribution>(`/admin/contributions/${contributionId}/refund`, {
       method: "POST",
+      body: JSON.stringify({ amount_cents: amountCents ?? null }),
     }),
   bugs: (status?: string) => request<AdminBugRow[]>(`/admin/bugs${qs({ status })}`),
+  auditActions: () => request<string[]>("/admin/audit/actions"),
+  auditCsvUrl: (action?: string, since?: string, until?: string) =>
+    `${API_URL}/admin/audit.csv${qs({ action, since, until })}`,
   decideBug: (bugId: string, decision: "verify" | "reject") =>
     request<AdminBugRow>(`/admin/bugs/${bugId}/${decision}`, { method: "POST" }),
   setRole: (userId: string, role: "user" | "admin") =>
@@ -463,7 +468,8 @@ export const adminApi = {
       `/admin/users/${userId}/impersonate`,
       { method: "POST" }
     ),
-  audit: () => request<Page<AdminAuditRow>>("/admin/audit"),
+  audit: (action?: string, since?: string, until?: string) =>
+    request<Page<AdminAuditRow>>(`/admin/audit${qs({ action, since, until })}`),
 };
 
 // --- impersonation ("view as") session management ---

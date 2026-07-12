@@ -83,6 +83,33 @@ def test_refund_reverses_ledger(client):
     assert client.post(f"/admin/contributions/{c['id']}/refund", headers=admin).status_code == 409
 
 
+def test_partial_refunds_accumulate(client):
+    admin = make_admin(client)
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    child_id = add_child(client, parent, family_id)
+    c = _succeeded_contribution(client, parent, child_id, 3000)  # net 2925 after 75 fee
+
+    assert client.get(f"/children/{child_id}/fund", headers=parent).json()["balance_cents"] == 2925
+
+    # partial refund of 1000 gross -> ~975 net reversed
+    r = client.post(f"/admin/contributions/{c['id']}/refund", json={"amount_cents": 1000}, headers=admin)
+    assert r.status_code == 200
+    assert r.json()["status"] == "succeeded"  # still partially live
+    assert r.json()["refunded_cents"] == 1000
+    assert client.get(f"/children/{child_id}/fund", headers=parent).json()["balance_cents"] == 2925 - 975
+
+    # over-refund is rejected
+    assert client.post(
+        f"/admin/contributions/{c['id']}/refund", json={"amount_cents": 5000}, headers=admin
+    ).status_code == 422
+
+    # refund the remaining 2000 -> fully refunded, balance exactly 0
+    r = client.post(f"/admin/contributions/{c['id']}/refund", json={"amount_cents": 2000}, headers=admin)
+    assert r.json()["status"] == "refunded" and r.json()["refunded_cents"] == 3000
+    assert client.get(f"/children/{child_id}/fund", headers=parent).json()["balance_cents"] == 0
+
+
 def test_contribution_status_filter_and_csv(client):
     admin = make_admin(client)
     parent = signup(client, "parent@example.com")
@@ -133,6 +160,17 @@ def test_audit_log_lists_actions(client):
     actions = [row["action"] for row in r.json()["items"]]
     assert "impersonate" in actions
     assert all(row["admin_email"] == "admin@example.com" for row in r.json()["items"])
+
+    # action filter narrows the list
+    r = client.get("/admin/audit?action=impersonate", headers=admin)
+    assert r.status_code == 200 and r.json()["total"] >= 1
+    assert all(row["action"] == "impersonate" for row in r.json()["items"])
+    assert client.get("/admin/audit?action=nope_none", headers=admin).json()["total"] == 0
+
+    # distinct actions + CSV
+    assert "impersonate" in client.get("/admin/audit/actions", headers=admin).json()
+    csv_resp = client.get("/admin/audit.csv", headers=admin)
+    assert csv_resp.status_code == 200 and "text/csv" in csv_resp.headers["content-type"]
 
 
 def test_role_management_and_self_protection(client):

@@ -11,6 +11,7 @@ shows testers and their test data.
 
 import csv
 import io
+import json
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -41,6 +42,10 @@ from ..security import create_impersonation_token
 from ..services.payments import fund_balance_cents, refund_contribution
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def _json_compact(value: dict) -> str:
+    return json.dumps(value, separators=(",", ":"), default=str)
 
 
 def _audit(db, admin: User, action: str, target: str | None = None, detail: dict | None = None):
@@ -79,6 +84,7 @@ class MiniContribution(BaseModel):
     contributor_name: str
     child_name: str
     amount_cents: int
+    refunded_cents: int
     currency: str
     status: ContributionStatus
     created_at: datetime
@@ -191,6 +197,7 @@ def _mini_contribution(c: Contribution, contributor: User | None, child: Child |
         contributor_name=contributor.display_name if contributor else "Unknown",
         child_name=child.first_name if child else "Unknown",
         amount_cents=c.amount_cents,
+        refunded_cents=c.refunded_cents,
         currency=c.currency,
         status=c.status,
         created_at=c.created_at,
@@ -335,19 +342,38 @@ def impersonate(user_id: uuid.UUID, db: DbSession, admin: AdminUser) -> Imperson
     )
 
 
+def _audit_query(db, action: str | None, since: str | None, until: str | None):
+    query = db.query(AdminAuditLog, User).outerjoin(
+        User, AdminAuditLog.admin_user_id == User.id
+    )
+    if action:
+        query = query.filter(AdminAuditLog.action == action)
+    if since:
+        query = query.filter(AdminAuditLog.created_at >= datetime.fromisoformat(since))
+    if until:
+        query = query.filter(AdminAuditLog.created_at <= datetime.fromisoformat(until))
+    return query
+
+
+@router.get("/audit/actions", response_model=list[str])
+def audit_actions(db: DbSession, admin: AdminUser) -> list[str]:
+    """Distinct action names, to populate the filter dropdown."""
+    return [a for (a,) in db.query(AdminAuditLog.action).distinct().order_by(AdminAuditLog.action).all()]
+
+
 @router.get("/audit", response_model=Page)
 def audit_log(
-    db: DbSession, admin: AdminUser, limit: int = Query(default=100, le=500), offset: int = 0
+    db: DbSession,
+    admin: AdminUser,
+    action: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = Query(default=100, le=500),
+    offset: int = 0,
 ) -> Page:
-    total = db.query(func.count(AdminAuditLog.id)).scalar()
-    rows = (
-        db.query(AdminAuditLog, User)
-        .outerjoin(User, AdminAuditLog.admin_user_id == User.id)
-        .order_by(AdminAuditLog.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
+    query = _audit_query(db, action, since, until)
+    total = query.count()
+    rows = query.order_by(AdminAuditLog.created_at.desc()).offset(offset).limit(limit).all()
     return Page(
         total=total,
         items=[
@@ -362,6 +388,32 @@ def audit_log(
             )
             for log, u in rows
         ],
+    )
+
+
+@router.get("/audit.csv")
+def export_audit_csv(
+    db: DbSession, admin: AdminUser, action: str | None = None,
+    since: str | None = None, until: str | None = None,
+) -> StreamingResponse:
+    rows = _audit_query(db, action, since, until).order_by(AdminAuditLog.created_at.desc()).all()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["created_at", "admin", "admin_email", "action", "target", "detail"])
+    for log, u in rows:
+        w.writerow([
+            log.created_at.isoformat(),
+            u.display_name if u else "",
+            u.email if u else "",
+            log.action,
+            log.target or "",
+            _json_compact(log.detail),
+        ])
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=futureroots-audit-log.csv"},
     )
 
 
@@ -514,10 +566,18 @@ def export_contributions_csv(
     )
 
 
+class RefundRequest(BaseModel):
+    # gross cents to refund; omit for the full remaining amount
+    amount_cents: int | None = None
+
+
 @router.post("/contributions/{contribution_id}/refund", response_model=MiniContribution)
-def refund(contribution_id: uuid.UUID, db: DbSession, admin: AdminUser) -> MiniContribution:
-    """Refund a settled contribution: reverses it at the payment provider and
-    writes a compensating (append-only) ledger entry. Audit-logged."""
+def refund(
+    contribution_id: uuid.UUID, db: DbSession, admin: AdminUser, payload: RefundRequest | None = None
+) -> MiniContribution:
+    """Refund a settled contribution, fully or partially: reverses the amount at
+    the payment provider and writes a compensating (append-only) ledger entry.
+    Audit-logged."""
     c = db.get(Contribution, contribution_id)
     if c is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Contribution not found")
@@ -525,9 +585,20 @@ def refund(contribution_id: uuid.UUID, db: DbSession, admin: AdminUser) -> MiniC
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Only a settled contribution can be refunded"
         )
-    if not refund_contribution(db, c):
+    amount = payload.amount_cents if payload else None
+    remaining = c.amount_cents - c.refunded_cents
+    if amount is not None and (amount <= 0 or amount > remaining):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"Refund must be between 1 and {remaining} cents",
+        )
+    refunded_now = amount if amount is not None else remaining
+    if not refund_contribution(db, c, amount):
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The refund could not be processed")
-    _audit(db, admin, "contribution_refunded", f"contribution:{c.id}", {"amount_cents": c.amount_cents})
+    _audit(
+        db, admin, "contribution_refunded", f"contribution:{c.id}",
+        {"refunded_cents": refunded_now, "partial": c.status == ContributionStatus.succeeded},
+    )
     db.commit()
     u = db.get(User, c.contributor_user_id)
     ch = db.get(Child, c.child_id)
