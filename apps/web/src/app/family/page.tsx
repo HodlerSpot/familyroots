@@ -94,7 +94,7 @@ export default function FamilyDashboard() {
             <Label htmlFor="famname">Family name</Label>
             <Input
               id="famname"
-              placeholder="e.g. The Saliga Family"
+              placeholder="e.g. The Johnson Family"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               required

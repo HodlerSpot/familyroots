@@ -80,6 +80,35 @@ def test_invite_email_written_to_outbox(client, tmp_path, monkeypatch):
         assert banned not in content.lower().replace("/invites/", "")
 
 
+def test_family_phrase_never_doubles_articles():
+    from app.services.text import family_phrase
+
+    assert family_phrase("Smith") == "the Smith family"
+    assert family_phrase("The Saliga Family") == "The Saliga Family"
+    assert family_phrase("the saliga family") == "the saliga family"
+    assert family_phrase("Saliga Family") == "the Saliga Family"
+    assert family_phrase("Theodore") == "the Theodore family"  # "The" prefix ≠ "The "
+
+
+def test_invite_email_grammar_with_the_prefixed_family(client, tmp_path, monkeypatch):
+    from app.services import email as email_module
+
+    monkeypatch.setattr(email_module, "_sender", email_module.OutboxEmailSender(tmp_path))
+    parent = signup(client, "parent@example.com", "Pat")
+    family_id = create_family(client, parent, "The Saliga Family")
+    for f in tmp_path.glob("*.txt"):
+        f.unlink()
+    client.post(
+        f"/families/{family_id}/invites",
+        json={"email": "gran@example.com", "role": "grandparent"},
+        headers=parent,
+    )
+    content = next(tmp_path.glob("*.txt")).read_text(encoding="utf-8")
+    assert "join The Saliga Family on FutureRoots" in content
+    assert "the The" not in content
+    assert "Family family" not in content
+
+
 def test_invite_requires_parent_role(client):
     from .conftest import TestingSession
 

@@ -19,6 +19,7 @@ from ..models import FeedEventType
 from ..schemas import FamilySummary, InviteAccept, InviteCreate, InviteOut, InvitePreview
 from ..services.email import get_email_sender
 from ..services.feed import emit
+from ..services.text import family_phrase
 
 router = APIRouter(tags=["invites"])
 
@@ -60,14 +61,14 @@ def create_invite(
     db.add(invite)
     db.commit()
 
-    family_name = invite.family.name
+    family = family_phrase(invite.family.name)
     accept_url = f"{settings.web_base_url}/invites/{invite.token}"
     get_email_sender().send(
         to=email,
-        subject=f"{user.display_name} invited you to join the {family_name} family on FutureRoots",
+        subject=f"{user.display_name} invited you to join {family} on FutureRoots",
         body=(
             f"Hi!\n\n"
-            f"{user.display_name} has invited you to join the {family_name} family on "
+            f"{user.display_name} has invited you to join {family} on "
             f"FutureRoots — a private space where your family shares memories, celebrates "
             f"milestones, and builds a future together.\n\n"
             f"Join here: {accept_url}\n\n"

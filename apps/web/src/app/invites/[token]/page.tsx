@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api, ApiError, getToken, InvitePreview } from "@/lib/api";
+import { familyPhrase } from "@/lib/text";
 import { Button, Card, ErrorNote } from "@/components/ui";
 
 export default function InvitePage() {
@@ -48,7 +49,7 @@ export default function InvitePage() {
     <Card className="mx-auto max-w-lg space-y-6 text-center">
       <div className="text-5xl">💌</div>
       <h1 className="text-2xl font-bold text-emerald-900">
-        {preview.invited_by} invited you to join the {preview.family_name} family
+        {preview.invited_by} invited you to join {familyPhrase(preview.family_name)}
       </h1>
       <p className="text-stone-600">
         You&apos;re joining as a <span className="font-semibold capitalize">{preview.role}</span> —

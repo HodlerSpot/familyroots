@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api, ApiError, getToken, LegacyOut, LegacyType, mediaUrl } from "@/lib/api";
+import { familyPhrase } from "@/lib/text";
 import { Button, Card, ErrorNote, Input, Label } from "@/components/ui";
 
 const TYPE_META: Record<LegacyType, { icon: string; label: string }> = {
@@ -56,8 +57,10 @@ export default function LegacyPage() {
           <div>
             <h1 className="text-3xl font-bold text-emerald-900">Legacy archive 🌳</h1>
             <p className="text-stone-600">
-              {familyName ? `The ${familyName} story` : "Your family story"} — recipes,
-              wisdom, and history, kept for every generation.
+              {familyName
+                ? `The story of ${familyPhrase(familyName)}`
+                : "Your family story"}{" "}
+              — recipes, wisdom, and history, kept for every generation.
             </p>
           </div>
           <Button onClick={() => setShowForm((v) => !v)}>
