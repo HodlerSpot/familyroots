@@ -258,6 +258,16 @@ class VerifyDecision(BaseModel):
     decision: Literal["verified", "rejected"]
 
 
+class AdminBugOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    body: str
+    status: str
+    reporter: str  # X handle, display name, or shortened wallet
+    wallet_address: str
+    created_at: datetime
+
+
 # --- auth ---
 
 
@@ -685,6 +695,38 @@ def my_bugs(db: DbSession, user: CurrentUser) -> list[BugReport]:
         .order_by(BugReport.created_at.desc())
         .all()
     )
+
+
+@router.get("/bugs/pending", response_model=list[AdminBugOut])
+def list_pending_bugs(
+    db: DbSession,
+    _admin: Annotated[None, Depends(require_admin)],
+) -> list[AdminBugOut]:
+    """Admin review queue: every pending bug report with who filed it, so an
+    operator can read them and grab the id to verify. Admin-token gated."""
+    rows = (
+        db.query(BugReport, Tester)
+        .join(Tester, Tester.id == BugReport.tester_id)
+        .filter(BugReport.status == "pending")
+        .order_by(BugReport.created_at.asc())
+        .all()
+    )
+    return [
+        AdminBugOut(
+            id=report.id,
+            title=report.title,
+            body=report.body,
+            status=report.status,
+            reporter=(
+                tester.x_username
+                or tester.display_name
+                or short_wallet(tester.wallet_address)
+            ),
+            wallet_address=tester.wallet_address,
+            created_at=report.created_at,
+        )
+        for report, tester in rows
+    ]
 
 
 @router.post("/bugs/{bug_id}/verify", response_model=BugReportOut)

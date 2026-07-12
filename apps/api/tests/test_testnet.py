@@ -553,6 +553,34 @@ def test_x_connect_becomes_leaderboard_name_then_disconnect(testnet_on, client, 
     assert board["total_points"] == before  # connect_x points are not clawed back
 
 
+def test_admin_lists_pending_bugs(testnet_on, client, monkeypatch):
+    monkeypatch.setattr(settings, "testnet_admin_token", "adm1n-secret")
+    _, headers = wallet_login(client)
+    client.post(
+        "/testnet/bugs",
+        json={"title": "Feed scrolls oddly", "body": "It jumps on load."},
+        headers=headers,
+    )
+    # admin token required
+    assert client.get("/testnet/bugs/pending").status_code == 401
+    r = client.get("/testnet/bugs/pending", headers={"X-Admin-Token": "adm1n-secret"})
+    assert r.status_code == 200
+    pending = r.json()
+    assert len(pending) == 1
+    assert pending[0]["title"] == "Feed scrolls oddly"
+    assert pending[0]["reporter"] and pending[0]["wallet_address"]
+    # the id from the list verifies successfully
+    v = client.post(
+        f"/testnet/bugs/{pending[0]['id']}/verify",
+        json={"decision": "verified"},
+        headers={"X-Admin-Token": "adm1n-secret"},
+    )
+    assert v.status_code == 200
+    # now nothing pending
+    r = client.get("/testnet/bugs/pending", headers={"X-Admin-Token": "adm1n-secret"})
+    assert r.json() == []
+
+
 def test_second_x_connect_does_not_double_award(testnet_on, client, monkeypatch):
     _, headers = wallet_login(client)
     assert connect_x(client, monkeypatch, headers).status_code == 200
