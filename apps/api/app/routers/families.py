@@ -5,6 +5,7 @@ from fastapi import APIRouter, status
 from ..deps import CurrentUser, DbSession, get_active_membership
 from ..models import Family, FamilyMember, FamilyRole, MemberStatus
 from ..schemas import FamilyCreate, FamilyDetail, FamilySummary
+from ..testnet.service import award
 
 router = APIRouter(prefix="/families", tags=["families"])
 
@@ -22,6 +23,7 @@ def create_family(payload: FamilyCreate, db: DbSession, user: CurrentUser) -> Fa
             status=MemberStatus.active,
         )
     )
+    award(db, user.id, "create_family")  # testnet points; no-op in the family product
     db.commit()
     return FamilySummary(id=family.id, name=family.name, role=FamilyRole.parent)
 

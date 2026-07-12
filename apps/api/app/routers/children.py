@@ -12,6 +12,7 @@ from ..models import (
     MemberStatus,
 )
 from ..schemas import ChildCreate, ChildOut
+from ..testnet.service import award
 
 router = APIRouter(prefix="/families/{family_id}/children", tags=["children"])
 
@@ -64,6 +65,7 @@ def add_child(
             )
         )
 
+    award(db, user.id, "add_child")  # testnet points; no-op in the family product
     db.commit()
     return ChildOut.model_validate(child)
 

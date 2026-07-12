@@ -438,6 +438,55 @@ class PasswordReset(Base):
     user: Mapped[User] = relationship()
 
 
+# --- Testnet harness (settings.testnet_mode deployments only) ---
+# These tables exist for the gamified testing program on
+# testnet.futureroots.app. The family product never reads or writes them;
+# with testnet_mode off, no code path touches them.
+
+
+class Tester(Base):
+    """A wallet-identified tester, linked 1:1 to a platform user so the whole
+    product API works for them unchanged. Wallet addresses are stored
+    lowercase; one tester per wallet."""
+
+    __tablename__ = "testers"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    wallet_address: Mapped[str] = mapped_column(String(42), unique=True, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped[User] = relationship()
+
+
+class WalletNonce(Base):
+    """Single-use, short-lived sign-in nonces for testnet wallet login."""
+
+    __tablename__ = "wallet_nonces"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    wallet_address: Mapped[str] = mapped_column(String(42), unique=True, index=True)
+    nonce: Mapped[str] = mapped_column(String(64))
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PointEvent(Base):
+    """Append-only testnet points, mirroring the fund-ledger discipline:
+    never UPDATE or DELETE; totals are always derived via SUM. Written only
+    by app.testnet.service.award (server-verified actions)."""
+
+    __tablename__ = "point_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tester_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("testers.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40))
+    points: Mapped[int] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+
+
 class ConsentRecord(Base):
     __tablename__ = "consent_records"
 

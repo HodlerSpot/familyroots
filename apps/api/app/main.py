@@ -41,6 +41,14 @@ app.include_router(capsules.router)
 app.include_router(legacy.router)
 app.include_router(webhooks.router)
 
+if settings.testnet_mode:
+    # The wall (docs/testnet.md): the gamified testing harness exists only on
+    # testnet deployments. Its routes also 404 at request time if the flag is
+    # off, so the family product never exposes them.
+    from .testnet.router import router as testnet_router
+
+    app.include_router(testnet_router)
+
 
 @app.get("/health")
 def health() -> dict:

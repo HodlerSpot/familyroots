@@ -9,6 +9,21 @@ import uuid
 from sqlalchemy.orm import Session
 
 from ..models import FeedEvent, FeedEventType
+from ..testnet.service import award
+
+# Feed events are the natural testnet award hooks: every meaningful action
+# already emits one. No-op outside testnet mode (docs/testnet.md).
+# capsule_released is emitted with the capsule's creator as actor, so the
+# sealer earns the release; member_joined's actor is the accepting invitee.
+_TESTNET_ACTIONS = {
+    FeedEventType.milestone: "milestone",
+    FeedEventType.memory_added: "memory_added",
+    FeedEventType.achievement: "achievement",
+    FeedEventType.contribution: "contribution",
+    FeedEventType.capsule_created: "capsule_created",
+    FeedEventType.capsule_released: "capsule_released",
+    FeedEventType.member_joined: "invite_accepted",
+}
 
 
 def emit(
@@ -28,4 +43,7 @@ def emit(
         payload=payload or {},
     )
     db.add(event)
+    action = _TESTNET_ACTIONS.get(type)
+    if action is not None:
+        award(db, actor_user_id, action)
     return event

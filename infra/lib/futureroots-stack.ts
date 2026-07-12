@@ -28,7 +28,10 @@ export class FutureRootsStack extends cdk.Stack {
       .split(",")
       .map((o) => o.trim())
       .filter(Boolean);
-    const allOrigins = [...new Set([webBaseUrl, "http://localhost:3000", ...extraOrigins])];
+    const testnetWebUrl = "https://testnet.futureroots.app";
+    const allOrigins = [
+      ...new Set([webBaseUrl, "http://localhost:3000", testnetWebUrl, ...extraOrigins]),
+    ];
 
     // --- Network: 2 AZs; egress via a fck-nat t4g.nano instance (~$3/mo,
     // vs $32/mo managed NAT) so the Lambda can reach Stripe/SES/AI APIs.
@@ -147,6 +150,45 @@ export class FutureRootsStack extends cdk.Stack {
       apiName: "futureroots-api",
       defaultIntegration: new HttpLambdaIntegration("ApiIntegration", apiFn),
     });
+
+    // --- Testnet harness: same code, separate database + simulated payments.
+    // The gamified tester surface at testnet.futureroots.app talks to this
+    // Lambda only; the family product never sees testnet mode.
+    const testnetFn = new lambda.Function(this, "TestnetApiFn", {
+      runtime: lambda.Runtime.PYTHON_3_13,
+      architecture: lambda.Architecture.X86_64,
+      handler: "app.lambda_handler.handler",
+      code: lambda.Code.fromAsset(
+        path.join(__dirname, "..", "..", "apps", "api", "build", "lambda.zip")
+      ),
+      memorySize: 512,
+      timeout: cdk.Duration.seconds(30),
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [apiSecurityGroup],
+      environment: {
+        FUTUREROOTS_DATABASE_URL: `postgresql+psycopg://futureroots:${dbPassword}@${db.dbInstanceEndpointAddress}:5432/futureroots_testnet`,
+        FUTUREROOTS_JWT_SECRET: jwtSecret,
+        FUTUREROOTS_STORAGE_BACKEND: "s3",
+        FUTUREROOTS_MEDIA_BUCKET: mediaBucket.bucketName,
+        FUTUREROOTS_EMAIL_BACKEND: "ses",
+        FUTUREROOTS_SES_FROM_ADDRESS: sesFrom,
+        FUTUREROOTS_WEB_BASE_URL: testnetWebUrl,
+        FUTUREROOTS_CORS_EXTRA_ORIGINS: "http://localhost:3000",
+        FUTUREROOTS_PAYMENT_BACKEND: "local",
+        FUTUREROOTS_TESTNET_MODE: "1",
+      },
+    });
+    mediaBucket.grantReadWrite(testnetFn);
+    testnetFn.addToRolePolicy(
+      new iam.PolicyStatement({ actions: ["ses:SendEmail"], resources: ["*"] })
+    );
+    const testnetApi = new apigwv2.HttpApi(this, "TestnetHttpApi", {
+      apiName: "futureroots-testnet-api",
+      defaultIntegration: new HttpLambdaIntegration("TestnetApiIntegration", testnetFn),
+    });
+    new cdk.CfnOutput(this, "TestnetApiUrl", { value: testnetApi.apiEndpoint });
+    new cdk.CfnOutput(this, "TestnetApiFunctionName", { value: testnetFn.functionName });
 
     new cdk.CfnOutput(this, "ApiUrl", { value: httpApi.apiEndpoint });
     new cdk.CfnOutput(this, "MediaBucketName", { value: mediaBucket.bucketName });

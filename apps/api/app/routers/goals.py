@@ -13,6 +13,7 @@ from ..models import (
 )
 from ..schemas import BadgeOut, GoalComplete, GoalCreate, GoalOut
 from ..services.feed import emit
+from ..testnet.service import award
 
 router = APIRouter(tags=["goals"])
 
@@ -50,6 +51,7 @@ def create_goal(
         due_at=payload.due_at,
     )
     db.add(goal)
+    award(db, user.id, "create_goal")  # testnet points; no-op in the family product
     db.commit()
     return _goal_out(goal)
 

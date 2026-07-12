@@ -21,6 +21,7 @@ from ..services.email import get_email_sender
 from ..services.email_templates import render_email
 from ..services.feed import emit
 from ..services.text import family_phrase
+from ..testnet.service import award
 
 router = APIRouter(tags=["invites"])
 
@@ -60,6 +61,9 @@ def create_invite(
         expires_at=utcnow() + timedelta(days=settings.invite_ttl_days),
     )
     db.add(invite)
+    # Testnet points (no-op in the family product); the grandparent invite is
+    # the north-star journey's first step, so it scores highest.
+    award(db, user.id, "invite_grandparent" if payload.role.value == "grandparent" else "invite_family")
     db.commit()
 
     family = family_phrase(invite.family.name)

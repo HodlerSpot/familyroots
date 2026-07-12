@@ -15,6 +15,7 @@ dependencies = [
     "bcrypt>=4.2",
     "email-validator>=2.2",
     "stripe>=11",
+    "eth-account>=0.13",
 ]
 
 [dependency-groups]

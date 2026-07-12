@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str = ""
     web_base_url: str = "http://localhost:3000"
     cors_extra_origins: str = ""  # comma-separated additional allowed origins
+    # Testnet harness (testnet.futureroots.app only). Gates the /testnet
+    # endpoints and the points engine; the family product runs with this off.
+    testnet_mode: bool = False
 
     model_config = {"env_file": ".env", "env_prefix": "FUTUREROOTS_"}
 
