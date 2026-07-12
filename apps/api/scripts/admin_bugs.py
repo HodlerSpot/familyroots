@@ -17,7 +17,7 @@ from pathlib import Path
 
 API = os.environ.get("FUTUREROOTS_TESTNET_API", "https://api-testnet.futureroots.app")
 
-env_path = Path(__file__).resolve().parents[2] / "infra" / ".env"
+env_path = Path(__file__).resolve().parents[3] / "infra" / ".env"
 m = re.search(r"^TESTNET_ADMIN_TOKEN=(.+)$", env_path.read_text(), re.M)
 if not m:
     sys.exit("TESTNET_ADMIN_TOKEN not found in infra/.env")
