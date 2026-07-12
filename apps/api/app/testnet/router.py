@@ -29,9 +29,20 @@ from typing import Annotated, Literal
 
 from ..config import settings
 from ..deps import CurrentUser, DbSession, bearer_scheme
-from ..models import BugReport, PointEvent, Tester, User, WalletNonce, XAuthState, utcnow
-from ..schemas import TokenResponse
+from ..models import (
+    BugReport,
+    MediaObject,
+    MediaStatus,
+    PointEvent,
+    Tester,
+    User,
+    WalletNonce,
+    XAuthState,
+    utcnow,
+)
+from ..schemas import MediaCreate, MediaUploadTicket, TokenResponse
 from ..security import create_access_token, decode_access_token, hash_password
+from ..services.storage import get_storage
 from .service import (
     QUESTS,
     award,
@@ -233,6 +244,7 @@ class XProfileOut(BaseModel):
 class BugSubmit(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     body: str = Field(min_length=1, max_length=5000)
+    media_id: uuid.UUID | None = None
 
     @field_validator("title", "body")
     @classmethod
@@ -248,10 +260,24 @@ class BugReportOut(BaseModel):
     title: str
     body: str
     status: str
+    media_id: uuid.UUID | None
+    image_url: str | None
     created_at: datetime
     reviewed_at: datetime | None
 
-    model_config = {"from_attributes": True}
+    @staticmethod
+    def of(report: BugReport) -> "BugReportOut":
+        return BugReportOut(
+            id=report.id,
+            title=report.title,
+            body=report.body,
+            status=report.status,
+            media_id=report.media_id,
+            # client appends ?token=; download_media authorizes the uploader
+            image_url=f"/media/{report.media_id}" if report.media_id else None,
+            created_at=report.created_at,
+            reviewed_at=report.reviewed_at,
+        )
 
 
 class VerifyDecision(BaseModel):
@@ -265,6 +291,7 @@ class AdminBugOut(BaseModel):
     status: str
     reporter: str  # X handle, display name, or shortened wallet
     wallet_address: str
+    image_media_id: uuid.UUID | None
     created_at: datetime
 
 
@@ -653,8 +680,39 @@ def x_disconnect(db: DbSession, user: CurrentUser) -> XProfileOut:
 # is never a scoring path.
 
 
+ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+
+
+@router.post(
+    "/bugs/media", response_model=MediaUploadTicket, status_code=status.HTTP_201_CREATED
+)
+def create_bug_media(
+    payload: MediaCreate, db: DbSession, user: CurrentUser
+) -> MediaUploadTicket:
+    """Start a screenshot upload for a bug report. Reuses the shared media
+    pipeline: client PUTs to upload_url, then POSTs /media/{id}/complete."""
+    tester = get_tester_for_user(db, user.id)
+    if tester is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "Connect a wallet to join the testing crew"
+        )
+    if payload.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Please attach an image (PNG, JPEG, WebP, or GIF)"
+        )
+    media = MediaObject(
+        tester_id=tester.id,
+        storage_key=str(uuid.uuid4()),
+        content_type=payload.content_type,
+        uploaded_by=user.id,
+    )
+    db.add(media)
+    db.commit()
+    return MediaUploadTicket(media_id=media.id, upload_url=get_storage().upload_target(media))
+
+
 @router.post("/bugs", response_model=BugReportOut, status_code=status.HTTP_201_CREATED)
-def submit_bug(payload: BugSubmit, db: DbSession, user: CurrentUser) -> BugReport:
+def submit_bug(payload: BugSubmit, db: DbSession, user: CurrentUser) -> BugReportOut:
     """File a bug report. Creates a pending report for the caller's tester and
     awards no points — verification (a human action) is the only scoring path."""
     tester = get_tester_for_user(db, user.id)
@@ -674,27 +732,42 @@ def submit_bug(payload: BugSubmit, db: DbSession, user: CurrentUser) -> BugRepor
             "You have plenty of reports awaiting review already. Thanks for the help",
         )
 
-    report = BugReport(tester_id=tester.id, title=payload.title, body=payload.body)
+    if payload.media_id is not None:
+        media = db.get(MediaObject, payload.media_id)
+        if (
+            media is None
+            or media.uploaded_by != user.id
+            or media.tester_id != tester.id
+            or media.status != MediaStatus.uploaded
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, "That screenshot isn't ready yet"
+            )
+
+    report = BugReport(
+        tester_id=tester.id, title=payload.title, body=payload.body, media_id=payload.media_id
+    )
     db.add(report)
     db.commit()
     db.refresh(report)
-    return report
+    return BugReportOut.of(report)
 
 
 @router.get("/bugs", response_model=list[BugReportOut])
-def my_bugs(db: DbSession, user: CurrentUser) -> list[BugReport]:
+def my_bugs(db: DbSession, user: CurrentUser) -> list[BugReportOut]:
     """The caller's own bug reports, newest first, with their review status."""
     tester = get_tester_for_user(db, user.id)
     if tester is None:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, "Connect a wallet to join the testing crew"
         )
-    return (
+    reports = (
         db.query(BugReport)
         .filter(BugReport.tester_id == tester.id)
         .order_by(BugReport.created_at.desc())
         .all()
     )
+    return [BugReportOut.of(r) for r in reports]
 
 
 @router.get("/bugs/pending", response_model=list[AdminBugOut])
@@ -723,6 +796,7 @@ def list_pending_bugs(
                 or short_wallet(tester.wallet_address)
             ),
             wallet_address=tester.wallet_address,
+            image_media_id=report.media_id,
             created_at=report.created_at,
         )
         for report, tester in rows
@@ -735,7 +809,7 @@ def verify_bug(
     payload: VerifyDecision,
     db: DbSession,
     _admin: Annotated[None, Depends(require_admin)],
-) -> BugReport:
+) -> BugReportOut:
     """Human review of a bug report — the ONLY path that awards bug_verified.
 
     On "verified": mark the report verified and, if it has not already scored,
@@ -759,4 +833,4 @@ def verify_bug(
 
     db.commit()
     db.refresh(report)
-    return report
+    return BugReportOut.of(report)

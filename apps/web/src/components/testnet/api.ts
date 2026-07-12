@@ -49,6 +49,9 @@ export interface BugReport {
   title: string;
   body: string;
   status: "pending" | "verified" | "rejected";
+  media_id: string | null;
+  // API path for the screenshot; append the token to load it (see mediaUrl)
+  image_url: string | null;
   created_at: string;
   reviewed_at: string | null;
 }
@@ -73,6 +76,7 @@ async function req<T>(path: string, options: RequestInit = {}): Promise<T> {
     }
     throw new Error(detail);
   }
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
@@ -94,12 +98,30 @@ export const testnetApi = {
       method: "POST",
       body: JSON.stringify({ display_name }),
     }),
-  submitBug: (bug: { title: string; body: string }) =>
+  submitBug: (bug: { title: string; body: string; media_id?: string }) =>
     req<BugReport>("/testnet/bugs", {
       method: "POST",
       body: JSON.stringify(bug),
     }),
   myBugs: () => req<BugReport[]>("/testnet/bugs"),
+  // Upload a screenshot for a bug report via the shared media pipeline:
+  // create -> PUT bytes -> complete. Returns the media_id to attach.
+  uploadBugImage: async (file: File): Promise<string> => {
+    const ticket = await req<{ media_id: string; upload_url: string }>(
+      "/testnet/bugs/media",
+      { method: "POST", body: JSON.stringify({ content_type: file.type }) }
+    );
+    const token = getToken();
+    const isApiPath = ticket.upload_url.startsWith("/");
+    const url = isApiPath ? `${API_URL}${ticket.upload_url}` : ticket.upload_url;
+    const headers: Record<string, string> = { "Content-Type": file.type };
+    if (isApiPath) headers.Authorization = `Bearer ${token}`;
+    const put = await fetch(url, { method: "PUT", headers, body: file });
+    if (!put.ok) throw new Error("Upload failed");
+    await req<void>(`/media/${ticket.media_id}/complete`, { method: "POST" });
+    return ticket.media_id;
+  },
+  mediaUrl: (mediaId: string) => `${API_URL}/media/${mediaId}?token=${getToken()}`,
   xStart: () =>
     req<{ authorize_url: string }>("/testnet/auth/x/start", { method: "POST" }),
   xCallback: (code: string, state: string) =>

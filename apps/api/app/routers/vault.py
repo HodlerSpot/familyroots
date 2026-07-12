@@ -131,6 +131,10 @@ def download_media(media_id: uuid.UUID, db: DbSession, token: str | None = None)
         get_child_with_access(db, media.child_id, user)
     elif media.family_id is not None:
         get_active_membership(db, media.family_id, user)
+    elif media.tester_id is not None:
+        # testnet bug-report screenshot: viewable only by the tester who uploaded it
+        if media.uploaded_by != user.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
     else:  # orphaned media is unreachable
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
 

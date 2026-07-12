@@ -3,7 +3,7 @@
 // Floating "Quests" button + slide-in panel: the tester's live scorecard.
 // Polls every 5 seconds so points tick up in near real time as actions land.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BugReport, QuestBoard, testnetApi } from "./api";
 import { Avatar } from "./identicon";
 
@@ -27,6 +27,7 @@ export function QuestsButton() {
   const [bugBody, setBugBody] = useState("");
   const [submittingBug, setSubmittingBug] = useState(false);
   const [bugError, setBugError] = useState<string | null>(null);
+  const bugImageRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -66,9 +67,12 @@ export function QuestsButton() {
     setSubmittingBug(true);
     setBugError(null);
     try {
-      await testnetApi.submitBug({ title: bugTitle.trim(), body: bugBody.trim() });
+      const file = bugImageRef.current?.files?.[0];
+      const media_id = file ? await testnetApi.uploadBugImage(file) : undefined;
+      await testnetApi.submitBug({ title: bugTitle.trim(), body: bugBody.trim(), media_id });
       setBugTitle("");
       setBugBody("");
+      if (bugImageRef.current) bugImageRef.current.value = "";
       await refresh();
     } catch (err) {
       setBugError(err instanceof Error ? err.message : "Something went wrong. Please try again");
@@ -223,6 +227,15 @@ export function QuestsButton() {
                       rows={3}
                       className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
                     />
+                    <label className="block text-xs text-stone-500">
+                      Add a screenshot (optional)
+                      <input
+                        ref={bugImageRef}
+                        type="file"
+                        accept="image/*"
+                        className="mt-1 block w-full text-xs text-stone-600 file:mr-2 file:rounded-md file:border-0 file:bg-emerald-100 file:px-2 file:py-1 file:text-emerald-800"
+                      />
+                    </label>
                     {bugError && <p className="text-xs text-red-600">{bugError}</p>}
                     <button
                       type="submit"
@@ -240,8 +253,16 @@ export function QuestsButton() {
                         return (
                           <li
                             key={bug.id}
-                            className="flex items-start justify-between gap-3 rounded-xl border border-stone-200 bg-white p-3"
+                            className="flex items-start gap-3 rounded-xl border border-stone-200 bg-white p-3"
                           >
+                            {bug.media_id && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={testnetApi.mediaUrl(bug.media_id)}
+                                alt="bug screenshot"
+                                className="h-10 w-10 shrink-0 rounded-md object-cover"
+                              />
+                            )}
                             <p className="min-w-0 flex-1 truncate text-sm font-medium text-stone-800">
                               {bug.title}
                             </p>

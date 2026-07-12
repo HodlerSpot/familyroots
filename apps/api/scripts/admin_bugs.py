@@ -47,6 +47,8 @@ def cmd_list():
         print(f"  from:     {b['reporter']}  ({b['wallet_address']})")
         print(f"  title:    {b['title']}")
         print(f"  details:  {b['body']}")
+        if b.get("image_media_id"):
+            print(f"  screenshot: attached (media {b['image_media_id']})")
         print(f"  filed:    {b['created_at']}")
         print(f"  verify:   uv run python scripts/admin_bugs.py verify {b['id']}\n")
 

@@ -553,6 +553,59 @@ def test_x_connect_becomes_leaderboard_name_then_disconnect(testnet_on, client, 
     assert board["total_points"] == before  # connect_x points are not clawed back
 
 
+PNG = b"\x89PNG\r\n\x1a\nfake-screenshot-bytes"
+
+
+def upload_bug_image(client, headers, content_type="image/png"):
+    r = client.post("/testnet/bugs/media", json={"content_type": content_type}, headers=headers)
+    assert r.status_code == 201, r.text
+    media_id, upload_url = r.json()["media_id"], r.json()["upload_url"]
+    assert client.put(upload_url, content=PNG, headers=headers).status_code == 204
+    assert client.post(f"/media/{media_id}/complete", headers=headers).status_code == 204
+    return media_id
+
+
+def test_bug_with_screenshot(testnet_on, client):
+    _, headers = wallet_login(client)
+    media_id = upload_bug_image(client, headers)
+    r = client.post(
+        "/testnet/bugs",
+        json={"title": "Overlap on mobile", "body": "Button overlaps note field", "media_id": media_id},
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["media_id"] == media_id
+    assert r.json()["image_url"] == f"/media/{media_id}"
+    # the uploader can view the screenshot; the shared media route authorizes it
+    tok = headers["Authorization"].split()[1]
+    assert client.get(f"/media/{media_id}?token={tok}").status_code == 200
+    # it shows in the admin queue
+    assert client.get("/testnet/bugs", headers=headers).json()[0]["media_id"] == media_id
+
+
+def test_bug_media_rejects_non_image(testnet_on, client):
+    _, headers = wallet_login(client)
+    r = client.post("/testnet/bugs/media", json={"content_type": "application/pdf"}, headers=headers)
+    assert r.status_code == 422
+
+
+def test_bug_rejects_another_testers_media(testnet_on, client):
+    _, alice = wallet_login(client)
+    media_id = upload_bug_image(client, alice)
+    _, bob = wallet_login(client)
+    r = client.post(
+        "/testnet/bugs",
+        json={"title": "x", "body": "y", "media_id": media_id},
+        headers=bob,
+    )
+    assert r.status_code == 422
+
+
+def test_bug_media_endpoint_404_when_flag_off(client):
+    # no testnet_on fixture: the whole testnet router is absent
+    assert client.post("/testnet/bugs/media", json={"content_type": "image/png"}).status_code == 404
+
+
 def test_admin_lists_pending_bugs(testnet_on, client, monkeypatch):
     monkeypatch.setattr(settings, "testnet_admin_token", "adm1n-secret")
     _, headers = wallet_login(client)

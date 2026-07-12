@@ -213,13 +213,17 @@ class MediaObject(Base):
     __tablename__ = "media_objects"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    # Media is scoped to exactly one of child (vault, capsules) or family
-    # (legacy archive) so access control always follows the Family Graph
+    # Media is scoped to exactly one of child (vault, capsules), family
+    # (legacy archive), or tester (testnet bug-report screenshots) so access
+    # control always follows that owner.
     child_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("children.id"), nullable=True, index=True
     )
     family_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("families.id"), nullable=True, index=True
+    )
+    tester_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("testers.id"), nullable=True, index=True
     )
     storage_key: Mapped[str] = mapped_column(String(255), unique=True)
     content_type: Mapped[str] = mapped_column(String(100))
@@ -521,6 +525,9 @@ class BugReport(Base):
     body: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|verified|rejected
     points_awarded: Mapped[bool] = mapped_column(default=False)
+    media_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("media_objects.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
