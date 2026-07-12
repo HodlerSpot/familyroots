@@ -10,20 +10,30 @@
 // (Temple, Rabby, ...) has claimed window.ethereum.
 
 import { useState } from "react";
-import { Connector, useAccount, useConnect, useDisconnect, useSignMessage } from "wagmi";
+import {
+  Connector,
+  useAccount,
+  useConnect,
+  useDisconnect,
+  useSignMessage,
+  useSwitchChain,
+} from "wagmi";
+import { baseSepolia } from "wagmi/chains";
 import { setToken } from "@/lib/api";
 import { Button, Card, ErrorNote } from "@/components/ui";
 import { Logo } from "@/components/logo";
 import { testnetApi } from "./api";
 
 export function WalletGate({ onSignedIn }: { onSignedIn: () => void }) {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, chainId } = useAccount();
   const { connectors, connectAsync } = useConnect();
   const { disconnect } = useDisconnect();
   const { signMessageAsync } = useSignMessage();
+  const { switchChainAsync } = useSwitchChain();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const onBase = chainId === baseSepolia.id;
 
   // EIP-6963 wallets each carry a distinct id + name + icon. The generic
   // "injected" connector is a catch-all fallback; show it only when no
@@ -35,7 +45,17 @@ export function WalletGate({ onSignedIn }: { onSignedIn: () => void }) {
     setError("");
     setPendingId(connector.uid);
     try {
-      await connectAsync({ connector });
+      const result = await connectAsync({ connector });
+      // Land the wallet on Base Sepolia so the sign dialog shows the right
+      // network (and adds the chain if the wallet doesn't have it yet). The
+      // login signature is off-chain, so a failed switch is non-fatal.
+      if (result.chainId !== baseSepolia.id) {
+        try {
+          await switchChainAsync({ chainId: baseSepolia.id });
+        } catch {
+          // user can still sign; we nudge them below if they're off Base
+        }
+      }
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "We couldn't reach that wallet. Please try again"
@@ -50,6 +70,9 @@ export function WalletGate({ onSignedIn }: { onSignedIn: () => void }) {
     setBusy(true);
     setError("");
     try {
+      if (!onBase) {
+        await switchChainAsync({ chainId: baseSepolia.id });
+      }
       const { message } = await testnetApi.nonce(address);
       const signature = await signMessageAsync({ message });
       const { access_token } = await testnetApi.verify(address, signature);
@@ -121,6 +144,11 @@ export function WalletGate({ onSignedIn }: { onSignedIn: () => void }) {
               <p className="truncate rounded-lg bg-stone-100 px-4 py-2 text-center font-mono text-sm text-stone-700">
                 {address}
               </p>
+              {!onBase && (
+                <p className="rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-900">
+                  Signing in will switch your wallet to Base Sepolia first.
+                </p>
+              )}
               <Button className="w-full" disabled={busy} onClick={signIn}>
                 {busy ? "Signing you in…" : "Sign in and start testing"}
               </Button>
