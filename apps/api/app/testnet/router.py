@@ -434,7 +434,11 @@ def leaderboard(
     entries = [
         LeaderboardEntry(
             rank=i,
-            display_name=tester.display_name or short_wallet(tester.wallet_address),
+            display_name=(
+                tester.x_username
+                or tester.display_name
+                or short_wallet(tester.wallet_address)
+            ),
             points=points,
             is_me=me is not None and tester.id == me.id,
             wallet=tester.wallet_address,
@@ -606,6 +610,28 @@ def x_callback(
         display_name=tester.display_name,
         x_username=tester.x_username,
         x_avatar_url=tester.x_avatar_url,
+    )
+
+
+@router.post("/auth/x/disconnect", response_model=XProfileOut)
+def x_disconnect(db: DbSession, user: CurrentUser) -> XProfileOut:
+    """Unlink X. The connect_x points stay earned (and won't re-award on a
+    future reconnect, since the quest is once-ever); this just clears the
+    handle and picture so the tester falls back to their identicon."""
+    tester = get_tester_for_user(db, user.id)
+    if tester is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "Connect a wallet to join the testing crew"
+        )
+    tester.x_user_id = None
+    tester.x_username = None
+    tester.x_avatar_url = None
+    db.commit()
+    return XProfileOut(
+        wallet_address=tester.wallet_address,
+        display_name=tester.display_name,
+        x_username=None,
+        x_avatar_url=None,
     )
 
 

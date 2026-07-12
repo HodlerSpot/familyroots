@@ -529,6 +529,30 @@ def test_x_callback_links_account_and_awards_connect_x(testnet_on, client, monke
     assert me_entry["avatar_url"] == body["x_avatar_url"]
 
 
+def test_x_connect_becomes_leaderboard_name_then_disconnect(testnet_on, client, monkeypatch):
+    _, headers = wallet_login(client)
+    connect_x(client, monkeypatch, headers)
+
+    # the X handle is what shows on the leaderboard once connected
+    me_entry = next(
+        e for e in client.get("/testnet/leaderboard", headers=headers).json()["entries"]
+        if e["is_me"]
+    )
+    assert me_entry["display_name"] == "@grandpajoe"
+    assert me_entry["avatar_url"]
+
+    # disconnect clears handle + avatar but keeps the earned points
+    before = client.get("/testnet/quests", headers=headers).json()["total_points"]
+    r = client.post("/testnet/auth/x/disconnect", headers=headers)
+    assert r.status_code == 200
+    assert r.json()["x_username"] is None
+
+    board = client.get("/testnet/quests", headers=headers).json()
+    assert board["x_username"] is None
+    assert board["avatar_url"] is None
+    assert board["total_points"] == before  # connect_x points are not clawed back
+
+
 def test_second_x_connect_does_not_double_award(testnet_on, client, monkeypatch):
     _, headers = wallet_login(client)
     assert connect_x(client, monkeypatch, headers).status_code == 200

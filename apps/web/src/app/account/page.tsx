@@ -31,6 +31,7 @@ function TestnetAccount() {
   const [xBusy, setXBusy] = useState(false);
   const [xUnavailable, setXUnavailable] = useState(false);
   const [xError, setXError] = useState("");
+  const [disconnecting, setDisconnecting] = useState(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -88,6 +89,19 @@ function TestnetAccount() {
     }
   }
 
+  async function disconnectX() {
+    setDisconnecting(true);
+    setXError("");
+    try {
+      await testnetApi.xDisconnect();
+      setBoard((b) => (b ? { ...b, x_username: null, avatar_url: null } : b));
+    } catch {
+      setXError("We couldn't disconnect just now. Please try again");
+    } finally {
+      setDisconnecting(false);
+    }
+  }
+
   if (!board) return <p className="text-stone-500">Loading…</p>;
 
   return (
@@ -135,16 +149,26 @@ function TestnetAccount() {
         <Card>
           <h2 className="mb-1 text-lg font-semibold text-emerald-900">Bring your crew</h2>
           {board.x_username ? (
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium text-stone-900">{board.x_username}</p>
-                <p className="text-sm text-stone-600">
-                  Your X picture and handle show on the leaderboard.
-                </p>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-medium text-stone-900">{board.x_username}</p>
+                  <p className="text-sm text-stone-600">
+                    Your X picture and handle show on the leaderboard.
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-800">
+                  Connected ✓
+                </span>
               </div>
-              <span className="shrink-0 rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-800">
-                Connected ✓
-              </span>
+              <button
+                onClick={disconnectX}
+                disabled={disconnecting}
+                className="text-sm text-stone-500 underline hover:text-stone-700 disabled:opacity-50"
+              >
+                {disconnecting ? "Disconnecting…" : "Disconnect X"}
+              </button>
+              <ErrorNote>{xError}</ErrorNote>
             </div>
           ) : (
             <>
@@ -161,6 +185,7 @@ function TestnetAccount() {
         </Card>
       )}
 
+      {!board.x_username && (
       <Card>
         <h2 className="mb-1 text-lg font-semibold text-emerald-900">Leaderboard name</h2>
         <p className="mb-4 text-sm text-stone-600">
@@ -189,6 +214,7 @@ function TestnetAccount() {
           </Button>
         </form>
       </Card>
+      )}
     </div>
   );
 }

@@ -112,4 +112,9 @@ export const testnetApi = {
       method: "POST",
       body: JSON.stringify({ code, state }),
     }),
+  xDisconnect: () =>
+    req<{ wallet_address: string; x_username: string | null }>(
+      "/testnet/auth/x/disconnect",
+      { method: "POST" }
+    ),
 };
