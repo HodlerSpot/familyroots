@@ -12,7 +12,7 @@ callers pass plain strings and never markup.
 
 from html import escape
 
-LOGO_URL = "https://futureroots.app/logo-mark.png"
+LOGO_URL = "https://futureroots.app/email-logo.png"
 TAGLINE = "Building Generational Wealth &amp; Memories"
 
 # Brand palette (docs/brand): emerald primary, logo green + royal blue

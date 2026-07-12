@@ -38,7 +38,7 @@ def test_invite_email_writes_branded_html_to_outbox(client, tmp_path, monkeypatc
     assert html_files[0].stem == txt_files[0].stem
 
     html = html_files[0].read_text(encoding="utf-8")
-    assert "https://futureroots.app/logo-mark.png" in html
+    assert "https://futureroots.app/email-logo.png" in html
     assert 'alt="FutureRoots"' in html
     assert "/invites/" in html  # the CTA points at the accept page
     # Brand rule: no crypto vocabulary in user-facing text (URLs exempted)
@@ -56,7 +56,7 @@ def test_welcome_email_html_is_branded_and_clean(client, tmp_path, monkeypatch):
     html_files = list(tmp_path.glob("*.html"))
     assert len(html_files) == 1
     html = html_files[0].read_text(encoding="utf-8")
-    assert "https://futureroots.app/logo-mark.png" in html
+    assert "https://futureroots.app/email-logo.png" in html
     assert "Pat Parent" in html
     stripped = _strip_urls(html).lower()
     for banned in BANNED:
