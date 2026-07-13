@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, status
 
-from ..deps import CurrentUser, DbSession, get_child_with_access
+from ..deps import CurrentUser, DbSession, get_child_with_access, require_not_supporter
 from ..models import Contribution, ContributionStatus, FundAccount, FundLedgerEntry, User
 from ..schemas import ContributionCreate, ContributionOut, FundOut, LedgerEntryOut
 from ..services.payments import (
@@ -75,7 +75,8 @@ def confirm_contribution(
 
 @router.get("/children/{child_id}/fund", response_model=FundOut)
 def child_fund(child_id: uuid.UUID, db: DbSession, user: CurrentUser) -> FundOut:
-    child, _ = get_child_with_access(db, child_id, user)
+    child, membership = get_child_with_access(db, child_id, user)
+    require_not_supporter(membership)
     account = db.query(FundAccount).filter(FundAccount.child_id == child_id).first()
     if account is None:
         return FundOut(child_id=child_id, currency="USD", balance_cents=0, entries=[])

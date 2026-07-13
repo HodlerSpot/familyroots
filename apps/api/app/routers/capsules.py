@@ -2,15 +2,25 @@ import uuid
 from datetime import date
 
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import func
 
 from ..config import settings
-from ..deps import CurrentUser, DbSession, get_child_with_access
+from ..deps import (
+    CurrentUser,
+    DbSession,
+    get_child_with_access,
+    require_not_supporter,
+)
 from ..models import (
+    GUARDIAN_ROLES,
+    CapsuleReleaseVote,
     CapsuleStatus,
     Child,
     FamilyMember,
     FamilyRole,
     FeedEventType,
+    Goal,
+    GoalStatus,
     MediaObject,
     MediaStatus,
     MemberStatus,
@@ -26,14 +36,54 @@ from ..services.feed import emit
 
 router = APIRouter(tags=["capsules"])
 
+RELEASE_VOTES_REQUIRED = 2
+
 
 def _age_on(birthdate: date, on: date) -> int:
     return on.year - birthdate.year - ((on.month, on.day) < (birthdate.month, birthdate.day))
 
 
-def _capsule_out(capsule: TimeCapsule, viewer_id: uuid.UUID) -> CapsuleOut:
+def _birthday_at_age(birthdate: date, age: int) -> date:
+    """The date the child turns `age`. Feb-29 births fall back to Mar 1."""
+    try:
+        return birthdate.replace(year=birthdate.year + age)
+    except ValueError:
+        return date(birthdate.year + age, 3, 1)
+
+
+def _capsule_out(
+    db, capsule: TimeCapsule, viewer_id: uuid.UUID, role: FamilyRole | None = None
+) -> CapsuleOut:
     is_mine = capsule.created_by == viewer_id
     revealed = is_mine or capsule.status == CapsuleStatus.released
+
+    votes = (
+        db.query(func.count(CapsuleReleaseVote.id))
+        .filter(CapsuleReleaseVote.capsule_id == capsule.id)
+        .scalar()
+        or 0
+    )
+    i_voted = (
+        db.query(CapsuleReleaseVote.id)
+        .filter(
+            CapsuleReleaseVote.capsule_id == capsule.id,
+            CapsuleReleaseVote.user_id == viewer_id,
+        )
+        .first()
+        is not None
+    )
+    can_vote = (
+        role in GUARDIAN_ROLES
+        and not is_mine
+        and capsule.status == CapsuleStatus.sealed
+        and capsule.release_condition == ReleaseCondition.milestone
+    )
+
+    goal_title = None
+    if capsule.release_goal_id is not None:
+        goal = db.get(Goal, capsule.release_goal_id)
+        goal_title = goal.title if goal else None
+
     return CapsuleOut(
         id=capsule.id,
         type=capsule.type,
@@ -42,8 +92,13 @@ def _capsule_out(capsule: TimeCapsule, viewer_id: uuid.UUID) -> CapsuleOut:
         release_age=capsule.release_age,
         release_date=capsule.release_date,
         release_milestone=capsule.release_milestone,
+        release_goal_id=capsule.release_goal_id,
+        release_goal_title=goal_title,
         created_by_name=capsule.author.display_name,
         is_mine=is_mine,
+        release_votes=votes,
+        i_voted=i_voted,
+        can_vote=can_vote,
         body=capsule.body if revealed else None,
         media_id=capsule.media_id if revealed else None,
         media_content_type=(
@@ -129,7 +184,11 @@ def release_due_capsules(db, child: Child) -> None:
             if capsule.release_date is not None and capsule.release_date <= today:
                 due.append(capsule)
         elif capsule.release_condition == ReleaseCondition.age:
-            if (
+            # age capsules store a computed release_date at creation; prefer it.
+            if capsule.release_date is not None:
+                if capsule.release_date <= today:
+                    due.append(capsule)
+            elif (
                 capsule.release_age is not None
                 and _age_on(child.birthdate, today) >= capsule.release_age
             ):
@@ -148,14 +207,16 @@ def release_due_capsules(db, child: Child) -> None:
 def create_capsule(
     child_id: uuid.UUID, payload: CapsuleCreate, db: DbSession, user: CurrentUser
 ) -> CapsuleOut:
-    """Any family member can seal a capsule — grandparents leaving letters for
-    the future is the heart of this feature."""
-    child, _ = get_child_with_access(db, child_id, user)
+    """Any family member (but not a supporter) can seal a capsule —
+    grandparents leaving letters for the future is the heart of this feature."""
+    child, membership = get_child_with_access(db, child_id, user)
+    require_not_supporter(membership)
 
     condition_value = {
         ReleaseCondition.age: payload.release_age,
         ReleaseCondition.date: payload.release_date,
         ReleaseCondition.milestone: payload.release_milestone,
+        ReleaseCondition.goal: payload.release_goal_id,
     }[payload.release_condition]
     if condition_value is None:
         raise HTTPException(
@@ -172,6 +233,21 @@ def create_capsule(
         if media is None or media.child_id != child_id or media.status != MediaStatus.uploaded:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Media not ready")
 
+    # goal-linked: the goal must belong to this child and still be open.
+    if payload.release_condition == ReleaseCondition.goal:
+        goal = db.get(Goal, payload.release_goal_id)
+        if goal is None or goal.child_id != child_id or goal.status != GoalStatus.active:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Link a goal that belongs to this child and isn't finished yet",
+            )
+
+    # "At an age" stores the concrete date the child reaches that age, so the
+    # scheduler can open it without recomputing from the birthdate each sweep.
+    release_date = payload.release_date
+    if payload.release_condition == ReleaseCondition.age:
+        release_date = _birthday_at_age(child.birthdate, payload.release_age)
+
     capsule = TimeCapsule(
         child_id=child_id,
         created_by=user.id,
@@ -180,8 +256,9 @@ def create_capsule(
         media_id=payload.media_id,
         release_condition=payload.release_condition,
         release_age=payload.release_age,
-        release_date=payload.release_date,
+        release_date=release_date,
         release_milestone=payload.release_milestone,
+        release_goal_id=payload.release_goal_id,
     )
     db.add(capsule)
     db.flush()
@@ -200,12 +277,13 @@ def create_capsule(
         },
     )
     db.commit()
-    return _capsule_out(capsule, user.id)
+    return _capsule_out(db, capsule, user.id, membership.role)
 
 
 @router.get("/children/{child_id}/capsules", response_model=list[CapsuleOut])
 def list_capsules(child_id: uuid.UUID, db: DbSession, user: CurrentUser) -> list[CapsuleOut]:
-    child, _ = get_child_with_access(db, child_id, user)
+    child, membership = get_child_with_access(db, child_id, user)
+    require_not_supporter(membership)
     release_due_capsules(db, child)
     capsules = (
         db.query(TimeCapsule)
@@ -213,30 +291,77 @@ def list_capsules(child_id: uuid.UUID, db: DbSession, user: CurrentUser) -> list
         .order_by(TimeCapsule.created_at.desc())
         .all()
     )
-    return [_capsule_out(c, user.id) for c in capsules]
+    return [_capsule_out(db, c, user.id, membership.role) for c in capsules]
 
 
 @router.post("/capsules/{capsule_id}/release", response_model=CapsuleOut)
 def release_capsule(capsule_id: uuid.UUID, db: DbSession, user: CurrentUser) -> CapsuleOut:
-    """Milestone-conditioned capsules open when the moment arrives — the
-    creator or a parent/guardian declares it."""
+    """The creator may open their own capsule directly, whatever its condition.
+    Everyone else must let it open on its own, or (for life-moment capsules)
+    gather guardian votes via /vote-release."""
     capsule = db.get(TimeCapsule, capsule_id)
     if capsule is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Capsule not found")
     child, membership = get_child_with_access(db, capsule.child_id, user)
+    require_not_supporter(membership)
     if capsule.status == CapsuleStatus.released:
         raise HTTPException(status.HTTP_409_CONFLICT, "This capsule is already open")
+    if capsule.created_by != user.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Only its creator can open this capsule directly"
+        )
+    _release(db, capsule, child)
+    db.commit()
+    return _capsule_out(db, capsule, user.id, membership.role)
+
+
+@router.post("/capsules/{capsule_id}/vote-release", response_model=CapsuleOut)
+def vote_release_capsule(
+    capsule_id: uuid.UUID, db: DbSession, user: CurrentUser
+) -> CapsuleOut:
+    """Life-moment (milestone) capsules open by agreement: two distinct
+    guardians — other than the creator — vote the moment has arrived."""
+    capsule = db.get(TimeCapsule, capsule_id)
+    if capsule is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Capsule not found")
+    child, membership = get_child_with_access(db, capsule.child_id, user)
+    if membership.role not in GUARDIAN_ROLES:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Only a family guardian can vote to open this"
+        )
+    if capsule.created_by == user.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "As the creator, you can open this capsule yourself"
+        )
     if capsule.release_condition != ReleaseCondition.milestone:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "This capsule opens on its own when the time comes",
         )
-    is_creator = capsule.created_by == user.id
-    is_guardian = membership.role in (FamilyRole.parent, FamilyRole.guardian)
-    if not (is_creator or is_guardian):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, "Only its creator or a parent can open this capsule"
+    if capsule.status == CapsuleStatus.released:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This capsule is already open")
+
+    existing = (
+        db.query(CapsuleReleaseVote)
+        .filter(
+            CapsuleReleaseVote.capsule_id == capsule.id,
+            CapsuleReleaseVote.user_id == user.id,
         )
-    _release(db, capsule, child)
+        .first()
+    )
+    if existing is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "You've already voted to open this")
+
+    db.add(CapsuleReleaseVote(capsule_id=capsule.id, user_id=user.id))
+    db.flush()
+
+    votes = (
+        db.query(func.count(CapsuleReleaseVote.id))
+        .filter(CapsuleReleaseVote.capsule_id == capsule.id)
+        .scalar()
+        or 0
+    )
+    if votes >= RELEASE_VOTES_REQUIRED:
+        _release(db, capsule, child)
     db.commit()
-    return _capsule_out(capsule, user.id)
+    return _capsule_out(db, capsule, user.id, membership.role)

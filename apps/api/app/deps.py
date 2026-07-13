@@ -74,10 +74,26 @@ def get_active_membership(db: Session, family_id: uuid.UUID, user: User) -> Fami
 
 
 def require_guardian_role(membership: FamilyMember) -> None:
-    """Child-critical writes require a parent or guardian."""
+    """Child-critical writes (profile, goals, invites) require a parent or
+    guardian — not grandparents/relatives, and never supporters."""
     if membership.role not in (FamilyRole.parent, FamilyRole.guardian):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "Only a parent or guardian may do this"
+        )
+
+
+def is_supporter(role: FamilyRole) -> bool:
+    """A supporter is a trusted non-family adult with a deliberately narrow
+    view: shared memories/milestones only — no funds, capsules, goals, legacy."""
+    return role == FamilyRole.supporter
+
+
+def require_not_supporter(membership: FamilyMember) -> None:
+    """Gate the family-only surfaces (funds, capsules, goals, legacy) that a
+    supporter must never reach."""
+    if membership.role == FamilyRole.supporter:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "This is shared with family members only"
         )
 
 

@@ -2,9 +2,17 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, status
 
-from ..deps import CurrentUser, DbSession, get_active_membership
-from ..models import LegacyItem, MediaObject, MediaStatus
+from ..config import settings
+from ..deps import (
+    CurrentUser,
+    DbSession,
+    get_active_membership,
+    require_not_supporter,
+)
+from ..models import Family, LegacyItem, MediaObject, MediaStatus
 from ..schemas import LegacyCreate, LegacyOut, MediaCreate, MediaUploadTicket
+from ..services.email_templates import render_email
+from ..services.notifications import notify_members
 from ..services.storage import get_storage
 
 router = APIRouter(tags=["legacy"])
@@ -33,7 +41,8 @@ def create_family_media(
 ) -> MediaUploadTicket:
     """Family-scoped media for the legacy archive (child media stays under
     /children/{id}/media)."""
-    get_active_membership(db, family_id, user)
+    membership = get_active_membership(db, family_id, user)
+    require_not_supporter(membership)
     media = MediaObject(
         family_id=family_id,
         storage_key=str(uuid.uuid4()),
@@ -53,8 +62,10 @@ def create_family_media(
 def add_legacy_item(
     family_id: uuid.UUID, payload: LegacyCreate, db: DbSession, user: CurrentUser
 ) -> LegacyOut:
-    """Every family member can add to the archive — heritage is everyone's."""
-    get_active_membership(db, family_id, user)
+    """Every family member (but not a supporter) can add to the archive —
+    heritage is the family's."""
+    membership = get_active_membership(db, family_id, user)
+    require_not_supporter(membership)
     if not payload.body and not payload.media_id:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -75,12 +86,39 @@ def add_legacy_item(
     )
     db.add(item)
     db.commit()
+
+    # Legacy notifications are off by default (email_legacy).
+    family = db.get(Family, family_id)
+    archive_url = f"{settings.web_base_url}/family/{family_id}/legacy"
+    notify_members(
+        db,
+        family_id,
+        "email_legacy",
+        subject=f"A new story in {family.name}'s legacy archive",
+        body=(
+            f"Hello,\n\n"
+            f"A new piece was just added to your family's legacy archive:\n\n"
+            f"  {item.title}\n\n"
+            f"Read it here: {archive_url}\n\n"
+            f"With warmth,\nThe FutureRoots team"
+        ),
+        html=render_email(
+            preheader="A new story was added to your family's legacy archive.",
+            greeting="Hello,",
+            paragraphs=["A new piece was just added to your family's legacy archive."],
+            highlight=item.title,
+            cta_label="Read it in the archive",
+            cta_url=archive_url,
+        ),
+        exclude_user_id=user.id,
+    )
     return _legacy_out(item)
 
 
 @router.get("/families/{family_id}/legacy", response_model=list[LegacyOut])
 def list_legacy(family_id: uuid.UUID, db: DbSession, user: CurrentUser) -> list[LegacyOut]:
-    get_active_membership(db, family_id, user)
+    membership = get_active_membership(db, family_id, user)
+    require_not_supporter(membership)
     items = (
         db.query(LegacyItem)
         .filter(LegacyItem.family_id == family_id)

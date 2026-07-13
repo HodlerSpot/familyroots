@@ -4,31 +4,44 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request, status
 
 from ..config import settings
-from ..deps import CurrentUser, DbSession, get_active_membership, get_child_with_access
+from ..deps import (
+    CurrentUser,
+    DbSession,
+    get_active_membership,
+    get_child_with_access,
+    is_supporter,
+    require_guardian_role,
+    require_not_supporter,
+)
 from ..models import (
+    CapsuleStatus,
     Child,
     Family,
-    FamilyMember,
+    FamilyRole,
     FeedEventType,
     MediaObject,
     MediaStatus,
-    MemberStatus,
+    TimeCapsule,
     User,
     VaultItem,
     VaultItemType,
 )
 from ..schemas import (
+    ChildAvatarSet,
+    ChildOut,
     MediaCreate,
     MediaUploadTicket,
     MilestoneCreate,
     VaultItemCreate,
     VaultItemOut,
+    VaultItemVisibilityUpdate,
 )
 from ..security import decode_access_token
-from ..services.email import get_email_sender
 from ..services.email_templates import render_email
 from ..services.feed import emit
+from ..services.notifications import notify_members
 from ..services.storage import get_storage
+from .children import child_out
 
 router = APIRouter(tags=["vault"])
 
@@ -56,6 +69,7 @@ def _vault_item_out(item: VaultItem) -> VaultItemOut:
         body=item.body,
         media_id=item.media_id,
         media_content_type=item.media.content_type if item.media else None,
+        visible_to_supporters=item.visible_to_supporters,
         created_by_name=item.author.display_name,
         created_at=item.created_at,
     )
@@ -146,10 +160,43 @@ def download_media(media_id: uuid.UUID, db: DbSession, token: str | None = None)
     media = db.get(MediaObject, media_id)
     if media is None or media.status != MediaStatus.uploaded:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
+
+    # A sealed capsule's attachment is for its creator's eyes only — never
+    # fetchable by anyone else, even with a direct media URL.
+    sealed_capsule = (
+        db.query(TimeCapsule)
+        .filter(
+            TimeCapsule.media_id == media.id,
+            TimeCapsule.status == CapsuleStatus.sealed,
+        )
+        .first()
+    )
+    if sealed_capsule is not None and sealed_capsule.created_by != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
+
     if media.child_id is not None:
-        get_child_with_access(db, media.child_id, user)
+        child, membership = get_child_with_access(db, media.child_id, user)
+        if is_supporter(membership.role):
+            # A supporter may fetch only a child's avatar or media attached to a
+            # memory/milestone explicitly shared with supporters — never anything
+            # else, even holding a direct media id (e.g. after it was un-shared).
+            is_avatar = child.avatar_media_id == media.id
+            shared_item = (
+                db.query(VaultItem)
+                .filter(
+                    VaultItem.media_id == media.id,
+                    VaultItem.visible_to_supporters.is_(True),
+                    VaultItem.deleted_at.is_(None),
+                )
+                .first()
+            )
+            if not is_avatar and shared_item is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
     elif media.family_id is not None:
-        get_active_membership(db, media.family_id, user)
+        membership = get_active_membership(db, media.family_id, user)
+        # Family/legacy media is entirely off-limits to supporters.
+        if is_supporter(membership.role):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
     elif media.tester_id is not None:
         # testnet bug-report screenshot: viewable only by the tester who uploaded it
         if media.uploaded_by != user.id:
@@ -170,8 +217,11 @@ def download_media(media_id: uuid.UUID, db: DbSession, token: str | None = None)
 def add_vault_item(
     child_id: uuid.UUID, payload: VaultItemCreate, db: DbSession, user: CurrentUser
 ) -> VaultItemOut:
-    """Any family member may add memories — that's the point of FutureRoots."""
-    child, _ = get_child_with_access(db, child_id, user)
+    """Any family member may add memories — that's the point of FutureRoots.
+    Supporters are guests, not contributors: they can view what's shared but
+    not add to a child's vault."""
+    child, membership = get_child_with_access(db, child_id, user)
+    require_not_supporter(membership)
 
     if payload.media_id is not None:
         media = db.get(MediaObject, payload.media_id)
@@ -203,19 +253,85 @@ def add_vault_item(
         },
     )
     db.commit()
+
+    # New-memory notifications are off by default (email_memory) — a gentle
+    # nudge only for family who have opted in.
+    family_url = f"{settings.web_base_url}/family/{child.family_id}/child/{child.id}"
+    notify_members(
+        db,
+        child.family_id,
+        "email_memory",
+        subject=f"A new memory for {child.first_name}",
+        body=(
+            f"Hello,\n\n"
+            f"A new memory was just added to {child.first_name}'s vault:\n\n"
+            f"  {item.title}\n\n"
+            f"See it on the family feed: {family_url}\n\n"
+            f"With warmth,\nThe FutureRoots team"
+        ),
+        html=render_email(
+            preheader=f"A new memory was added to {child.first_name}'s vault.",
+            greeting="Hello,",
+            paragraphs=[
+                f"A new memory was just added to {child.first_name}'s vault."
+            ],
+            highlight=item.title,
+            cta_label="See it on the family feed",
+            cta_url=family_url,
+        ),
+        exclude_user_id=user.id,
+    )
     return _vault_item_out(item)
 
 
 @router.get("/children/{child_id}/vault", response_model=list[VaultItemOut])
 def list_vault(child_id: uuid.UUID, db: DbSession, user: CurrentUser) -> list[VaultItemOut]:
-    get_child_with_access(db, child_id, user)
-    items = (
-        db.query(VaultItem)
-        .filter(VaultItem.child_id == child_id, VaultItem.deleted_at.is_(None))
-        .order_by(VaultItem.created_at.desc())
-        .all()
+    _, membership = get_child_with_access(db, child_id, user)
+    query = db.query(VaultItem).filter(
+        VaultItem.child_id == child_id, VaultItem.deleted_at.is_(None)
     )
+    if membership.role == FamilyRole.supporter:
+        # Supporters see only items a parent has explicitly shared with them.
+        query = query.filter(VaultItem.visible_to_supporters.is_(True))
+    items = query.order_by(VaultItem.created_at.desc()).all()
     return [_vault_item_out(i) for i in items]
+
+
+@router.patch("/vault-items/{item_id}/visibility", response_model=VaultItemOut)
+def set_vault_item_visibility(
+    item_id: uuid.UUID,
+    payload: VaultItemVisibilityUpdate,
+    db: DbSession,
+    user: CurrentUser,
+) -> VaultItemOut:
+    """Any parent decides what supporters can see, item by item."""
+    item = db.get(VaultItem, item_id)
+    if item is None or item.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found")
+    _, membership = get_child_with_access(db, item.child_id, user)
+    if membership.role != FamilyRole.parent:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Only a parent can change who sees this"
+        )
+    item.visible_to_supporters = payload.visible
+    db.commit()
+    return _vault_item_out(item)
+
+
+@router.post("/children/{child_id}/avatar", response_model=ChildOut)
+def set_child_avatar(
+    child_id: uuid.UUID, payload: ChildAvatarSet, db: DbSession, user: CurrentUser
+) -> ChildOut:
+    """Set a child's headshot from an already-uploaded, child-scoped image.
+    Child-critical, so parent/guardian only (not supporters)."""
+    child, membership = get_child_with_access(db, child_id, user)
+    require_guardian_role(membership)
+    media = db.get(MediaObject, payload.media_id)
+    if media is None or media.child_id != child_id or media.status != MediaStatus.uploaded:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Media not ready")
+    child.avatar_media_id = media.id
+    db.commit()
+    return child_out(db, child)
 
 
 # --- milestones ---
@@ -230,7 +346,8 @@ def post_milestone(
 ) -> VaultItemOut:
     """A milestone lands in the vault, on the feed, and in the family's inboxes —
     this notification is what brings grandparents to the door."""
-    child, _ = get_child_with_access(db, child_id, user)
+    child, membership = get_child_with_access(db, child_id, user)
+    require_not_supporter(membership)
 
     if payload.media_id is not None:
         media = db.get(MediaObject, payload.media_id)
@@ -263,47 +380,39 @@ def post_milestone(
     )
     db.commit()
 
-    # Notify every other active family member
-    recipients = (
-        db.query(User)
-        .join(FamilyMember, FamilyMember.user_id == User.id)
-        .filter(
-            FamilyMember.family_id == child.family_id,
-            FamilyMember.status == MemberStatus.active,
-            User.id != user.id,
-        )
-        .all()
-    )
-    sender = get_email_sender()
+    # Notify every other active family member who wants milestone emails
+    # (on by default — this is the nudge that brings grandparents to the door).
     family_url = f"{settings.web_base_url}/family/{child.family_id}"
     contribute_url = f"{family_url}/child/{child.id}/contribute"
     highlight = payload.title + (f"\n{payload.description}" if payload.description else "")
-    for recipient in recipients:
-        sender.send(
-            to=recipient.email,
-            subject=f"🎉 {child.first_name}: {payload.title}",
-            body=(
-                f"Hi {recipient.display_name},\n\n"
-                f"Wonderful news from your family: {child.first_name} just reached a "
-                f"milestone.\n\n"
-                f"  {payload.title}\n"
-                + (f"  {payload.description}\n" if payload.description else "")
-                + f"\nCelebrate with a gift to {child.first_name}'s future: {contribute_url}\n"
-                f"Share in the moment on the family feed: {family_url}\n\n"
-                f"With warmth,\nThe FutureRoots team"
-            ),
-            html=render_email(
-                preheader=f"{child.first_name} just reached a milestone. Come celebrate!",
-                greeting=f"Hi {recipient.display_name},",
-                paragraphs=[
-                    f"Wonderful news from your family: {child.first_name} just "
-                    f"reached a milestone."
-                ],
-                highlight=highlight,
-                cta_label=f"Celebrate with a gift to {child.first_name}'s future",
-                cta_url=contribute_url,
-                secondary_label="Share in the moment on the family feed",
-                secondary_url=family_url,
-            ),
-        )
+    notify_members(
+        db,
+        child.family_id,
+        "email_milestone",
+        subject=f"🎉 {child.first_name}: {payload.title}",
+        body=(
+            f"Hi there,\n\n"
+            f"Wonderful news from your family: {child.first_name} just reached a "
+            f"milestone.\n\n"
+            f"  {payload.title}\n"
+            + (f"  {payload.description}\n" if payload.description else "")
+            + f"\nCelebrate with a gift to {child.first_name}'s future: {contribute_url}\n"
+            f"Share in the moment on the family feed: {family_url}\n\n"
+            f"With warmth,\nThe FutureRoots team"
+        ),
+        html=render_email(
+            preheader=f"{child.first_name} just reached a milestone. Come celebrate!",
+            greeting="Hi there,",
+            paragraphs=[
+                f"Wonderful news from your family: {child.first_name} just "
+                f"reached a milestone."
+            ],
+            highlight=highlight,
+            cta_label=f"Celebrate with a gift to {child.first_name}'s future",
+            cta_url=contribute_url,
+            secondary_label="Share in the moment on the family feed",
+            secondary_url=family_url,
+        ),
+        exclude_user_id=user.id,
+    )
     return _vault_item_out(item)

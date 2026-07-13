@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api, ApiError, getToken, LegacyOut, LegacyType, mediaUrl } from "@/lib/api";
 import { familyPhrase } from "@/lib/text";
-import { Button, Card, ErrorNote, Input, Label } from "@/components/ui";
+import { Button, Card, ErrorNote, Input, Label, ZoomableImage } from "@/components/ui";
 
 const TYPE_META: Record<LegacyType, { icon: string; label: string; prompt: string }> = {
   story: { icon: "📖", label: "Story", prompt: "Tell a story from the old days" },
@@ -22,9 +22,7 @@ export default function LegacyPage() {
   const [items, setItems] = useState<LegacyOut[] | null>(null);
   const [familyName, setFamilyName] = useState("");
   const [error, setError] = useState("");
-  const [showForm, setShowForm] = useState(false);
   const [presetType, setPresetType] = useState<LegacyType>("story");
-  const autoOpened = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -34,11 +32,6 @@ export default function LegacyPage() {
       ]);
       setItems(legacy);
       setFamilyName(family.name);
-      // First visit with an empty archive: open the form so it's inviting, not blank
-      if (legacy.length === 0 && !autoOpened.current) {
-        autoOpened.current = true;
-        setShowForm(true);
-      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) router.replace("/login");
       else setError(err instanceof ApiError ? err.message : "Couldn't load the archive");
@@ -47,7 +40,6 @@ export default function LegacyPage() {
 
   function startAdd(type: LegacyType) {
     setPresetType(type);
-    setShowForm(true);
   }
 
   useEffect(() => {
@@ -67,35 +59,18 @@ export default function LegacyPage() {
         <a href={`/family/${familyId}`} className="text-sm text-stone-500 underline">
           ← Back to the family
         </a>
-        <div className="mt-2 flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-emerald-900">Legacy archive 🌳</h1>
-            <p className="text-stone-600">
-              {familyName
-                ? `The story of ${familyPhrase(familyName)}.`
-                : "Your family story."}{" "}
-              Recipes, wisdom, and history, kept for every generation.
-            </p>
-          </div>
-          <Button onClick={() => setShowForm((v) => !v)}>
-            {showForm ? "Close" : "+ Add"}
-          </Button>
+        <div className="mt-2">
+          <h1 className="text-3xl font-bold text-emerald-900">Legacy archive 🌳</h1>
+          <p className="mt-2 text-stone-600">
+            {familyName
+              ? `The story of ${familyPhrase(familyName)}.`
+              : "Your family story."}{" "}
+            Recipes, wisdom, and history, kept for every generation.
+          </p>
         </div>
       </div>
 
-      {showForm && (
-        <LegacyForm
-          key={presetType}
-          familyId={familyId}
-          initialType={presetType}
-          onAdded={() => {
-            setShowForm(false);
-            load();
-          }}
-        />
-      )}
-
-      {/* Inspiration prompts: one tap opens the form pre-set to that kind. Shown
+      {/* Inspiration prompts: one tap points the form at that kind. Shown
           prominently when the archive is empty, as a quiet strip once it has items. */}
       {items.length === 0 ? (
         <Card className="bg-gradient-to-br from-emerald-50 to-blue-50">
@@ -137,6 +112,13 @@ export default function LegacyPage() {
         </div>
       )}
 
+      <LegacyForm
+        key={presetType}
+        familyId={familyId}
+        initialType={presetType}
+        onAdded={load}
+      />
+
       <div className="grid gap-4 sm:grid-cols-2">
         {items.map((item) => (
           <Card key={item.id}>
@@ -152,8 +134,7 @@ export default function LegacyPage() {
                   <p className="mt-2 whitespace-pre-wrap text-sm text-stone-700">{item.body}</p>
                 )}
                 {item.media_id && item.media_content_type?.startsWith("image/") && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                  <ZoomableImage
                     src={mediaUrl(item.media_id)}
                     alt={item.title}
                     className="mt-3 max-h-64 rounded-xl object-cover"
@@ -216,6 +197,7 @@ function LegacyForm({
 
   return (
     <Card>
+      <h2 className="mb-4 text-lg font-semibold text-emerald-900">Add to the archive</h2>
       <form onSubmit={submit} className="space-y-3">
         <div className="grid gap-3 sm:grid-cols-2">
           <div>

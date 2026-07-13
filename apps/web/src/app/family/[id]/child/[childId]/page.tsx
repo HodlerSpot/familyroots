@@ -7,6 +7,7 @@ import {
   ApiError,
   BadgeOut,
   CapsuleOut,
+  FamilyRole,
   formatMoney,
   FundOut,
   getToken,
@@ -14,7 +15,7 @@ import {
   mediaUrl,
   VaultItemOut,
 } from "@/lib/api";
-import { Button, Card, ErrorNote, Input, Label } from "@/components/ui";
+import { Button, Card, ErrorNote, Input, Label, ZoomableImage } from "@/components/ui";
 import { CapsulesSection } from "@/components/capsules";
 
 const TYPE_ICONS: Record<string, string> = {
@@ -31,36 +32,40 @@ export default function ChildVaultPage() {
   const { id: familyId, childId } = useParams<{ id: string; childId: string }>();
   const [items, setItems] = useState<VaultItemOut[] | null>(null);
   const [childName, setChildName] = useState("");
+  const [avatarMediaId, setAvatarMediaId] = useState<string | null>(null);
   const [fund, setFund] = useState<FundOut | null>(null);
   const [goals, setGoals] = useState<GoalOut[]>([]);
   const [badges, setBadges] = useState<BadgeOut[]>([]);
   const [capsules, setCapsules] = useState<CapsuleOut[]>([]);
-  const [isParent, setIsParent] = useState(false);
+  const [myRole, setMyRole] = useState<FamilyRole | null>(null);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     try {
-      const [vault, family, me, fundData, goalsData, badgesData, capsulesData] =
-        await Promise.all([
-          api.listVault(childId),
-          api.familyDetail(familyId),
-          api.me(),
+      const [family, me] = await Promise.all([api.familyDetail(familyId), api.me()]);
+      const child = family.children.find((c) => c.id === childId);
+      setChildName(child?.first_name ?? "");
+      setAvatarMediaId(child?.avatar_media_id ?? null);
+      const role = family.members.find((m) => m.user.id === me.id)?.role ?? null;
+      setMyRole(role);
+
+      const vault = await api.listVault(childId);
+      setItems(vault);
+
+      // Supporters only see the shared memories list + the chance to contribute;
+      // the fund, goals, badges and capsules stay within the guardians' circle.
+      if (role !== "supporter") {
+        const [fundData, goalsData, badgesData, capsulesData] = await Promise.all([
           api.childFund(childId),
           api.listGoals(childId),
           api.listBadges(childId),
           api.listCapsules(childId),
         ]);
-      setItems(vault);
-      setChildName(family.children.find((c) => c.id === childId)?.first_name ?? "");
-      setFund(fundData);
-      setGoals(goalsData);
-      setBadges(badgesData);
-      setCapsules(capsulesData);
-      setIsParent(
-        family.members.some(
-          (m) => ["parent", "guardian"].includes(m.role) && m.user.email === me.email
-        )
-      );
+        setFund(fundData);
+        setGoals(goalsData);
+        setBadges(badgesData);
+        setCapsules(capsulesData);
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) router.replace("/login");
       else setError(err instanceof ApiError ? err.message : "Couldn't load this vault");
@@ -75,8 +80,22 @@ export default function ChildVaultPage() {
     load();
   }, [router, load]);
 
+  async function toggleVisibility(item: VaultItemOut) {
+    setError("");
+    try {
+      const updated = await api.setVaultVisibility(item.id, !item.visible_to_supporters);
+      setItems((prev) => (prev ? prev.map((i) => (i.id === item.id ? updated : i)) : prev));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't update sharing");
+    }
+  }
+
   if (error) return <ErrorNote>{error}</ErrorNote>;
   if (items === null) return <p className="text-stone-500">Loading…</p>;
+
+  const isSupporter = myRole === "supporter";
+  const isParent = myRole === "parent";
+  const canManage = myRole === "parent" || myRole === "guardian";
 
   return (
     <div className="space-y-8">
@@ -84,82 +103,132 @@ export default function ChildVaultPage() {
         <a href={`/family/${familyId}`} className="text-sm text-stone-500 underline">
           ← Back to the family
         </a>
-        <h1 className="mt-2 text-3xl font-bold text-emerald-900">
-          {childName ? `${childName}'s vault` : "Vault"} 🌱
-        </h1>
-        <p className="text-stone-600">
-          Every memory added here stays with {childName || "them"} for life.
-        </p>
+        <div className="mt-2 flex items-center gap-4">
+          {avatarMediaId ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={mediaUrl(avatarMediaId)}
+              alt={childName || "Child"}
+              className="h-14 w-14 shrink-0 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xl font-bold text-emerald-800">
+              {(childName || "?").charAt(0).toUpperCase()}
+            </div>
+          )}
+          <div>
+            <h1 className="text-3xl font-bold text-emerald-900">
+              {childName ? `${childName}'s vault` : "Vault"}
+            </h1>
+            <p className="text-stone-600">
+              Every memory added here stays with {childName || "them"} for life.
+            </p>
+          </div>
+        </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Card className="flex flex-col justify-between bg-emerald-50/50">
+      {isSupporter ? (
+        <Card className="flex flex-col items-start gap-3 bg-emerald-50/50 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 className="font-semibold text-emerald-900">🌳 Future fund</h3>
-            <p className="mt-2 text-3xl font-bold text-emerald-900">
-              {fund ? formatMoney(fund.balance_cents, fund.currency) : "…"}
-            </p>
-            <p className="text-sm text-stone-500">
-              {fund && fund.entries.length > 0
-                ? `${fund.entries.length} gift${fund.entries.length === 1 ? "" : "s"} from the family`
-                : "The first gift starts the journey"}
+            <h3 className="font-semibold text-emerald-900">🌳 Give a gift that grows</h3>
+            <p className="text-sm text-stone-600">
+              Add to {childName || "their"} future and be part of the journey.
             </p>
           </div>
           <Button
-            className="mt-4 w-full"
+            className="w-full sm:w-auto"
             onClick={() => router.push(`/family/${familyId}/child/${childId}/contribute`)}
           >
-            Add to {childName ? `${childName}'s` : "their"} future
+            Contribute to {childName ? `${childName}'s` : "their"} future
           </Button>
         </Card>
-        <Card>
-          <h3 className="font-semibold text-emerald-900">🏅 Badges</h3>
-          {badges.length === 0 ? (
-            <p className="mt-2 text-sm text-stone-500">
-              Badges appear when {childName || "they"} complete{childName ? "s" : ""} goals.
-            </p>
-          ) : (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {badges.map((b) => (
-                <span
-                  key={b.id}
-                  className="rounded-full bg-amber-50 px-3 py-1 text-sm text-amber-900"
-                  title={new Date(b.awarded_at).toLocaleDateString()}
-                >
-                  {b.icon} {b.label}
-                </span>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
+      ) : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Card className="flex flex-col justify-between bg-emerald-50/50">
+              <div>
+                <h3 className="font-semibold text-emerald-900">🌳 Future fund</h3>
+                <p className="mt-2 text-3xl font-bold text-emerald-900">
+                  {fund ? formatMoney(fund.balance_cents, fund.currency) : "…"}
+                </p>
+                <p className="text-sm text-stone-500">
+                  {fund && fund.entries.length > 0
+                    ? `${fund.entries.length} gift${fund.entries.length === 1 ? "" : "s"} from the family`
+                    : "The first gift starts the journey"}
+                </p>
+              </div>
+              <Button
+                className="mt-4 w-full"
+                onClick={() => router.push(`/family/${familyId}/child/${childId}/contribute`)}
+              >
+                Add to {childName ? `${childName}'s` : "their"} future
+              </Button>
+            </Card>
+            <Card>
+              <h3 className="font-semibold text-emerald-900">🏅 Badges</h3>
+              {badges.length === 0 ? (
+                <p className="mt-2 text-sm text-stone-500">
+                  Badges appear when {childName || "they"} complete{childName ? "s" : ""} goals.
+                </p>
+              ) : (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {badges.map((b) => (
+                    <span
+                      key={b.id}
+                      className="rounded-full bg-amber-50 px-3 py-1 text-sm text-amber-900"
+                      title={new Date(b.awarded_at).toLocaleDateString()}
+                    >
+                      {b.icon} {b.label}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
 
-      <GoalsSection
-        childId={childId}
-        childName={childName}
-        goals={goals}
-        isParent={isParent}
-        onChanged={load}
-      />
+          <GoalsSection
+            childId={childId}
+            childName={childName}
+            goals={goals}
+            isParent={canManage}
+            onChanged={load}
+          />
 
-      <CapsulesSection
-        childId={childId}
-        childName={childName}
-        capsules={capsules}
-        isParent={isParent}
-        onChanged={load}
-      />
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <MilestoneForm childId={childId} onPosted={load} childName={childName} />
-        <MemoryForm childId={childId} onAdded={load} childName={childName} />
-      </div>
+          <CapsulesSection
+            childId={childId}
+            childName={childName}
+            capsules={capsules}
+            goals={goals}
+            onChanged={load}
+          />
+        </>
+      )}
 
       <section className="space-y-3">
         <h2 className="text-xl font-semibold text-stone-800">Memories & milestones</h2>
+
+        {!isSupporter && (
+          <div className="grid gap-4 md:grid-cols-2">
+            <MilestoneForm
+              childId={childId}
+              onPosted={load}
+              childName={childName}
+              showSupporterOptIn={isParent}
+            />
+            <MemoryForm
+              childId={childId}
+              onAdded={load}
+              childName={childName}
+              showSupporterOptIn={isParent}
+            />
+          </div>
+        )}
+
         {items.length === 0 && (
           <p className="text-stone-600">
-            The vault is empty. Share the first memory above.
+            {isSupporter
+              ? "No memories have been shared with you yet."
+              : "The vault is empty. Share the first memory above."}
           </p>
         )}
         <div className="space-y-3">
@@ -170,8 +239,7 @@ export default function ChildVaultPage() {
                 <h3 className="font-semibold text-stone-900">{item.title}</h3>
                 {item.body && <p className="mt-1 text-sm text-stone-600">{item.body}</p>}
                 {item.media_id && item.media_content_type?.startsWith("image/") && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                  <ZoomableImage
                     src={mediaUrl(item.media_id)}
                     alt={item.title}
                     className="mt-3 max-h-72 rounded-xl object-cover"
@@ -181,6 +249,22 @@ export default function ChildVaultPage() {
                   Added by {item.created_by_name} ·{" "}
                   {new Date(item.created_at).toLocaleDateString()}
                 </p>
+                {!isSupporter && item.visible_to_supporters && (
+                  <span className="mt-2 inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-800">
+                    Shared with supporters
+                  </span>
+                )}
+                {isParent && (
+                  <label className="mt-2 flex items-center gap-2 text-xs text-stone-500">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-emerald-700"
+                      checked={item.visible_to_supporters}
+                      onChange={() => toggleVisibility(item)}
+                    />
+                    Visible to supporters
+                  </label>
+                )}
               </div>
             </Card>
           ))}
@@ -350,14 +434,17 @@ function GoalsSection({
 function MilestoneForm({
   childId,
   childName,
+  showSupporterOptIn,
   onPosted,
 }: {
   childId: string;
   childName: string;
+  showSupporterOptIn: boolean;
   onPosted: () => void;
 }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [shareWithSupporters, setShareWithSupporters] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -369,9 +456,17 @@ function MilestoneForm({
     try {
       const file = fileRef.current?.files?.[0];
       const media_id = file ? await api.uploadMedia(childId, file) : undefined;
-      await api.postMilestone(childId, { title, description: description || undefined, media_id });
+      const created = await api.postMilestone(childId, {
+        title,
+        description: description || undefined,
+        media_id,
+      });
+      if (showSupporterOptIn && shareWithSupporters) {
+        await api.setVaultVisibility(created.id, true);
+      }
       setTitle("");
       setDescription("");
+      setShareWithSupporters(false);
       if (fileRef.current) fileRef.current.value = "";
       onPosted();
     } catch (err) {
@@ -385,7 +480,7 @@ function MilestoneForm({
     <Card>
       <h3 className="mb-1 font-semibold text-emerald-900">🎉 Celebrate a milestone</h3>
       <p className="mb-4 text-sm text-stone-500">
-        The whole family gets the good news by email.
+        Everyone in your family will see it on the family feed.
       </p>
       <form onSubmit={submit} className="space-y-3">
         <div>
@@ -410,6 +505,17 @@ function MilestoneForm({
           <Label htmlFor="mphoto">Add a photo (optional)</Label>
           <input id="mphoto" ref={fileRef} type="file" accept="image/*" className="text-sm" />
         </div>
+        {showSupporterOptIn && (
+          <label className="flex items-center gap-2 text-sm text-stone-600">
+            <input
+              type="checkbox"
+              className="h-5 w-5 accent-emerald-700"
+              checked={shareWithSupporters}
+              onChange={(e) => setShareWithSupporters(e.target.checked)}
+            />
+            Allow supporters to see this
+          </label>
+        )}
         <ErrorNote>{error}</ErrorNote>
         <Button type="submit" disabled={busy} className="w-full">
           {busy ? "Sharing…" : "Share the news"}
@@ -422,14 +528,17 @@ function MilestoneForm({
 function MemoryForm({
   childId,
   childName,
+  showSupporterOptIn,
   onAdded,
 }: {
   childId: string;
   childName: string;
+  showSupporterOptIn: boolean;
   onAdded: () => void;
 }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [shareWithSupporters, setShareWithSupporters] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -441,14 +550,18 @@ function MemoryForm({
     try {
       const file = fileRef.current?.files?.[0];
       const media_id = file ? await api.uploadMedia(childId, file) : undefined;
-      await api.addVaultItem(childId, {
+      const created = await api.addVaultItem(childId, {
         type: file ? "photo" : "message",
         title,
         body: body || undefined,
         media_id,
       });
+      if (showSupporterOptIn && shareWithSupporters) {
+        await api.setVaultVisibility(created.id, true);
+      }
       setTitle("");
       setBody("");
+      setShareWithSupporters(false);
       if (fileRef.current) fileRef.current.value = "";
       onAdded();
     } catch (err) {
@@ -483,8 +596,19 @@ function MemoryForm({
           <Label htmlFor="vphoto">Photo (optional)</Label>
           <input id="vphoto" ref={fileRef} type="file" accept="image/*" className="text-sm" />
         </div>
+        {showSupporterOptIn && (
+          <label className="flex items-center gap-2 text-sm text-stone-600">
+            <input
+              type="checkbox"
+              className="h-5 w-5 accent-emerald-700"
+              checked={shareWithSupporters}
+              onChange={(e) => setShareWithSupporters(e.target.checked)}
+            />
+            Allow supporters to see this
+          </label>
+        )}
         <ErrorNote>{error}</ErrorNote>
-        <Button type="submit" disabled={busy} variant="soft" className="w-full">
+        <Button type="submit" disabled={busy} className="w-full">
           {busy ? "Saving…" : "Save to the vault"}
         </Button>
       </form>

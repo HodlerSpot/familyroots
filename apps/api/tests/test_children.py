@@ -1,4 +1,54 @@
 from .conftest import add_child, create_family, signup
+from .test_vault import upload_photo
+
+
+def test_set_child_avatar(client):
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    child_id = add_child(client, parent, family_id, "Emma")
+    media_id = upload_photo(client, parent, child_id)
+
+    r = client.post(
+        f"/children/{child_id}/avatar", json={"media_id": media_id}, headers=parent
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["avatar_media_id"] == media_id
+    assert r.json()["avatar_content_type"] == "image/png"
+
+    # It surfaces wherever the child is serialized
+    detail = client.get(f"/families/{family_id}", headers=parent).json()
+    assert detail["children"][0]["avatar_media_id"] == media_id
+    assert detail["children"][0]["avatar_content_type"] == "image/png"
+    listed = client.get(f"/families/{family_id}/children", headers=parent).json()
+    assert listed[0]["avatar_content_type"] == "image/png"
+
+
+def test_avatar_rejects_foreign_media(client):
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    emma = add_child(client, parent, family_id, "Emma")
+    liam = add_child(client, parent, family_id, "Liam")
+    media_id = upload_photo(client, parent, emma)  # scoped to Emma
+
+    r = client.post(
+        f"/children/{liam}/avatar", json={"media_id": media_id}, headers=parent
+    )
+    assert r.status_code == 422
+
+
+def test_grandparent_cannot_set_avatar(client):
+    from .test_goals import make_grandparent
+
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    child_id = add_child(client, parent, family_id, "Emma")
+    media_id = upload_photo(client, parent, child_id)
+    gran = make_grandparent(client, parent, family_id, name="Gran")
+
+    r = client.post(
+        f"/children/{child_id}/avatar", json={"media_id": media_id}, headers=gran
+    )
+    assert r.status_code == 403
 
 
 def test_parent_adds_child_with_consent(client):

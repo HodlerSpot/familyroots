@@ -20,6 +20,7 @@ from ..schemas import FamilySummary, InviteAccept, InviteCreate, InviteOut, Invi
 from ..services.email import get_email_sender
 from ..services.email_templates import render_email
 from ..services.feed import emit
+from ..services.notifications import notify_members
 from ..services.text import family_phrase
 from ..testnet.service import award
 
@@ -176,4 +177,32 @@ def accept_invite(payload: InviteAccept, db: DbSession, user: CurrentUser) -> Fa
         payload={"member_name": user.display_name, "role": invite.role.value},
     )
     db.commit()
+
+    # Welcome the new arrival to everyone already here (on by default).
+    family = family_phrase(invite.family.name)
+    family_url = f"{settings.web_base_url}/family/{invite.family_id}"
+    notify_members(
+        db,
+        invite.family_id,
+        "email_new_member",
+        subject=f"{user.display_name} joined {family} on FutureRoots",
+        body=(
+            f"Hello,\n\n"
+            f"{user.display_name} just joined {family} on FutureRoots. "
+            f"There's a new face to share memories and milestones with.\n\n"
+            f"See who's here: {family_url}\n\n"
+            f"With warmth,\nThe FutureRoots team"
+        ),
+        html=render_email(
+            preheader=f"{user.display_name} just joined {family} on FutureRoots.",
+            greeting="Hello,",
+            paragraphs=[
+                f"{user.display_name} just joined {family} on FutureRoots. "
+                f"There's a new face to share memories and milestones with."
+            ],
+            cta_label="See who's here",
+            cta_url=family_url,
+        ),
+        exclude_user_id=user.id,
+    )
     return FamilySummary(id=invite.family_id, name=invite.family.name, role=invite.role)

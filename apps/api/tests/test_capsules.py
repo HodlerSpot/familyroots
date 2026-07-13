@@ -128,27 +128,37 @@ def test_milestone_capsule_manual_release_permissions(client):
     )
     capsule_id = r.json()["id"]
 
-    # A relative who isn't the creator can't open it
-    r = client.post(f"/capsules/{capsule_id}/release", headers=relative_headers)
-    assert r.status_code == 403
+    # Direct release is creator-only now: neither a relative nor a parent who
+    # didn't seal it can open it directly.
+    assert client.post(f"/capsules/{capsule_id}/release", headers=relative_headers).status_code == 403
+    assert client.post(f"/capsules/{capsule_id}/release", headers=parent).status_code == 403
 
-    # The parent can
-    r = client.post(f"/capsules/{capsule_id}/release", headers=parent)
+    # The creator (Gran) can
+    r = client.post(f"/capsules/{capsule_id}/release", headers=gran)
     assert r.status_code == 200
     assert r.json()["status"] == "released"
     assert r.json()["body"] is not None
 
     # Only once
-    assert client.post(f"/capsules/{capsule_id}/release", headers=parent).status_code == 409
+    assert client.post(f"/capsules/{capsule_id}/release", headers=gran).status_code == 409
 
 
-def test_age_capsule_cannot_be_manually_released(client):
+def test_creator_can_release_any_condition_directly(client):
+    """#7: the creator may open their own capsule directly, whatever the
+    condition — including an age capsule that hasn't come due."""
     parent = signup(client, "parent@example.com")
     family_id = create_family(client, parent)
     child_id = add_child(client, parent, family_id)
     capsule_id = seal_capsule(client, parent, child_id, release_age=18).json()["id"]
 
-    assert client.post(f"/capsules/{capsule_id}/release", headers=parent).status_code == 422
+    r = client.post(f"/capsules/{capsule_id}/release", headers=parent)
+    assert r.status_code == 200
+    assert r.json()["status"] == "released"
+
+    # A non-creator guardian may not force an age capsule open directly.
+    gran = make_grandparent(client, parent, family_id, name="Gran")
+    other = seal_capsule(client, parent, child_id, release_age=18).json()["id"]
+    assert client.post(f"/capsules/{other}/release", headers=gran).status_code == 403
 
 
 def test_capsule_requires_condition_value_and_content(client):

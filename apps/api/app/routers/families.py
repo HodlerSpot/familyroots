@@ -2,10 +2,11 @@ import uuid
 
 from fastapi import APIRouter, status
 
-from ..deps import CurrentUser, DbSession, get_active_membership
+from ..deps import CurrentUser, DbSession, get_active_membership, is_supporter
 from ..models import Family, FamilyMember, FamilyRole, MemberStatus
 from ..schemas import FamilyCreate, FamilyDetail, FamilySummary
 from ..testnet.service import award
+from .children import child_out
 
 router = APIRouter(prefix="/families", tags=["families"])
 
@@ -44,12 +45,13 @@ def my_families(db: DbSession, user: CurrentUser) -> list[FamilySummary]:
 
 @router.get("/{family_id}", response_model=FamilyDetail)
 def family_detail(family_id: uuid.UUID, db: DbSession, user: CurrentUser) -> FamilyDetail:
-    get_active_membership(db, family_id, user)
+    membership = get_active_membership(db, family_id, user)
+    hide = is_supporter(membership.role)
     family = db.get(Family, family_id)
     active_members = [m for m in family.members if m.status == MemberStatus.active]
     return FamilyDetail(
         id=family.id,
         name=family.name,
         members=active_members,
-        children=family.children,
+        children=[child_out(db, c, hide_birthdate=hide) for c in family.children],
     )

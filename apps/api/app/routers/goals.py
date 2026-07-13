@@ -2,14 +2,22 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, status
 
-from ..deps import CurrentUser, DbSession, get_child_with_access, require_guardian_role
+from ..deps import (
+    CurrentUser,
+    DbSession,
+    get_child_with_access,
+    require_guardian_role,
+    require_not_supporter,
+)
 from ..models import (
     Badge,
+    CapsuleStatus,
     FeedEventType,
     Goal,
     GoalCompletion,
     GoalStatus,
     RewardType,
+    TimeCapsule,
 )
 from ..schemas import BadgeOut, GoalComplete, GoalCreate, GoalOut
 from ..services.feed import emit
@@ -58,7 +66,8 @@ def create_goal(
 
 @router.get("/children/{child_id}/goals", response_model=list[GoalOut])
 def list_goals(child_id: uuid.UUID, db: DbSession, user: CurrentUser) -> list[GoalOut]:
-    get_child_with_access(db, child_id, user)
+    _, membership = get_child_with_access(db, child_id, user)
+    require_not_supporter(membership)
     rows = (
         db.query(Goal, GoalCompletion)
         .outerjoin(GoalCompletion, GoalCompletion.goal_id == Goal.id)
@@ -105,13 +114,29 @@ def complete_goal(
             "reward_type": goal.reward_type.value,
         },
     )
+
+    # A goal-linked time capsule unlocks the moment its goal is achieved.
+    from .capsules import _release
+
+    linked_capsules = (
+        db.query(TimeCapsule)
+        .filter(
+            TimeCapsule.release_goal_id == goal.id,
+            TimeCapsule.status == CapsuleStatus.sealed,
+        )
+        .all()
+    )
+    for capsule in linked_capsules:
+        _release(db, capsule, child)
+
     db.commit()
     return _goal_out(goal, completion.completed_at)
 
 
 @router.get("/children/{child_id}/badges", response_model=list[BadgeOut])
 def list_badges(child_id: uuid.UUID, db: DbSession, user: CurrentUser) -> list[BadgeOut]:
-    get_child_with_access(db, child_id, user)
+    _, membership = get_child_with_access(db, child_id, user)
+    require_not_supporter(membership)
     badges = (
         db.query(Badge)
         .filter(Badge.child_id == child_id)

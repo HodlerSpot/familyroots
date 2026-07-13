@@ -1,6 +1,15 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-export type FamilyRole = "parent" | "grandparent" | "relative" | "guardian";
+export type FamilyRole = "parent" | "grandparent" | "relative" | "guardian" | "supporter";
+
+/** Emoji a member can react with on a moment or comment. */
+export const REACTION_EMOJI = ["❤️", "👍", "🎉", "😂", "🥰", "😢"] as const;
+
+export interface ReactionSummary {
+  emoji: string;
+  count: number;
+  reacted: boolean;
+}
 
 export interface UserOut {
   id: string;
@@ -25,7 +34,9 @@ export interface MemberOut {
 export interface ChildOut {
   id: string;
   first_name: string;
-  birthdate: string;
+  birthdate: string | null;
+  avatar_media_id: string | null;
+  avatar_content_type: string | null;
 }
 
 export interface FamilyDetail {
@@ -50,6 +61,7 @@ export interface VaultItemOut {
   body: string | null;
   media_id: string | null;
   media_content_type: string | null;
+  visible_to_supporters: boolean;
   created_by_name: string;
   created_at: string;
 }
@@ -70,6 +82,18 @@ export interface FeedEventOut {
   actor_name: string;
   payload: Record<string, string | number | null>;
   created_at: string;
+  reactions: ReactionSummary[];
+  comment_count: number;
+}
+
+export interface CommentOut {
+  id: string;
+  author_name: string;
+  author_user_id: string;
+  body: string;
+  created_at: string;
+  reactions: ReactionSummary[];
+  can_delete: boolean;
 }
 
 export type RewardType = "cash" | "fund_contribution" | "badge" | "privilege";
@@ -123,7 +147,7 @@ export function formatMoney(cents: number, currency = "USD"): string {
 }
 
 export type CapsuleType = "letter" | "audio" | "video";
-export type ReleaseCondition = "age" | "date" | "milestone";
+export type ReleaseCondition = "age" | "date" | "milestone" | "goal";
 
 export interface CapsuleOut {
   id: string;
@@ -133,12 +157,36 @@ export interface CapsuleOut {
   release_age: number | null;
   release_date: string | null;
   release_milestone: string | null;
+  release_goal_id: string | null;
+  release_goal_title: string | null;
   created_by_name: string;
   is_mine: boolean;
   body: string | null;
   media_id: string | null;
   media_content_type: string | null;
   released_at: string | null;
+  created_at: string;
+  release_votes: number;
+  i_voted: boolean;
+  can_vote: boolean;
+}
+
+export interface NotificationPrefs {
+  email_new_member: boolean;
+  email_milestone: boolean;
+  email_memory: boolean;
+  email_legacy: boolean;
+}
+
+export interface MyContribution {
+  id: string;
+  child_name: string;
+  family_name: string;
+  amount_cents: number;
+  currency: string;
+  status: "pending" | "succeeded" | "failed" | "refunded";
+  refunded_cents: number;
+  message: string | null;
   created_at: string;
 }
 
@@ -257,6 +305,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ first_name, birthdate, parental_consent }),
     }),
+  setChildAvatar: (childId: string, media_id: string) =>
+    request<ChildOut>(`/children/${childId}/avatar`, {
+      method: "POST",
+      body: JSON.stringify({ media_id }),
+    }),
 
   createInvite: (familyId: string, email: string, role: FamilyRole) =>
     request<{ id: string }>(`/families/${familyId}/invites`, {
@@ -288,6 +341,37 @@ export const api = {
       body: JSON.stringify(milestone),
     }),
   familyFeed: (familyId: string) => request<FeedEventOut[]>(`/families/${familyId}/feed`),
+  setVaultVisibility: (itemId: string, visible: boolean) =>
+    request<VaultItemOut>(`/vault-items/${itemId}/visibility`, {
+      method: "PATCH",
+      body: JSON.stringify({ visible }),
+    }),
+
+  // Family Moments — reactions & comments
+  toggleReaction: (target_type: "feed_event" | "comment", target_id: string, emoji: string) =>
+    request<{ reactions: ReactionSummary[] }>(`/reactions`, {
+      method: "POST",
+      body: JSON.stringify({ target_type, target_id, emoji }),
+    }),
+  listComments: (eventId: string) => request<CommentOut[]>(`/feed-events/${eventId}/comments`),
+  addComment: (eventId: string, body: string) =>
+    request<CommentOut>(`/feed-events/${eventId}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }),
+  deleteComment: (commentId: string) =>
+    request<void>(`/comments/${commentId}`, { method: "DELETE" }),
+
+  // Notification preferences (profile)
+  notificationPrefs: () => request<NotificationPrefs>("/me/notifications"),
+  setNotificationPrefs: (prefs: NotificationPrefs) =>
+    request<NotificationPrefs>("/me/notifications", {
+      method: "PUT",
+      body: JSON.stringify(prefs),
+    }),
+
+  // A member's own contribution history
+  myContributions: () => request<MyContribution[]>("/me/contributions"),
 
   listGoals: (childId: string) => request<GoalOut[]>(`/children/${childId}/goals`),
   createGoal: (
@@ -333,6 +417,7 @@ export const api = {
       release_age?: number;
       release_date?: string;
       release_milestone?: string;
+      release_goal_id?: string;
     }
   ) =>
     request<CapsuleOut>(`/children/${childId}/capsules`, {
@@ -341,6 +426,8 @@ export const api = {
     }),
   releaseCapsule: (capsuleId: string) =>
     request<CapsuleOut>(`/capsules/${capsuleId}/release`, { method: "POST" }),
+  voteReleaseCapsule: (capsuleId: string) =>
+    request<CapsuleOut>(`/capsules/${capsuleId}/vote-release`, { method: "POST" }),
 
   listLegacy: (familyId: string) => request<LegacyOut[]>(`/families/${familyId}/legacy`),
   addLegacy: (

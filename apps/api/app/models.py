@@ -28,6 +28,20 @@ class FamilyRole(str, enum.Enum):
     grandparent = "grandparent"
     relative = "relative"
     guardian = "guardian"
+    # A trusted non-family adult (coach, mentor, friend, neighbour). Scoped
+    # down: no legacy archive, no fund figures, no time capsules, no goals —
+    # sees only memories/milestones explicitly shared with supporters.
+    supporter = "supporter"
+
+
+# Roles that hold full family trust (can create children, goals, capsules,
+# see funds and the legacy archive). Everyone who is not a supporter.
+GUARDIAN_ROLES = {
+    FamilyRole.parent,
+    FamilyRole.grandparent,
+    FamilyRole.relative,
+    FamilyRole.guardian,
+}
 
 
 class MemberStatus(str, enum.Enum):
@@ -81,7 +95,13 @@ class CapsuleType(str, enum.Enum):
 class ReleaseCondition(str, enum.Enum):
     age = "age"
     date = "date"
-    milestone = "milestone"
+    milestone = "milestone"  # "at a life moment" — released by creator or 2 guardians
+    goal = "goal"  # unlocks automatically when a linked goal is completed
+
+
+class ReactionTargetType(str, enum.Enum):
+    feed_event = "feed_event"
+    comment = "comment"
 
 
 class CapsuleStatus(str, enum.Enum):
@@ -216,6 +236,10 @@ class Child(Base):
     family_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("families.id"), index=True)
     first_name: Mapped[str] = mapped_column(String(120))
     birthdate: Mapped[date] = mapped_column(Date)
+    # Optional headshot; the media object is child-scoped like any vault media.
+    avatar_media_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("media_objects.id"), nullable=True
+    )
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -261,7 +285,9 @@ class MediaObject(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    child: Mapped[Child | None] = relationship()
+    # child_id is one of two FK paths between children and media_objects (the
+    # other is children.avatar_media_id), so the join column must be explicit.
+    child: Mapped[Child | None] = relationship(foreign_keys=[child_id])
 
 
 class VaultItem(Base):
@@ -277,6 +303,9 @@ class VaultItem(Base):
     )
     title: Mapped[str] = mapped_column(String(200))
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Off by default: supporters (non-family adults) only see items a parent
+    # has explicitly shared with them. Any parent can toggle this at any time.
+    visible_to_supporters: Mapped[bool] = mapped_column(default=False)
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -426,6 +455,10 @@ class TimeCapsule(Base):
     release_age: Mapped[int | None] = mapped_column(nullable=True)
     release_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     release_milestone: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # "Specific goal completion": unlocks when this goal is completed.
+    release_goal_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("goals.id"), nullable=True
+    )
     status: Mapped[CapsuleStatus] = mapped_column(
         Enum(CapsuleStatus, native_enum=False, length=20), default=CapsuleStatus.sealed
     )
@@ -453,6 +486,69 @@ class LegacyItem(Base):
 
     media: Mapped[MediaObject | None] = relationship()
     author: Mapped[User] = relationship()
+
+
+class CapsuleReleaseVote(Base):
+    """A guardian's agreement that a 'life moment' capsule's condition has been
+    met. Two distinct guardian votes (other than the creator) release it; the
+    creator can always release directly. Supporters cannot vote."""
+
+    __tablename__ = "capsule_release_votes"
+    __table_args__ = (UniqueConstraint("capsule_id", "user_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    capsule_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("time_capsules.id"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Comment(Base):
+    """A family member's comment on a feed event (Family Moment)."""
+
+    __tablename__ = "comments"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    feed_event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feed_events.id"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    author: Mapped[User] = relationship()
+
+
+class Reaction(Base):
+    """An emoji reaction on a feed event or a comment. One row per
+    (target, user, emoji); toggling removes the row."""
+
+    __tablename__ = "reactions"
+    __table_args__ = (UniqueConstraint("target_type", "target_id", "user_id", "emoji"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    target_type: Mapped[ReactionTargetType] = mapped_column(
+        Enum(ReactionTargetType, native_enum=False, length=20)
+    )
+    target_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    emoji: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class NotificationPreference(Base):
+    """Per-user email notification switches. A missing row means defaults
+    (milestone + new-member on, memory + legacy off)."""
+
+    __tablename__ = "notification_preferences"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+    email_new_member: Mapped[bool] = mapped_column(default=True)
+    email_milestone: Mapped[bool] = mapped_column(default=True)
+    email_memory: Mapped[bool] = mapped_column(default=False)
+    email_legacy: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class PasswordReset(Base):

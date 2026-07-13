@@ -16,6 +16,7 @@ from .models import (
     LegacyType,
     MediaStatus,
     MemberStatus,
+    ReactionTargetType,
     ReleaseCondition,
     RewardType,
     UserRole,
@@ -94,7 +95,10 @@ class FamilySummary(BaseModel):
 class ChildOut(BaseModel):
     id: uuid.UUID
     first_name: str
-    birthdate: date
+    # Null for supporters: a child's date of birth is sensitive PII they don't need.
+    birthdate: date | None = None
+    avatar_media_id: uuid.UUID | None = None
+    avatar_content_type: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -115,6 +119,10 @@ class ChildCreate(BaseModel):
         description="Explicit confirmation that the requesting parent/guardian "
         "consents to creating this child's profile."
     )
+
+
+class ChildAvatarSet(BaseModel):
+    media_id: uuid.UUID
 
 
 # --- invites ---
@@ -169,14 +177,51 @@ class VaultItemOut(BaseModel):
     body: str | None
     media_id: uuid.UUID | None
     media_content_type: str | None = None
+    visible_to_supporters: bool = False
     created_by_name: str
     created_at: datetime
+
+
+class VaultItemVisibilityUpdate(BaseModel):
+    visible: bool
 
 
 class MilestoneCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=5000)
     media_id: uuid.UUID | None = None
+
+
+# --- reactions & comments ---
+
+class ReactionSummary(BaseModel):
+    emoji: str
+    count: int
+    reacted: bool
+
+
+class ReactionSummaryOut(BaseModel):
+    reactions: list[ReactionSummary]
+
+
+class ReactionToggle(BaseModel):
+    target_type: ReactionTargetType
+    target_id: uuid.UUID
+    emoji: str
+
+
+class CommentCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=2000)
+
+
+class CommentOut(BaseModel):
+    id: uuid.UUID
+    author_name: str
+    author_user_id: uuid.UUID
+    body: str
+    created_at: datetime
+    reactions: list[ReactionSummary] = []
+    can_delete: bool = False
 
 
 # --- feed ---
@@ -188,6 +233,8 @@ class FeedEventOut(BaseModel):
     actor_name: str
     payload: dict
     created_at: datetime
+    reactions: list[ReactionSummary] = []
+    comment_count: int = 0
 
 
 # --- goals & badges ---
@@ -277,6 +324,7 @@ class CapsuleCreate(BaseModel):
     release_age: int | None = Field(default=None, ge=1, le=120)
     release_date: date | None = None
     release_milestone: str | None = Field(default=None, max_length=200)
+    release_goal_id: uuid.UUID | None = None
 
 
 class CapsuleOut(BaseModel):
@@ -289,8 +337,13 @@ class CapsuleOut(BaseModel):
     release_age: int | None
     release_date: date | None
     release_milestone: str | None
+    release_goal_id: uuid.UUID | None = None
+    release_goal_title: str | None = None
     created_by_name: str
     is_mine: bool
+    release_votes: int = 0
+    i_voted: bool = False
+    can_vote: bool = False
     body: str | None = None
     media_id: uuid.UUID | None = None
     media_content_type: str | None = None
@@ -315,4 +368,25 @@ class LegacyOut(BaseModel):
     media_id: uuid.UUID | None
     media_content_type: str | None
     created_by_name: str
+    created_at: datetime
+
+
+# --- me: notification preferences & contributions ---
+
+class NotificationPrefs(BaseModel):
+    email_new_member: bool
+    email_milestone: bool
+    email_memory: bool
+    email_legacy: bool
+
+
+class MyContributionOut(BaseModel):
+    id: uuid.UUID
+    child_name: str
+    family_name: str
+    amount_cents: int
+    currency: str
+    status: ContributionStatus
+    refunded_cents: int
+    message: str | None
     created_at: datetime

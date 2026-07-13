@@ -1,18 +1,20 @@
 "use client";
 
-import { forwardRef, useState } from "react";
+import { forwardRef, useEffect, useState } from "react";
 
 /* Minimal warm-styled primitives for the Phase 1 scaffold.
    These get replaced by ShadCN components when the design system lands. */
 
 export const Button = forwardRef<
   HTMLButtonElement,
-  React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "soft" }
+  React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "soft" | "danger" }
 >(function Button({ className = "", variant = "primary", ...props }, ref) {
   const styles =
     variant === "primary"
       ? "bg-emerald-700 text-white hover:bg-emerald-800"
-      : "bg-emerald-50 text-emerald-900 hover:bg-emerald-100";
+      : variant === "danger"
+        ? "bg-red-600 text-white hover:bg-red-700"
+        : "bg-emerald-50 text-emerald-900 hover:bg-emerald-100";
   return (
     <button
       ref={ref}
@@ -87,4 +89,106 @@ export function Label({ children, htmlFor }: { children: React.ReactNode; htmlFo
 export function ErrorNote({ children }: { children: React.ReactNode }) {
   if (!children) return null;
   return <p className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-800">{children}</p>;
+}
+
+/** A branded, accessible modal dialog. Closes on backdrop click and Escape. */
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  className = "",
+}: {
+  open: boolean;
+  onClose: () => void;
+  title?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/50 p-4 backdrop-blur-sm"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className={`w-full max-w-md rounded-2xl border border-stone-200 bg-white p-6 shadow-xl ${className}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {title && <h2 className="mb-4 text-xl font-bold text-emerald-900">{title}</h2>}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** An image that opens full-size in a lightbox overlay when clicked. */
+export function ZoomableImage({
+  src,
+  alt,
+  className = "",
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [open]);
+
+  return (
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={alt}
+        onClick={() => setOpen(true)}
+        className={`cursor-zoom-in transition hover:opacity-95 ${className}`}
+      />
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/90 p-4"
+          onClick={() => setOpen(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src}
+            alt={alt}
+            className="max-h-[90vh] max-w-[90vw] cursor-zoom-out rounded-lg object-contain shadow-2xl"
+          />
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setOpen(false)}
+            className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-2xl leading-none text-white hover:bg-white/20"
+          >
+            ×
+          </button>
+        </div>
+      )}
+    </>
+  );
 }

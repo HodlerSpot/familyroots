@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AdminContribution, adminApi, downloadCsv, formatMoney } from "@/lib/api";
 import { AdminShell } from "@/components/admin/shell";
-import { Button, Card } from "@/components/ui";
+import { Button, Card, ErrorNote, Input, Label, Modal } from "@/components/ui";
 
 const CHIP: Record<string, string> = {
   succeeded: "bg-emerald-100 text-emerald-800",
@@ -20,6 +20,10 @@ export default function AdminContributionsPage() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [refundTarget, setRefundTarget] = useState<AdminContribution | null>(null);
+  const [refundAmount, setRefundAmount] = useState("");
+  const [refundError, setRefundError] = useState("");
+  const [refundBusy, setRefundBusy] = useState(false);
 
   const load = useCallback(() => {
     adminApi
@@ -36,30 +40,45 @@ export default function AdminContributionsPage() {
     return () => clearTimeout(t);
   }, [load]);
 
-  async function refund(c: AdminContribution) {
+  function openRefund(c: AdminContribution) {
+    setRefundTarget(c);
+    setRefundAmount("");
+    setRefundError("");
+  }
+
+  function closeRefund() {
+    setRefundTarget(null);
+    setRefundAmount("");
+    setRefundError("");
+  }
+
+  async function submitRefund() {
+    if (!refundTarget) return;
+    const c = refundTarget;
     const remaining = c.amount_cents - c.refunded_cents;
-    const input = prompt(
-      `Refund amount for ${c.contributor_name} (in dollars, up to ${formatMoney(remaining, c.currency)}). ` +
-        `Leave blank to refund the full remaining amount.`,
-      ""
-    );
-    if (input === null) return; // cancelled
     let amountCents: number | undefined;
-    if (input.trim() !== "") {
-      const dollars = parseFloat(input);
-      if (!(dollars > 0)) return;
+    if (refundAmount.trim() !== "") {
+      const dollars = parseFloat(refundAmount);
+      if (!(dollars > 0)) {
+        setRefundError("Enter an amount greater than zero.");
+        return;
+      }
       amountCents = Math.round(dollars * 100);
       if (amountCents > remaining) {
-        alert(`That's more than the ${formatMoney(remaining, c.currency)} remaining.`);
+        setRefundError(`That's more than the ${formatMoney(remaining, c.currency)} remaining.`);
         return;
       }
     }
-    setBusyId(c.id);
+    setRefundBusy(true);
+    setRefundError("");
     try {
       await adminApi.refund(c.id, amountCents);
+      closeRefund();
       load();
+    } catch (err) {
+      setRefundError(err instanceof Error ? err.message : "The refund didn't go through. Please try again.");
     } finally {
-      setBusyId(null);
+      setRefundBusy(false);
     }
   }
 
@@ -157,8 +176,7 @@ export default function AdminContributionsPage() {
               <span className="w-20 text-right">
                 {c.status === "succeeded" && (
                   <button
-                    onClick={() => refund(c)}
-                    disabled={busyId === c.id}
+                    onClick={() => openRefund(c)}
                     className="text-xs font-medium text-red-600 underline hover:text-red-700 disabled:opacity-50"
                   >
                     {c.refunded_cents > 0 ? "Refund more" : "Refund"}
@@ -182,6 +200,99 @@ export default function AdminContributionsPage() {
           )}
         </ul>
       </Card>
+
+      <Modal open={refundTarget !== null} onClose={closeRefund} title="Issue a refund">
+        {refundTarget && (
+          <RefundModalBody
+            c={refundTarget}
+            amount={refundAmount}
+            onAmountChange={setRefundAmount}
+            error={refundError}
+            busy={refundBusy}
+            onCancel={closeRefund}
+            onConfirm={submitRefund}
+          />
+        )}
+      </Modal>
     </AdminShell>
+  );
+}
+
+function RefundModalBody({
+  c,
+  amount,
+  onAmountChange,
+  error,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  c: AdminContribution;
+  amount: string;
+  onAmountChange: (v: string) => void;
+  error: string;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const remaining = c.amount_cents - c.refunded_cents;
+  return (
+    <div className="space-y-4">
+      <dl className="space-y-2 rounded-xl bg-stone-50 px-4 py-3 text-sm">
+        <div className="flex justify-between gap-4">
+          <dt className="text-stone-500">Contributor</dt>
+          <dd className="font-medium text-stone-900">{c.contributor_name}</dd>
+        </div>
+        <div className="flex justify-between gap-4">
+          <dt className="text-stone-500">For child</dt>
+          <dd className="font-medium text-stone-900">{c.child_name}</dd>
+        </div>
+        <div className="flex justify-between gap-4">
+          <dt className="text-stone-500">Original amount</dt>
+          <dd className="font-medium text-stone-900">{formatMoney(c.amount_cents, c.currency)}</dd>
+        </div>
+        {c.refunded_cents > 0 && (
+          <div className="flex justify-between gap-4">
+            <dt className="text-stone-500">Already refunded</dt>
+            <dd className="font-medium text-stone-900">
+              {formatMoney(c.refunded_cents, c.currency)}
+            </dd>
+          </div>
+        )}
+        <div className="flex justify-between gap-4 border-t border-stone-200 pt-2">
+          <dt className="text-stone-500">Remaining</dt>
+          <dd className="font-bold text-emerald-800">{formatMoney(remaining, c.currency)}</dd>
+        </div>
+      </dl>
+
+      <div>
+        <Label htmlFor="refund-amount">Amount to refund (USD)</Label>
+        <Input
+          id="refund-amount"
+          type="number"
+          min="0"
+          step="0.01"
+          inputMode="decimal"
+          placeholder="0.00"
+          value={amount}
+          onChange={(e) => onAmountChange(e.target.value)}
+          autoFocus
+        />
+        <p className="mt-1 text-xs text-stone-500">
+          Leave blank to refund the full remaining {formatMoney(remaining, c.currency)}.
+        </p>
+      </div>
+
+      <ErrorNote>{error}</ErrorNote>
+
+      <div className="flex justify-end gap-3">
+        <Button variant="soft" onClick={onCancel} disabled={busy}>
+          Cancel
+        </Button>
+        <Button variant="danger" onClick={onConfirm} disabled={busy}>
+          {busy ? "Refunding…" : "Refund"}
+        </Button>
+      </div>
+    </div>
   );
 }

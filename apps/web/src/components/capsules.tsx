@@ -1,8 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { api, ApiError, CapsuleOut, mediaUrl, ReleaseCondition } from "@/lib/api";
-import { Button, Card, ErrorNote, Input, Label } from "@/components/ui";
+import { api, ApiError, CapsuleOut, GoalOut, mediaUrl, ReleaseCondition } from "@/lib/api";
+import { Button, Card, ErrorNote, Input, Label, ZoomableImage } from "@/components/ui";
 
 function conditionLabel(c: CapsuleOut): string {
   switch (c.release_condition) {
@@ -12,6 +12,8 @@ function conditionLabel(c: CapsuleOut): string {
       return `Opens ${new Date(c.release_date + "T00:00:00").toLocaleDateString()}`;
     case "milestone":
       return `Opens at: ${c.release_milestone}`;
+    case "goal":
+      return `Opens when they reach '${c.release_goal_title}'`;
   }
 }
 
@@ -19,22 +21,34 @@ export function CapsulesSection({
   childId,
   childName,
   capsules,
-  isParent,
+  goals,
   onChanged,
 }: {
   childId: string;
   childName: string;
   capsules: CapsuleOut[];
-  isParent: boolean;
+  goals: GoalOut[];
   onChanged: () => void;
 }) {
   const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState("");
 
+  const incompleteGoals = goals.filter((g) => g.status === "active");
+
   async function release(capsuleId: string) {
     setError("");
     try {
       await api.releaseCapsule(capsuleId);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong");
+    }
+  }
+
+  async function vote(capsuleId: string) {
+    setError("");
+    try {
+      await api.voteReleaseCapsule(capsuleId);
       onChanged();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
@@ -55,6 +69,7 @@ export function CapsulesSection({
         <CapsuleForm
           childId={childId}
           childName={childName}
+          incompleteGoals={incompleteGoals}
           onSealed={() => {
             setShowForm(false);
             onChanged();
@@ -85,10 +100,26 @@ export function CapsulesSection({
                     </p>
                   )}
                 </div>
-                {c.release_condition === "milestone" && (c.is_mine || isParent) && (
-                  <Button variant="soft" onClick={() => release(c.id)}>
-                    Open now
-                  </Button>
+                {c.release_condition === "milestone" && (
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    {c.is_mine && (
+                      <Button variant="soft" onClick={() => release(c.id)}>
+                        Open now
+                      </Button>
+                    )}
+                    {c.can_vote && (
+                      <Button variant="soft" onClick={() => vote(c.id)}>
+                        I agree it&apos;s time to open this
+                      </Button>
+                    )}
+                    {(c.can_vote || c.i_voted || c.release_votes > 0) && (
+                      <p className="text-right text-xs text-stone-400">
+                        {c.i_voted
+                          ? "You agreed. Waiting for one more."
+                          : `${c.release_votes} of 2 guardians agreed`}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
             </Card>
@@ -97,8 +128,7 @@ export function CapsulesSection({
               <h3 className="font-semibold text-amber-900">💌 From {c.created_by_name}</h3>
               {c.body && <p className="mt-2 whitespace-pre-wrap text-stone-700">{c.body}</p>}
               {c.media_id && c.media_content_type?.startsWith("image/") && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
+                <ZoomableImage
                   src={mediaUrl(c.media_id)}
                   alt={`Time capsule from ${c.created_by_name}`}
                   className="mt-3 max-h-72 rounded-xl object-cover"
@@ -125,10 +155,12 @@ export function CapsulesSection({
 function CapsuleForm({
   childId,
   childName,
+  incompleteGoals,
   onSealed,
 }: {
   childId: string;
   childName: string;
+  incompleteGoals: GoalOut[];
   onSealed: () => void;
 }) {
   const [body, setBody] = useState("");
@@ -136,9 +168,12 @@ function CapsuleForm({
   const [age, setAge] = useState("18");
   const [dateValue, setDateValue] = useState("");
   const [milestone, setMilestone] = useState("");
+  const [goalId, setGoalId] = useState(incompleteGoals[0]?.id ?? "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const hasGoals = incompleteGoals.length > 0;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -162,6 +197,7 @@ function CapsuleForm({
         release_age: condition === "age" ? parseInt(age, 10) : undefined,
         release_date: condition === "date" ? dateValue : undefined,
         release_milestone: condition === "milestone" ? milestone : undefined,
+        release_goal_id: condition === "goal" ? goalId : undefined,
       });
       onSealed();
     } catch (err) {
@@ -204,13 +240,25 @@ function CapsuleForm({
             <select
               id="ccondition"
               value={condition}
-              onChange={(e) => setCondition(e.target.value as ReleaseCondition)}
+              onChange={(e) => {
+                const next = e.target.value as ReleaseCondition;
+                setCondition(next);
+                if (next === "goal" && !goalId) setGoalId(incompleteGoals[0]?.id ?? "");
+              }}
               className="w-full rounded-lg border border-stone-300 bg-white px-4 py-3 text-base"
             >
               <option value="age">At an age</option>
               <option value="date">On a date</option>
               <option value="milestone">At a life moment</option>
+              <option value="goal" disabled={!hasGoals}>
+                When they reach a goal
+              </option>
             </select>
+            {!hasGoals && (
+              <p className="mt-1 text-xs text-stone-400">
+                Create a goal first to link a capsule to it.
+              </p>
+            )}
           </div>
           <div>
             {condition === "age" && (
@@ -249,6 +297,24 @@ function CapsuleForm({
                   onChange={(e) => setMilestone(e.target.value)}
                   required
                 />
+              </>
+            )}
+            {condition === "goal" && (
+              <>
+                <Label htmlFor="cgoal">Which goal?</Label>
+                <select
+                  id="cgoal"
+                  value={goalId}
+                  onChange={(e) => setGoalId(e.target.value)}
+                  required
+                  className="w-full rounded-lg border border-stone-300 bg-white px-4 py-3 text-base"
+                >
+                  {incompleteGoals.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.title}
+                    </option>
+                  ))}
+                </select>
               </>
             )}
           </div>
