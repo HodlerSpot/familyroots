@@ -35,3 +35,57 @@ it years from now").
 Two short beats: what happened, then the gentle next step. "The payment
 didn't go through. Please try again." Never blame the user, never get
 technical.
+
+## Emotional register by surface
+
+Match the feeling to the moment:
+
+| Surface | Register | Example |
+| --- | --- | --- |
+| Milestone notification | Pride + invitation | "Emma just finished her first piano recital 🎹" |
+| Contribution confirmation | Gratitude + legacy | "You just added to Emma's future" |
+| Time capsule | Tenderness | "Only you can see it until the day it opens." |
+| Goals | Encouragement, never pressure | "When they reach a goal" |
+| Empty state | Gentle, inviting | "Be the first to say something kind." |
+
+## Enum / option labels read as warm phrases, not form fields (2026-07)
+
+When a dropdown or setting exposes a set of choices, keep the whole set in one
+warm, parallel cadence. Avoid clinical noun phrases that read like a form field.
+
+- Capsule "When should it open?" options:
+  - ✅ "At an age" · "On a date" · "At a life moment" · "When they reach a goal"
+  - ❌ "Specific goal completion" (cold noun phrase; breaks the pattern)
+- Derived labels should match the same cadence:
+  - ✅ "Opens when they reach '{goal}'"
+  - ❌ "Opens when '{goal}' is completed" (transactional)
+
+## Status labels are humane, not systemy
+
+Prefer plain, kind words over technical states.
+
+- Contribution statuses: "Given" · "Processing" · "Didn't go through" · "Refunded"
+  (not "succeeded / failed / error"). "Didn't go through" is deliberately
+  non-blaming.
+
+## Naming people
+
+- A supporter (coach, mentor, friend, neighbour) is a "trusted family friend,"
+  never a "user" or "external party." Invite label that reads well:
+  **"Supporter (coach, mentor, friend)"**.
+
+## Email sign-off (use verbatim, every family email)
+
+```
+With warmth,
+The FutureRoots team
+```
+
+## Quick self-check before shipping copy
+
+1. Any em-dashes? Replace them (see the table above).
+2. Any banned/technical vocabulary (wallet, token, crypto, blockchain, …)?
+   Rewrite as "securely recorded" or drop it.
+3. Does money talk about the child's future, not returns or yield?
+4. Would this read warmly to a grandparent on their phone?
+5. Do sibling labels share one cadence?
