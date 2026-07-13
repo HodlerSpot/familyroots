@@ -130,7 +130,8 @@ def accept_invite(payload: InviteAccept, db: DbSession, user: CurrentUser) -> Fa
     if user.email != invite.email:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "This invitation was sent to a different email address",
+            f"This invitation was sent to {invite.email}. "
+            f"Sign in as that person to accept it.",
         )
 
     existing = (
