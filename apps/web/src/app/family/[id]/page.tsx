@@ -14,6 +14,8 @@ import {
 } from "@/lib/api";
 import { Button, Card, ErrorNote, Input, Label } from "@/components/ui";
 import { FamilyFeedList } from "@/components/feed";
+import { FamilyCallCard } from "@/components/family-call/FamilyCallCard";
+import { useCallState } from "@/components/family-call/useCallState";
 
 export default function FamilyPage() {
   const router = useRouter();
@@ -28,6 +30,12 @@ export default function FamilyPage() {
   // and moments, but only parents/guardians manage the family (add children, invite).
   const isSupporter = myRole === "supporter";
   const canManage = myRole === "parent" || myRole === "guardian";
+
+  // One shared source of call truth: the card polls this, and the member/child
+  // presence dots below read from the very same state.
+  const { state: callState, refresh: refreshCall } = useCallState(family ? id : undefined);
+  const onCallUserIds = new Set((callState?.participants ?? []).map((p) => p.user_id));
+  const childrenOnCall = new Set((callState?.children_present ?? []).map((c) => c.child_id));
 
   const load = useCallback(async () => {
     try {
@@ -67,6 +75,16 @@ export default function FamilyPage() {
         <h1 className="mt-2 text-3xl font-bold text-emerald-900">{family.name}</h1>
       </div>
 
+      {!isSupporter && (
+        <FamilyCallCard
+          familyId={family.id}
+          familyName={family.name}
+          children={family.children}
+          state={callState}
+          onRefresh={refreshCall}
+        />
+      )}
+
       <div className="grid gap-8 lg:grid-cols-[1.8fr,1fr]">
         {/* LEFT: the people in the family */}
         <div className="space-y-8">
@@ -82,6 +100,15 @@ export default function FamilyPage() {
                     <ChildAvatar child={c} />
                     <div className="min-w-0">
                       <h3 className="text-lg font-semibold text-stone-900">{c.first_name}</h3>
+                      {childrenOnCall.has(c.id) && (
+                        <span className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-900">
+                          <span
+                            aria-hidden
+                            className="h-1.5 w-1.5 rounded-full bg-emerald-500 motion-safe:animate-pulse"
+                          />
+                          On the family call now
+                        </span>
+                      )}
                       {c.birthdate && (
                         <p className="text-sm text-stone-500">
                           Born {new Date(c.birthdate + "T00:00:00").toLocaleDateString()}
@@ -108,12 +135,26 @@ export default function FamilyPage() {
             <h2 className="text-xl font-semibold text-stone-800">Family members</h2>
             <Card>
               <ul className="divide-y divide-stone-100">
-                {family.members.map((m) => (
-                  <li key={m.id} className="flex items-center justify-between py-2">
-                    <span className="font-medium text-stone-900">{m.user.display_name}</span>
-                    <span className="text-sm capitalize text-stone-500">{m.role}</span>
-                  </li>
-                ))}
+                {family.members.map((m) => {
+                  const onCall = onCallUserIds.has(m.user.id);
+                  return (
+                    <li key={m.id} className="flex items-center justify-between py-2">
+                      <span className="flex items-center gap-2 font-medium text-stone-900">
+                        {onCall && (
+                          <span className="flex items-center">
+                            <span
+                              aria-hidden
+                              className="h-2.5 w-2.5 rounded-full bg-emerald-500 motion-safe:animate-pulse"
+                            />
+                            <span className="sr-only">on the family call now</span>
+                          </span>
+                        )}
+                        {m.user.display_name}
+                      </span>
+                      <span className="text-sm capitalize text-stone-500">{m.role}</span>
+                    </li>
+                  );
+                })}
               </ul>
             </Card>
             {canManage && <InviteForm familyId={family.id} />}

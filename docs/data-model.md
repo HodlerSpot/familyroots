@@ -108,6 +108,11 @@ users ──< family_members >── families ──< children
 - Child data visibility requires a `child_relationships` row (any type); **writes** to child-critical data (goals, consent, profile) require `parent` or `guardian`.
 - Grandparents/relatives can: view feed, add memories/messages, contribute, create time capsules — but not manage the child profile or goals.
 - Sealed time capsules are visible only to their creator.
+- Supporters (`family_members.role = supporter`) see only vault items flagged `visible_to_supporters`; they are blocked from funds, capsules, goals, the legacy archive, children's birthdates, and family video calls, but may react/comment on shared items and contribute.
+
+## Family video call
+
+Live, ephemeral, family-only (Agora RTC). Four tables: `family_calls` (one active call per family via a `UNIQUE(active_family_id)` sentinel; stores only started/ended facts, no child data), `call_participants` (a member's seat + server-assigned `agora_uid` + heartbeat `last_seen_at`; presence = not-left and last_seen within the TTL), `call_child_presence` (parent-attested "this child is in the room", set only by an in-call member and hard-deleted when they leave or the call ends), and `planned_calls` (one mutable next-call time per family). No audio/video is ever recorded or stored. RTC tokens are minted server-side (short-lived, publisher-role, one random per-call channel) using the Agora App Certificate, which never leaves the server. Supporters are excluded from every call endpoint.
 
 ## Blockchain touchpoint
 

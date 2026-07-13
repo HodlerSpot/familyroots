@@ -17,10 +17,12 @@ from ..models import (
     CapsuleStatus,
     Child,
     Family,
+    FamilyMember,
     FamilyRole,
     FeedEventType,
     MediaObject,
     MediaStatus,
+    MemberStatus,
     TimeCapsule,
     User,
     VaultItem,
@@ -197,6 +199,26 @@ def download_media(media_id: uuid.UUID, db: DbSession, token: str | None = None)
         # Family/legacy media is entirely off-limits to supporters.
         if is_supporter(membership.role):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
+    elif media.user_id is not None:
+        # A member headshot: visible to the owner, or to anyone who shares an
+        # active family with them (a co-member — including supporters, who see
+        # each other's faces on shared surfaces).
+        if media.user_id != user.id:
+            my_families = db.query(FamilyMember.family_id).filter(
+                FamilyMember.user_id == user.id,
+                FamilyMember.status == MemberStatus.active,
+            )
+            co_member = (
+                db.query(FamilyMember)
+                .filter(
+                    FamilyMember.user_id == media.user_id,
+                    FamilyMember.status == MemberStatus.active,
+                    FamilyMember.family_id.in_(my_families),
+                )
+                .first()
+            )
+            if co_member is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
     elif media.tester_id is not None:
         # testnet bug-report screenshot: viewable only by the tester who uploaded it
         if media.uploaded_by != user.id:

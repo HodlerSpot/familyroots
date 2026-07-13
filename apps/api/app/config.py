@@ -28,6 +28,18 @@ class Settings(BaseSettings):
     # main session sets these in the testnet Lambda env.
     x_client_id: str = ""
     x_client_secret: str = ""
+    # Family Video Call (Agora RTC). The App ID is public (shipped to clients);
+    # the App Certificate is a SECRET set only in the API env and used solely to
+    # sign RTC tokens server-side — it must never reach a client or a log. When
+    # the certificate is empty, token minting 503s ("Video calling isn't set up
+    # yet") so the feature simply stays dark rather than handing out bad tokens.
+    agora_app_id: str = "c58c8181f4204f07bc1a36d93cae5514"
+    agora_app_certificate: str = ""
+    # Short TTL so a removed/demoted member's token can't rejoin the live
+    # channel for long; the client's token-privilege-will-expire refresh loop
+    # re-checks membership + presence and re-mints while they're still allowed.
+    agora_call_token_ttl_seconds: int = 300
+    agora_presence_ttl_seconds: int = 30
 
     model_config = {"env_file": ".env", "env_prefix": "FUTUREROOTS_"}
 

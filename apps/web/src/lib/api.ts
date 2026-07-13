@@ -16,6 +16,7 @@ export interface UserOut {
   email: string;
   display_name: string;
   role: "user" | "admin";
+  avatar_media_id: string | null;
 }
 
 export interface FamilySummary {
@@ -188,6 +189,56 @@ export interface MyContribution {
   refunded_cents: number;
   message: string | null;
   created_at: string;
+}
+
+// --- Family video call ---
+
+export interface CallParticipant {
+  user_id: string;
+  display_name: string;
+  agora_uid: number;
+  avatar_media_id: string | null;
+  is_you: boolean;
+}
+
+export interface CallChildPresent {
+  child_id: string;
+  first_name: string;
+  avatar_media_id: string | null;
+  marked_by: string;
+}
+
+export interface PlannedCall {
+  scheduled_for: string;
+  note: string | null;
+  set_by: string;
+  set_by_name: string;
+  updated_at: string;
+}
+
+export interface CallState {
+  active: boolean;
+  call_id: string | null;
+  channel_name: string | null;
+  started_at: string | null;
+  participants: CallParticipant[];
+  children_present: CallChildPresent[];
+  planned_call: PlannedCall | null;
+}
+
+export interface CallJoin {
+  app_id: string;
+  channel_name: string;
+  token: string;
+  agora_uid: number;
+  expires_at: number;
+  call: CallState;
+}
+
+export interface CallToken {
+  token: string;
+  agora_uid: number;
+  expires_at: number;
 }
 
 export type LegacyType = "story" | "recipe" | "document" | "photo" | "wisdom";
@@ -453,6 +504,42 @@ export const api = {
     );
     return putAndComplete(ticket, file);
   },
+
+  // A member's own profile photo (headshot shown when their camera is off).
+  uploadMyAvatar: async (file: File): Promise<UserOut> => {
+    const ticket = await request<{ media_id: string; upload_url: string }>("/me/media", {
+      method: "POST",
+      body: JSON.stringify({ content_type: file.type }),
+    });
+    const media_id = await putAndComplete(ticket, file);
+    return request<UserOut>("/me/avatar", {
+      method: "POST",
+      body: JSON.stringify({ media_id }),
+    });
+  },
+
+  // --- Family video call ---
+  callState: (familyId: string) => request<CallState>(`/families/${familyId}/call`),
+  joinCall: (familyId: string) =>
+    request<CallJoin>(`/families/${familyId}/call/join`, { method: "POST" }),
+  callHeartbeat: (familyId: string) =>
+    request<void>(`/families/${familyId}/call/heartbeat`, { method: "POST" }),
+  leaveCall: (familyId: string) =>
+    request<void>(`/families/${familyId}/call/leave`, { method: "POST" }),
+  refreshCallToken: (familyId: string) =>
+    request<CallToken>(`/families/${familyId}/call/token`, { method: "POST" }),
+  setChildrenPresent: (familyId: string, childIds: string[]) =>
+    request<CallState>(`/families/${familyId}/call/children`, {
+      method: "PUT",
+      body: JSON.stringify({ child_ids: childIds }),
+    }),
+  setPlannedCall: (familyId: string, scheduledFor: string, note?: string) =>
+    request<PlannedCall>(`/families/${familyId}/call/planned`, {
+      method: "PUT",
+      body: JSON.stringify({ scheduled_for: scheduledFor, note: note ?? null }),
+    }),
+  clearPlannedCall: (familyId: string) =>
+    request<void>(`/families/${familyId}/call/planned`, { method: "DELETE" }),
 };
 
 // --- Admin command center (role-gated on the server) ---

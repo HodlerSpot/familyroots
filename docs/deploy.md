@@ -74,3 +74,7 @@ Amplify app builds `apps/web` from the GitHub repo (monorepo root `apps/web`). A
 - CloudFront in front of API + custom domain + WAF
 - RDS deletion protection on once real families are aboard
 - GDPR erasure runbook (S3 cascade delete exists in code; document the operational flow)
+- Secrets Manager for the Agora App Certificate (`FUTUREROOTS_AGORA_APP_CERTIFICATE`), currently a plaintext Lambda env var like the other secrets
+- Media auth hardening (app-wide): the `/media/{id}?token=` route embeds the full access JWT in the URL (proxy/history/Referer leak surface). Move to a short-lived media-scoped token or cookie auth for `<img>/<video>` fetches (security review L2)
+- Video-call erasure: the new `family_calls`, `call_participants`, `call_child_presence`, `planned_calls` tables reference children/families/users with no `ON DELETE CASCADE`; the future erasure routine must cascade to all four (esp. `call_child_presence.child_id`)
+- Video-call retention sweep: `call_participants` rows persist after a call ends (adult "who was on, when" history); add a retention/cleanup policy, and an elapsed-time cap so an abandoned (never-polled) call ends without waiting for the next family-page visit

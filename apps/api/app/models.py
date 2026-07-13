@@ -143,6 +143,11 @@ class LedgerEntryType(str, enum.Enum):
     adjustment = "adjustment"
 
 
+class CallStatus(str, enum.Enum):
+    active = "active"
+    ended = "ended"
+
+
 def role_column() -> Enum:
     return Enum(FamilyRole, native_enum=False, length=20)
 
@@ -158,6 +163,11 @@ class User(Base):
         Enum(UserRole, native_enum=False, length=20), default=UserRole.user
     )
     disabled: Mapped[bool] = mapped_column(default=False)  # admin can lock an account out
+    # Optional headshot shown on camera-off video-call tiles. Points at a
+    # user-scoped media object (MediaObject.user_id == this user).
+    avatar_media_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("media_objects.id"), nullable=True
+    )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -265,13 +275,16 @@ class MediaObject(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     # Media is scoped to exactly one of child (vault, capsules), family
-    # (legacy archive), or tester (testnet bug-report screenshots) so access
-    # control always follows that owner.
+    # (legacy archive), user (member headshots), or tester (testnet bug-report
+    # screenshots) so access control always follows that owner.
     child_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("children.id"), nullable=True, index=True
     )
     family_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("families.id"), nullable=True, index=True
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
     )
     tester_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("testers.id"), nullable=True, index=True
@@ -564,6 +577,84 @@ class PasswordReset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     user: Mapped[User] = relationship()
+
+
+# --- Family Video Call (Agora RTC) ---
+# A family-only "living room": at most one active call per family at a time.
+# No A/V is ever stored and calls deliberately emit no feed events.
+
+
+class FamilyCall(Base):
+    __tablename__ = "family_calls"
+    # DB-portable "one active call per family" guard: active_family_id equals
+    # family_id while the call is active and is set NULL when it ends. Because
+    # NULLs are distinct under a unique constraint (in both Postgres and
+    # SQLite), any number of ended calls coexist but only one can be active.
+    __table_args__ = (
+        UniqueConstraint("active_family_id", name="uq_one_active_call_per_family"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    family_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("families.id"), index=True)
+    active_family_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    channel_name: Mapped[str] = mapped_column(String(64), unique=True)
+    status: Mapped[CallStatus] = mapped_column(
+        Enum(CallStatus, native_enum=False, length=20), default=CallStatus.active
+    )
+    started_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CallParticipant(Base):
+    __tablename__ = "call_participants"
+    __table_args__ = (
+        UniqueConstraint("call_id", "user_id"),
+        UniqueConstraint("call_id", "agora_uid"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    call_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("family_calls.id"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    # Server-assigned Agora uid, stable for the life of the call (reused on
+    # rejoin). Client never supplies it.
+    agora_uid: Mapped[int] = mapped_column(BigInteger)
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    left_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped[User] = relationship()
+
+
+class CallChildPresence(Base):
+    """A child a member has flagged as "in the room" on a call. Cleared when the
+    marking member goes stale/leaves."""
+
+    __tablename__ = "call_child_presence"
+    __table_args__ = (UniqueConstraint("call_id", "child_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    call_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("family_calls.id"), index=True)
+    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
+    marked_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PlannedCall(Base):
+    """The single next scheduled family call. One row per family (upsert)."""
+
+    __tablename__ = "planned_calls"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    family_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("families.id"), unique=True, index=True
+    )
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    set_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 # --- Testnet harness (settings.testnet_mode deployments only) ---

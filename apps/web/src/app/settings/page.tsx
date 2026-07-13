@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, getToken, NotificationPrefs } from "@/lib/api";
-import { Card, ErrorNote } from "@/components/ui";
+import { api, ApiError, getToken, mediaUrl, NotificationPrefs, UserOut } from "@/lib/api";
+import { Button, Card, ErrorNote } from "@/components/ui";
 
 type PrefKey = keyof NotificationPrefs;
 
@@ -83,6 +83,8 @@ export default function SettingsPage() {
         <h1 className="mt-2 text-3xl font-bold text-emerald-900">Settings</h1>
       </div>
 
+      <ProfilePhotoCard />
+
       <Card>
         <div className="flex items-baseline justify-between gap-4">
           <h2 className="text-lg font-semibold text-emerald-900">Email notifications</h2>
@@ -131,5 +133,90 @@ export default function SettingsPage() {
         </div>
       </Card>
     </div>
+  );
+}
+
+function ProfilePhotoCard() {
+  const [me, setMe] = useState<UserOut | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    api.me().then(setMe).catch(() => {});
+  }, []);
+
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    setError("");
+    setSaved(false);
+    try {
+      const updated = await api.uploadMyAvatar(file);
+      setMe(updated);
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "We couldn't save that photo. Please try again.");
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  return (
+    <Card>
+      <h2 className="text-lg font-semibold text-emerald-900">Profile photo</h2>
+      <p className="mt-1 text-sm text-stone-600">
+        Add a photo of yourself. When your camera is off on a family call, the family will see this
+        instead.
+      </p>
+
+      <div className="mt-5 flex items-center gap-4">
+        {me?.avatar_media_id ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={mediaUrl(me.avatar_media_id)}
+            alt="Your profile photo"
+            className="h-20 w-20 rounded-full object-cover"
+          />
+        ) : (
+          <div className="flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 text-2xl font-semibold text-emerald-800">
+            {(me?.display_name ?? "?").charAt(0).toUpperCase()}
+          </div>
+        )}
+        <div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            onChange={onPick}
+            disabled={busy}
+            className="hidden"
+            id="avatar-input"
+          />
+          <Button
+            type="button"
+            variant="soft"
+            onClick={() => fileRef.current?.click()}
+            disabled={busy}
+          >
+            {busy ? "Saving…" : me?.avatar_media_id ? "Change photo" : "Add a photo"}
+          </Button>
+          {saved && (
+            <p className="mt-2 text-sm font-medium text-emerald-700" aria-live="polite">
+              Looking great. Your photo is saved.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {error && (
+        <div className="mt-4">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
+    </Card>
   );
 }

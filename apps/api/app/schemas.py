@@ -67,6 +67,7 @@ class UserOut(BaseModel):
     email: EmailStr
     display_name: str
     role: UserRole = UserRole.user
+    avatar_media_id: uuid.UUID | None = None
 
     model_config = {"from_attributes": True}
 
@@ -390,3 +391,74 @@ class MyContributionOut(BaseModel):
     refunded_cents: int
     message: str | None
     created_at: datetime
+
+
+# --- member avatars ---
+
+class AvatarSet(BaseModel):
+    media_id: uuid.UUID
+
+
+# --- family video call ---
+
+class CallParticipantOut(BaseModel):
+    user_id: uuid.UUID
+    display_name: str
+    agora_uid: int
+    avatar_media_id: uuid.UUID | None = None
+    is_you: bool = False
+
+
+class CallChildPresenceOut(BaseModel):
+    child_id: uuid.UUID
+    first_name: str
+    avatar_media_id: uuid.UUID | None = None
+    marked_by: uuid.UUID
+
+
+class PlannedCallOut(BaseModel):
+    id: uuid.UUID
+    scheduled_for: datetime
+    note: str | None = None
+    set_by: uuid.UUID
+    set_by_name: str
+    updated_at: datetime
+
+
+class CallStateOut(BaseModel):
+    active: bool
+    call_id: uuid.UUID | None = None
+    channel_name: str | None = None
+    started_at: datetime | None = None
+    participants: list[CallParticipantOut] = []
+    children_present: list[CallChildPresenceOut] = []
+    planned_call: PlannedCallOut | None = None
+
+
+class CallJoinOut(BaseModel):
+    """The join / token responses carry the App ID (public) and a short-lived
+    RTC token. The App Certificate is NEVER part of any response."""
+
+    app_id: str
+    channel_name: str
+    token: str
+    agora_uid: int
+    expires_at: int
+    call: CallStateOut
+
+
+class CallTokenOut(BaseModel):
+    app_id: str
+    channel_name: str
+    token: str
+    agora_uid: int
+    expires_at: int
+
+
+class PlannedCallSet(BaseModel):
+    scheduled_for: datetime
+    note: str | None = Field(default=None, max_length=200)
+
+
+class ChildrenPresenceSet(BaseModel):
+    child_ids: list[uuid.UUID] = Field(default_factory=list, max_length=50)

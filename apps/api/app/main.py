@@ -5,6 +5,7 @@ from .config import settings
 from .routers import (
     admin,
     auth,
+    calls,
     capsules,
     children,
     contributions,
@@ -44,6 +45,7 @@ app.include_router(contributions.router)
 app.include_router(capsules.router)
 app.include_router(legacy.router)
 app.include_router(social.router)
+app.include_router(calls.router)
 app.include_router(me.router)
 app.include_router(webhooks.router)
 app.include_router(issues.router)

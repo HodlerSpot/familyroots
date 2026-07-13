@@ -23,6 +23,9 @@ export class FutureRootsStack extends cdk.Stack {
     const dbPassword = required("DB_PASSWORD");
     const jwtSecret = required("JWT_SECRET");
     const sesFrom = required("SES_FROM_ADDRESS");
+    // Agora App Certificate: the secret that signs family-call RTC tokens.
+    // Server-side only, never shipped to the client (the App ID is public).
+    const agoraSecret = required("AGORA_SECRET");
     const webBaseUrl = process.env.WEB_BASE_URL ?? "http://localhost:3000";
     const extraOrigins = (process.env.EXTRA_ORIGINS ?? "")
       .split(",")
@@ -134,6 +137,8 @@ export class FutureRootsStack extends cdk.Stack {
         FUTUREROOTS_PAYMENT_BACKEND: "stripe",
         FUTUREROOTS_STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY ?? "",
         FUTUREROOTS_STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET ?? "",
+        FUTUREROOTS_AGORA_APP_ID: "c58c8181f4204f07bc1a36d93cae5514",
+        FUTUREROOTS_AGORA_APP_CERTIFICATE: agoraSecret,
       },
     });
     mediaBucket.grantReadWrite(apiFn);
@@ -180,6 +185,8 @@ export class FutureRootsStack extends cdk.Stack {
         FUTUREROOTS_TESTNET_ADMIN_TOKEN: process.env.TESTNET_ADMIN_TOKEN ?? "",
         FUTUREROOTS_X_CLIENT_ID: process.env.X_CLIENT_ID ?? "",
         FUTUREROOTS_X_CLIENT_SECRET: process.env.X_CLIENT_SECRET ?? "",
+        FUTUREROOTS_AGORA_APP_ID: "c58c8181f4204f07bc1a36d93cae5514",
+        FUTUREROOTS_AGORA_APP_CERTIFICATE: agoraSecret,
       },
     });
     mediaBucket.grantReadWrite(testnetFn);
