@@ -45,14 +45,56 @@ export function SiteHeader() {
 
 type MenuLink = { label: string; href: string; icon: ReactNode };
 
+// Module-level cache so the avatar is present on the very first render of any
+// (re)mount — no null -> data flash as you move between pages.
+let cachedMe: UserOut | null = null;
+let cachedBoard: QuestBoard | null = null;
+let cachedIsAdmin = false;
+
+// Top-level (stable identity) so re-renders reconcile the same <img> instead of
+// remounting it — remounting was reloading the avatar and causing the flicker.
+function AvatarNode({
+  px,
+  me,
+  board,
+}: {
+  px: 36 | 40;
+  me: UserOut | null;
+  board: QuestBoard | null;
+}) {
+  const box = px === 36 ? "h-9 w-9" : "h-10 w-10";
+  const txt = px === 36 ? "text-sm" : "text-base";
+  if (IS_TESTNET) {
+    return <Avatar seed={board?.wallet_address ?? ""} src={board?.avatar_url} size={px} />;
+  }
+  if (me?.avatar_media_id) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={mediaUrl(me.avatar_media_id)}
+        alt=""
+        className={`${box} rounded-full object-cover`}
+      />
+    );
+  }
+  const letter = (me?.display_name ?? "?").charAt(0).toUpperCase();
+  return (
+    <span
+      className={`${box} ${txt} flex items-center justify-center rounded-full bg-emerald-100 font-semibold text-emerald-800`}
+    >
+      {letter}
+    </span>
+  );
+}
+
 function AccountMenu() {
   const router = useRouter();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [visible, setVisible] = useState(false);
-  const [me, setMe] = useState<UserOut | null>(null); // family product
-  const [board, setBoard] = useState<QuestBoard | null>(null); // testnet
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [me, setMe] = useState<UserOut | null>(cachedMe); // family product
+  const [board, setBoard] = useState<QuestBoard | null>(cachedBoard); // testnet
+  const [isAdmin, setIsAdmin] = useState(cachedIsAdmin);
 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -63,17 +105,28 @@ function AccountMenu() {
   // person is an operator (the board carries no role); either failure is fine.
   useEffect(() => {
     if (IS_TESTNET) {
-      testnetApi.quests().then(setBoard).catch(() => {});
+      testnetApi
+        .quests()
+        .then((b) => {
+          cachedBoard = b;
+          setBoard(b);
+        })
+        .catch(() => {});
       api
         .me()
-        .then((u) => setIsAdmin(u.role === "admin"))
+        .then((u) => {
+          cachedIsAdmin = u.role === "admin";
+          setIsAdmin(cachedIsAdmin);
+        })
         .catch(() => {});
     } else {
       api
         .me()
         .then((u) => {
+          cachedMe = u;
+          cachedIsAdmin = u.role === "admin";
           setMe(u);
-          setIsAdmin(u.role === "admin");
+          setIsAdmin(cachedIsAdmin);
         })
         .catch(() => {});
     }
@@ -144,34 +197,11 @@ function AccountMenu() {
       : ""
     : me?.email ?? "";
 
-  function AvatarNode({ px }: { px: 36 | 40 }) {
-    const box = px === 36 ? "h-9 w-9" : "h-10 w-10";
-    const txt = px === 36 ? "text-sm" : "text-base";
-    if (IS_TESTNET) {
-      return <Avatar seed={board?.wallet_address ?? ""} src={board?.avatar_url} size={px} />;
-    }
-    if (me?.avatar_media_id) {
-      return (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={mediaUrl(me.avatar_media_id)}
-          alt=""
-          className={`${box} rounded-full object-cover`}
-        />
-      );
-    }
-    const letter = (me?.display_name ?? "?").charAt(0).toUpperCase();
-    return (
-      <span
-        className={`${box} ${txt} flex items-center justify-center rounded-full bg-emerald-100 font-semibold text-emerald-800`}
-      >
-        {letter}
-      </span>
-    );
-  }
-
   function signOut() {
     setOpen(false);
+    cachedMe = null;
+    cachedBoard = null;
+    cachedIsAdmin = false;
     setToken(null);
     router.replace("/login");
   }
@@ -231,7 +261,7 @@ function AccountMenu() {
             : "ring-1 ring-stone-200 hover:ring-emerald-300"
         }`}
       >
-        <AvatarNode px={36} />
+        <AvatarNode px={36} me={me} board={board} />
       </button>
 
       {open && (
@@ -245,7 +275,7 @@ function AccountMenu() {
           }`}
         >
           <div className="flex items-center gap-3 px-3 py-2.5">
-            <AvatarNode px={40} />
+            <AvatarNode px={40} me={me} board={board} />
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-emerald-900">{name}</p>
               <p
@@ -273,9 +303,7 @@ function AccountMenu() {
                 tabIndex={-1}
                 onClick={() => close(false)}
                 className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-base font-medium hover:bg-emerald-50 ${
-                  active
-                    ? "border-l-2 border-emerald-600 pl-2.5 font-semibold text-emerald-900"
-                    : "text-stone-800"
+                  active ? "bg-emerald-50 font-semibold text-emerald-900" : "text-stone-800"
                 }`}
               >
                 <span className={active ? "text-emerald-700" : "text-stone-500"}>
