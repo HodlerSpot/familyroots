@@ -46,24 +46,9 @@ export default function FamilyDashboard() {
     }
   }
 
-  function signOut() {
-    setToken(null);
-    router.replace("/");
-  }
-
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-emerald-900">Your families</h1>
-        <span className="space-x-4 text-sm">
-          <a href="/account" className="text-stone-500 underline">
-            Account
-          </a>
-          <button onClick={signOut} className="text-stone-500 underline">
-            Sign out
-          </button>
-        </span>
-      </div>
+      <h1 className="text-3xl font-bold text-emerald-900">Your families</h1>
       <ErrorNote>{error}</ErrorNote>
 
       {families === null && !error && <p className="text-stone-500">Loading…</p>}

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, getToken, UserOut } from "@/lib/api";
+import { api, ApiError, getToken, mediaUrl, UserOut } from "@/lib/api";
 import { Button, Card, ErrorNote, Label, PasswordInput } from "@/components/ui";
 import { PasswordRules, passwordMeetsRules } from "@/components/password-rules";
 import { QuestBoard, testnetApi } from "@/components/testnet/api";
@@ -229,6 +229,10 @@ function FamilyAccount() {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState("");
+  const [photoSaved, setPhotoSaved] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!getToken()) {
@@ -240,6 +244,26 @@ function FamilyAccount() {
       .then(setMe)
       .catch(() => router.replace("/login?next=/account"));
   }, [router]);
+
+  async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhotoBusy(true);
+    setPhotoError("");
+    setPhotoSaved(false);
+    try {
+      const updated = await api.uploadMyAvatar(file);
+      setMe(updated);
+      setPhotoSaved(true);
+    } catch (err) {
+      setPhotoError(
+        err instanceof ApiError ? err.message : "We couldn't save that photo. Please try again."
+      );
+    } finally {
+      setPhotoBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -271,6 +295,59 @@ function FamilyAccount() {
           {me.display_name} · {me.email}
         </p>
       </div>
+
+      <Card>
+        <h2 className="text-lg font-semibold text-emerald-900">Profile photo</h2>
+        <p className="mt-1 text-sm text-stone-600">
+          Add a photo of yourself. When your camera is off on a family call, the family will see
+          this instead.
+        </p>
+
+        <div className="mt-5 flex items-center gap-4">
+          {me.avatar_media_id ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={mediaUrl(me.avatar_media_id)}
+              alt="Your profile photo"
+              className="h-20 w-20 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 text-2xl font-semibold text-emerald-800">
+              {(me.display_name ?? "?").charAt(0).toUpperCase()}
+            </div>
+          )}
+          <div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              onChange={onPickPhoto}
+              disabled={photoBusy}
+              className="hidden"
+              id="avatar-input"
+            />
+            <Button
+              type="button"
+              variant="soft"
+              onClick={() => fileRef.current?.click()}
+              disabled={photoBusy}
+            >
+              {photoBusy ? "Saving…" : me.avatar_media_id ? "Change photo" : "Add a photo"}
+            </Button>
+            {photoSaved && (
+              <p className="mt-2 text-sm font-medium text-emerald-700" aria-live="polite">
+                Looking great. Your photo is saved.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {photoError && (
+          <div className="mt-4">
+            <ErrorNote>{photoError}</ErrorNote>
+          </div>
+        )}
+      </Card>
 
       <Card>
         <h2 className="mb-4 text-lg font-semibold text-emerald-900">Change your password</h2>
