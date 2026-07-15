@@ -6,7 +6,11 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-only-secret-change-in-production!"
     jwt_ttl_hours: int = 24 * 7
     invite_ttl_days: int = 14
-    contribution_fee_bps: int = 250  # platform fee in basis points (2.5%)
+    # Application fee = Stripe's US-card baseline (2.9% + 30¢). The platform
+    # nets ~0: it keeps this fee and pays Stripe's actual processing fee out of
+    # it, absorbing the small variance on international/Amex cards.
+    contribution_fee_bps: int = 290
+    contribution_fee_fixed_cents: int = 30
     storage_backend: str = "local"  # local | s3
     media_bucket: str = ""
     email_backend: str = "outbox"  # outbox | ses
@@ -14,6 +18,9 @@ class Settings(BaseSettings):
     payment_backend: str = "local"  # local | stripe
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
+    # Second endpoint secret: Connect events (account.updated) for Express
+    # accounts arrive only on a connected-accounts webhook with its own secret.
+    stripe_connect_webhook_secret: str = ""
     web_base_url: str = "http://localhost:3000"
     cors_extra_origins: str = ""  # comma-separated additional allowed origins
     # Testnet harness (testnet.futureroots.app only). Gates the /testnet

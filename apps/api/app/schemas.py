@@ -12,6 +12,7 @@ from .models import (
     ContributionStatus,
     FamilyRole,
     FeedEventType,
+    FundAccountStatus,
     GoalStatus,
     LegacyType,
     MediaStatus,
@@ -312,6 +313,8 @@ class FundOut(BaseModel):
     child_id: uuid.UUID
     currency: str
     balance_cents: int
+    account_status: FundAccountStatus
+    setup_by_name: str | None
     entries: list[LedgerEntryOut]
 
 
@@ -387,6 +390,7 @@ class MyContributionOut(BaseModel):
     family_name: str
     amount_cents: int
     currency: str
+    fee_cents: int
     status: ContributionStatus
     refunded_cents: int
     message: str | None

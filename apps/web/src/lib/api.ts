@@ -129,10 +129,15 @@ export interface ContributionOut {
   client_secret: string | null;
 }
 
+/** Lifecycle of a child's real Future Fund account. Contributions require active. */
+export type FundAccountStatus = "none" | "onboarding" | "active" | "restricted";
+
 export interface FundOut {
   child_id: string;
   currency: string;
   balance_cents: number;
+  account_status: FundAccountStatus;
+  setup_by_name: string | null;
   entries: {
     id: string;
     amount_cents: number;
@@ -185,6 +190,7 @@ export interface MyContribution {
   family_name: string;
   amount_cents: number;
   currency: string;
+  fee_cents: number;
   status: "pending" | "succeeded" | "failed" | "refunded";
   refunded_cents: number;
   message: string | null;
@@ -457,6 +463,20 @@ export const api = {
     request<ContributionOut>(`/contributions/${contributionId}/confirm`, { method: "POST" }),
   childFund: (childId: string) => request<FundOut>(`/children/${childId}/fund`),
 
+  // Future Fund account (Stripe Connect behind the scenes; server-only ids)
+  fundStatus: (childId: string) =>
+    request<{ account_status: FundAccountStatus }>(`/children/${childId}/fund/status`),
+  startFundSetup: (childId: string) =>
+    request<{ url: string }>(`/children/${childId}/fund/setup`, { method: "POST" }),
+  fundSetupStatus: (childId: string) =>
+    request<{
+      account_status: FundAccountStatus;
+      payouts_enabled: boolean;
+      requirements_due: boolean;
+    }>(`/children/${childId}/fund/setup/status`),
+  nudgeFundSetup: (childId: string) =>
+    request<{ sent: boolean }>(`/children/${childId}/fund/nudge`, { method: "POST" }),
+
   listCapsules: (childId: string) => request<CapsuleOut[]>(`/children/${childId}/capsules`),
   createCapsule: (
     childId: string,
@@ -626,7 +646,13 @@ export interface AdminFamilyDetail {
     status: string;
     disabled: boolean;
   }[];
-  children: { id: string; first_name: string; fund_cents: number }[];
+  children: {
+    id: string;
+    first_name: string;
+    fund_cents: number;
+    fund_account_status: FundAccountStatus;
+    stripe_account_id: string | null;
+  }[];
   contributions: AdminContribution[];
 }
 

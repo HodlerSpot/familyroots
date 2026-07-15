@@ -137,6 +137,10 @@ export class FutureRootsStack extends cdk.Stack {
         FUTUREROOTS_PAYMENT_BACKEND: "stripe",
         FUTUREROOTS_STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY ?? "",
         FUTUREROOTS_STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET ?? "",
+        // Second webhook secret: Connect events (account.updated) arrive on a
+        // separate connected-accounts endpoint with its own signing secret.
+        FUTUREROOTS_STRIPE_CONNECT_WEBHOOK_SECRET:
+          process.env.STRIPE_CONNECT_WEBHOOK_SECRET ?? "",
         FUTUREROOTS_AGORA_APP_ID: "c58c8181f4204f07bc1a36d93cae5514",
         FUTUREROOTS_AGORA_APP_CERTIFICATE: agoraSecret,
       },

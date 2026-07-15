@@ -79,3 +79,14 @@ def add_child(client, headers: dict, family_id: str, first_name: str = "Emma") -
     )
     assert r.status_code == 201, r.text
     return r.json()["id"]
+
+
+def setup_fund(client, guardian_headers: dict, child_id: str) -> None:
+    """Activate the child's Future Fund under the local provider: start setup
+    (instant local Connect account), then poll status once (local accounts
+    onboard instantly, so this flips the account to active)."""
+    r = client.post(f"/children/{child_id}/fund/setup", headers=guardian_headers)
+    assert r.status_code == 200, r.text
+    r = client.get(f"/children/{child_id}/fund/setup/status", headers=guardian_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["account_status"] == "active"

@@ -17,6 +17,7 @@ Backends:
 """
 
 import uuid
+from dataclasses import dataclass
 from typing import Protocol
 
 from sqlalchemy import func
@@ -30,10 +31,12 @@ from ..models import (
     FamilyRole,
     FeedEventType,
     FundAccount,
+    FundAccountStatus,
     FundLedgerEntry,
     LedgerEntryType,
     MemberStatus,
     User,
+    utcnow,
 )
 from .email import get_email_sender
 from .email_templates import render_email
@@ -41,15 +44,38 @@ from .feed import emit
 
 
 def contribution_fee_cents(amount_cents: int) -> int:
-    """Platform fee, deducted from the contribution (basis points from config)."""
-    return (amount_cents * settings.contribution_fee_bps) // 10_000
+    """The application fee kept by the platform on a destination charge:
+    Stripe's US-card baseline (2.9% + 30¢), variable part rounded UP so the
+    fee always covers the processing cost and the platform nets ~0 (it absorbs
+    the small variance on international/Amex cards). The child's account
+    receives amount − fee. Minimum contribution is 100¢ → minimum net 67¢."""
+    variable = -(-amount_cents * settings.contribution_fee_bps // 10_000)  # ceil
+    fee = variable + settings.contribution_fee_fixed_cents
+    if fee >= amount_cents:
+        raise ValueError("Fee would consume the whole contribution")
+    return fee
+
+
+@dataclass(frozen=True)
+class ConnectAccountState:
+    """A point-in-time snapshot of a connected account's Stripe state."""
+
+    details_submitted: bool
+    charges_enabled: bool
+    payouts_enabled: bool
+    transfers_active: bool  # the transfers capability is active
+    requirements_due: bool  # Stripe is waiting on more information
 
 
 class PaymentProvider(Protocol):
     settles_via_webhook: bool
 
-    def create_payment(self, contribution: Contribution) -> tuple[str, str | None]:
-        """Start a payment; returns (provider_payment_id, client_secret_or_None)."""
+    def create_payment(
+        self, contribution: Contribution, *, destination_account: str | None = None
+    ) -> tuple[str, str | None]:
+        """Start a payment; returns (provider_payment_id, client_secret_or_None).
+        With destination_account, the funds (net of the application fee) are
+        transferred to that connected account."""
         ...
 
     def confirm_payment(self, contribution: Contribution) -> bool:
@@ -64,13 +90,39 @@ class PaymentProvider(Protocol):
         """Live provider status of the payment (for reconciling stuck records)."""
         ...
 
+    def payment_routing(self, contribution: Contribution) -> tuple[str | None, int | None] | None:
+        """Live (destination, application_fee) of the payment, for verifying a
+        settle outside the webhook. None means the provider has no routing to
+        verify (local backend), so the caller may trust its own settle path."""
+        ...
+
+    def create_connect_account(
+        self, *, email: str, metadata: dict[str, str], idempotency_scope: str
+    ) -> str:
+        """Create the child's Express account (owned by the parent); returns
+        the account id. Idempotent per scope so a double-click can't create two."""
+        ...
+
+    def create_account_link(
+        self, account_id: str, *, return_url: str, refresh_url: str
+    ) -> str:
+        """Mint a single-use hosted-onboarding URL. Links expire and are
+        single-use, so callers mint a fresh one every time and never store it."""
+        ...
+
+    def connect_account_state(self, account_id: str) -> ConnectAccountState:
+        """Live account state, straight from the provider (never from a payload)."""
+        ...
+
 
 class LocalPaymentProvider:
     """Dev-only simulated card processor. Always succeeds."""
 
     settles_via_webhook = False
 
-    def create_payment(self, contribution: Contribution) -> tuple[str, str | None]:
+    def create_payment(
+        self, contribution: Contribution, *, destination_account: str | None = None
+    ) -> tuple[str, str | None]:
         return f"local_{uuid.uuid4().hex}", None
 
     def confirm_payment(self, contribution: Contribution) -> bool:
@@ -82,6 +134,30 @@ class LocalPaymentProvider:
     def payment_status(self, contribution: Contribution) -> str | None:
         return "succeeded"
 
+    def payment_routing(self, contribution: Contribution) -> tuple[str | None, int | None] | None:
+        return None  # no live routing to verify locally; the local settle path is trusted
+
+    def create_connect_account(
+        self, *, email: str, metadata: dict[str, str], idempotency_scope: str
+    ) -> str:
+        return f"acct_local_{uuid.uuid4().hex}"
+
+    def create_account_link(
+        self, account_id: str, *, return_url: str, refresh_url: str
+    ) -> str:
+        # No hosted onboarding locally: send the browser straight back.
+        return f"{return_url}?simulated=1"
+
+    def connect_account_state(self, account_id: str) -> ConnectAccountState:
+        # Local accounts onboard instantly.
+        return ConnectAccountState(
+            details_submitted=True,
+            charges_enabled=True,
+            payouts_enabled=True,
+            transfers_active=True,
+            requirements_due=False,
+        )
+
 
 class StripePaymentProvider:
     settles_via_webhook = True
@@ -91,19 +167,28 @@ class StripePaymentProvider:
 
         self.client = stripe.StripeClient(secret_key)
 
-    def create_payment(self, contribution: Contribution) -> tuple[str, str | None]:
-        intent = self.client.payment_intents.create(
-            params={
-                "amount": contribution.amount_cents,
-                "currency": contribution.currency.lower(),
-                "automatic_payment_methods": {"enabled": True},
-                "metadata": {
-                    "contribution_id": str(contribution.id),
-                    "child_id": str(contribution.child_id),
-                },
-                "description": "FutureRoots family contribution",
-            }
-        )
+    def create_payment(
+        self, contribution: Contribution, *, destination_account: str | None = None
+    ) -> tuple[str, str | None]:
+        params: dict = {
+            "amount": contribution.amount_cents,
+            "currency": contribution.currency.lower(),
+            "automatic_payment_methods": {"enabled": True},
+            "metadata": {
+                "contribution_id": str(contribution.id),
+                "child_id": str(contribution.child_id),
+            },
+            "description": "FutureRoots family contribution",
+        }
+        if destination_account:
+            # Destination charge: the platform is the merchant of record (no
+            # on_behalf_of, so charges succeed while the parent's card_payments
+            # capability is still pending, as long as transfers is active).
+            # Stripe transfers amount − application_fee to the child's account.
+            params["transfer_data"] = {"destination": destination_account}
+            params["application_fee_amount"] = contribution.fee_cents
+            params["transfer_group"] = f"contribution_{contribution.id}"
+        intent = self.client.payment_intents.create(params=params)
         return intent.id, intent.client_secret
 
     def confirm_payment(self, contribution: Contribution) -> bool:
@@ -112,12 +197,20 @@ class StripePaymentProvider:
     def refund_payment(self, contribution: Contribution, amount_cents: int) -> bool:
         if not contribution.provider_payment_id:
             return False
-        self.client.refunds.create(
-            params={
-                "payment_intent": contribution.provider_payment_id,
-                "amount": amount_cents,  # partial when < the full charge
-            }
-        )
+        params: dict = {
+            "payment_intent": contribution.provider_payment_id,
+            "amount": amount_cents,  # partial when < the full charge
+        }
+        # Destination charge: claw the proportional transfer back from the
+        # connected account and return the proportional app fee, so contributor
+        # / child / platform all unwind together. Legacy (pre-Connect) charges
+        # have no transfer — Stripe rejects reverse_transfer on them, so only
+        # send the flags when the intent actually carried a destination.
+        routing = self.payment_routing(contribution)
+        if routing is not None and routing[0] is not None:
+            params["refund_application_fee"] = True
+            params["reverse_transfer"] = True
+        self.client.refunds.create(params=params)
         return True
 
     def payment_status(self, contribution: Contribution) -> str | None:
@@ -127,6 +220,78 @@ class StripePaymentProvider:
             return self.client.payment_intents.retrieve(contribution.provider_payment_id).status
         except Exception:
             return None
+
+    def payment_routing(self, contribution: Contribution) -> tuple[str | None, int | None] | None:
+        """(transfer destination, application fee) straight from the live PI.
+        StripeObject supports [] but not .get()."""
+        if not contribution.provider_payment_id:
+            return (None, None)
+        try:
+            intent = self.client.payment_intents.retrieve(contribution.provider_payment_id)
+        except Exception:
+            return (None, None)
+        try:
+            transfer_data = intent["transfer_data"]
+        except KeyError:
+            transfer_data = None
+        destination = None
+        if transfer_data is not None:
+            try:
+                destination = transfer_data["destination"]
+            except KeyError:
+                destination = None
+        try:
+            app_fee = intent["application_fee_amount"]
+        except KeyError:
+            app_fee = None
+        return (destination, app_fee)
+
+    def create_connect_account(
+        self, *, email: str, metadata: dict[str, str], idempotency_scope: str
+    ) -> str:
+        account = self.client.accounts.create(
+            params={
+                "type": "express",
+                "country": "US",
+                "email": email,
+                "business_type": "individual",
+                "capabilities": {
+                    "card_payments": {"requested": True},
+                    "transfers": {"requested": True},
+                },
+                "metadata": metadata,
+            },
+            options={"idempotency_key": f"fr-connect-acct-{idempotency_scope}"},
+        )
+        return account.id
+
+    def create_account_link(
+        self, account_id: str, *, return_url: str, refresh_url: str
+    ) -> str:
+        link = self.client.account_links.create(
+            params={
+                "account": account_id,
+                "type": "account_onboarding",
+                "return_url": return_url,
+                "refresh_url": refresh_url,
+            }
+        )
+        return link.url
+
+    def connect_account_state(self, account_id: str) -> ConnectAccountState:
+        account = self.client.accounts.retrieve(account_id)
+        capabilities = getattr(account, "capabilities", None)
+        transfers = getattr(capabilities, "transfers", None) if capabilities else None
+        requirements = getattr(account, "requirements", None)
+        currently_due = list(getattr(requirements, "currently_due", None) or [])
+        past_due = list(getattr(requirements, "past_due", None) or [])
+        return ConnectAccountState(
+            details_submitted=bool(account.details_submitted),
+            charges_enabled=bool(account.charges_enabled),
+            payouts_enabled=bool(account.payouts_enabled),
+            transfers_active=transfers == "active",
+            requirements_due=bool(currently_due or past_due),
+        )
 
 
 def _build_provider() -> PaymentProvider:
@@ -149,6 +314,24 @@ def get_or_create_fund_account(db: Session, child_id: uuid.UUID, currency: str) 
         db.add(account)
         db.flush()
     return account
+
+
+def sync_fund_account_state(fund_account: FundAccount, state: ConnectAccountState) -> None:
+    """Fold a live ConnectAccountState into our cached columns. The cache is
+    informational only — money always moves against Stripe's live state.
+    Active means gifts can actually reach the child: the transfers capability
+    is live AND payouts are enabled."""
+    fund_account.charges_enabled = state.charges_enabled
+    fund_account.payouts_enabled = state.payouts_enabled
+    fund_account.requirements_due = state.requirements_due
+    if state.transfers_active and state.payouts_enabled:
+        if fund_account.account_status != FundAccountStatus.active:
+            fund_account.activated_at = utcnow()
+        fund_account.account_status = FundAccountStatus.active
+    elif not state.details_submitted:
+        fund_account.account_status = FundAccountStatus.onboarding
+    else:
+        fund_account.account_status = FundAccountStatus.restricted
 
 
 def fund_balance_cents(db: Session, account_id: uuid.UUID) -> int:
@@ -211,8 +394,31 @@ def reconcile_contribution(db: Session, contribution: Contribution) -> str:
     acts on pending records. Returns the resulting status string."""
     if contribution.status != ContributionStatus.pending:
         return contribution.status.value
-    live = get_payment_provider().payment_status(contribution)
+    provider = get_payment_provider()
+    live = provider.payment_status(contribution)
     if live == "succeeded":
+        # The webhook refuses to ledger a PI whose destination/fee doesn't
+        # match what we route today; reconcile must not become the bypass for
+        # that same guard. Verify against the LIVE intent (routing is None on
+        # the local backend, whose settle path is separately trusted).
+        routing = provider.payment_routing(contribution)
+        if routing is not None:
+            destination, app_fee = routing
+            account = (
+                db.query(FundAccount)
+                .filter(FundAccount.child_id == contribution.child_id)
+                .first()
+            )
+            expected = account.stripe_account_id if account else None
+            ok = (
+                expected is None
+                if destination is None
+                else (destination == expected and app_fee == contribution.fee_cents)
+            )
+            if not ok:
+                # Money went somewhere we don't route today: never ledger it.
+                # Stays pending for a human with the Stripe dashboard open.
+                return contribution.status.value
         settle_contribution(db, contribution)  # sets status + ledger + feed + emails
     elif live in ("canceled", "cancelled"):
         contribution.status = ContributionStatus.failed

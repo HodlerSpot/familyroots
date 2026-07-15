@@ -143,6 +143,16 @@ class LedgerEntryType(str, enum.Enum):
     adjustment = "adjustment"
 
 
+class FundAccountStatus(str, enum.Enum):
+    """Lifecycle of a child's real Future Fund (Stripe Express) account.
+    Contributions are possible only while active."""
+
+    none = "none"                # no connected account yet
+    onboarding = "onboarding"    # account created, hosted onboarding unfinished
+    active = "active"            # transfers capability active + payouts enabled
+    restricted = "restricted"    # Stripe needs more info / paused the account
+
+
 class CallStatus(str, enum.Enum):
     active = "active"
     ended = "ended"
@@ -425,6 +435,41 @@ class FundAccount(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), unique=True)
     currency: Mapped[str] = mapped_column(String(3), default="USD")
+    # --- Stripe Connect (Express): the child's real account. The account is
+    # legally the parent's (setup_by), earmarked for the child; the id is
+    # server-only and never serialized to clients. Status columns are a cache
+    # of Stripe state (account.updated / accounts.retrieve) — informational,
+    # never authoritative, and never money.
+    stripe_account_id: Mapped[str | None] = mapped_column(
+        String(255), unique=True, nullable=True
+    )
+    account_status: Mapped[FundAccountStatus] = mapped_column(
+        Enum(FundAccountStatus, native_enum=False, length=20),
+        default=FundAccountStatus.none,
+    )
+    setup_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    charges_enabled: Mapped[bool] = mapped_column(default=False)
+    payouts_enabled: Mapped[bool] = mapped_column(default=False)
+    requirements_due: Mapped[bool] = mapped_column(default=False)
+    onboarding_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    activated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class FundNudge(Base):
+    """A non-guardian member's gentle 'I'm ready to give' nudge to the
+    parents to finish Future Fund setup. Kept so each member can nudge each
+    child at most once every 7 days (checked at write time)."""
+
+    __tablename__ = "fund_nudges"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

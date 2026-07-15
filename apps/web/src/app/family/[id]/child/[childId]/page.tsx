@@ -17,6 +17,7 @@ import {
 } from "@/lib/api";
 import { Button, Card, ErrorNote, Input, Label, ZoomableImage } from "@/components/ui";
 import { CapsulesSection } from "@/components/capsules";
+import { FamilyFundCard, SupporterFundCard } from "@/components/fund";
 
 const TYPE_ICONS: Record<string, string> = {
   photo: "📷",
@@ -38,6 +39,7 @@ export default function ChildVaultPage() {
   const [badges, setBadges] = useState<BadgeOut[]>([]);
   const [capsules, setCapsules] = useState<CapsuleOut[]>([]);
   const [myRole, setMyRole] = useState<FamilyRole | null>(null);
+  const [parentFirstName, setParentFirstName] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -48,6 +50,8 @@ export default function ChildVaultPage() {
       setAvatarMediaId(child?.avatar_media_id ?? null);
       const role = family.members.find((m) => m.user.id === me.id)?.role ?? null;
       setMyRole(role);
+      const firstParent = family.members.find((m) => m.role === "parent");
+      setParentFirstName(firstParent?.user.display_name.split(" ")[0] ?? null);
 
       const vault = await api.listVault(childId);
       setItems(vault);
@@ -128,42 +132,18 @@ export default function ChildVaultPage() {
       </div>
 
       {isSupporter ? (
-        <Card className="flex flex-col items-start gap-3 bg-emerald-50/50 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h3 className="font-semibold text-emerald-900">🌳 Give a gift that grows</h3>
-            <p className="text-sm text-stone-600">
-              Add to {childName || "their"} future and be part of the journey.
-            </p>
-          </div>
-          <Button
-            className="w-full sm:w-auto"
-            onClick={() => router.push(`/family/${familyId}/child/${childId}/contribute`)}
-          >
-            Contribute to {childName ? `${childName}'s` : "their"} future
-          </Button>
-        </Card>
+        <SupporterFundCard familyId={familyId} childId={childId} childName={childName} />
       ) : (
         <>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Card className="flex flex-col justify-between bg-emerald-50/50">
-              <div>
-                <h3 className="font-semibold text-emerald-900">🌳 Future fund</h3>
-                <p className="mt-2 text-3xl font-bold text-emerald-900">
-                  {fund ? formatMoney(fund.balance_cents, fund.currency) : "…"}
-                </p>
-                <p className="text-sm text-stone-500">
-                  {fund && fund.entries.length > 0
-                    ? `${fund.entries.length} gift${fund.entries.length === 1 ? "" : "s"} from the family`
-                    : "The first gift starts the journey"}
-                </p>
-              </div>
-              <Button
-                className="mt-4 w-full"
-                onClick={() => router.push(`/family/${familyId}/child/${childId}/contribute`)}
-              >
-                Add to {childName ? `${childName}'s` : "their"} future
-              </Button>
-            </Card>
+            <FamilyFundCard
+              familyId={familyId}
+              childId={childId}
+              childName={childName}
+              fund={fund}
+              canManage={canManage}
+              parentFirstName={parentFirstName}
+            />
             <Card>
               <h3 className="font-semibold text-emerald-900">🏅 Badges</h3>
               {badges.length === 0 ? (

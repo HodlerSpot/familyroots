@@ -1,4 +1,4 @@
-from .conftest import TestingSession, add_child, create_family, signup
+from .conftest import TestingSession, add_child, create_family, setup_fund, signup
 from .test_goals import make_grandparent
 
 
@@ -22,13 +22,14 @@ def test_grandparent_contribution_full_flow(client, tmp_path, monkeypatch):
     parent = signup(client, "parent@example.com", "Pat")
     family_id = create_family(client, parent)
     child_id = add_child(client, parent, family_id, "Emma")
+    setup_fund(client, parent, child_id)
     gran = make_grandparent(client, parent, family_id, name="Grandma Rose")
     for f in outbox.glob("*.txt"):
         f.unlink()
 
     c = contribute(client, gran, child_id, amount_cents=2500, message="So proud of you!")
     assert c["status"] == "pending"
-    assert c["fee_cents"] == 62  # 2.5% of 2500, floor
+    assert c["fee_cents"] == 103  # ceil(2.9% of 2500) + 30¢
 
     r = client.post(f"/contributions/{c['id']}/confirm", headers=gran)
     assert r.status_code == 200
@@ -38,7 +39,9 @@ def test_grandparent_contribution_full_flow(client, tmp_path, monkeypatch):
     r = client.get(f"/children/{child_id}/fund", headers=parent)
     assert r.status_code == 200
     fund = r.json()
-    assert fund["balance_cents"] == 2500 - 62
+    assert fund["balance_cents"] == 2500 - 103
+    assert fund["account_status"] == "active"
+    assert fund["setup_by_name"] == "Pat"
     assert len(fund["entries"]) == 1
     assert fund["entries"][0]["contributor_name"] == "Grandma Rose"
     assert fund["entries"][0]["message"] == "So proud of you!"
@@ -59,6 +62,7 @@ def test_confirm_is_idempotent(client):
     parent = signup(client, "parent@example.com")
     family_id = create_family(client, parent)
     child_id = add_child(client, parent, family_id)
+    setup_fund(client, parent, child_id)
     c = contribute(client, parent, child_id)
 
     assert client.post(f"/contributions/{c['id']}/confirm", headers=parent).status_code == 200
@@ -72,12 +76,13 @@ def test_balance_accumulates_across_contributions(client):
     parent = signup(client, "parent@example.com")
     family_id = create_family(client, parent)
     child_id = add_child(client, parent, family_id)
+    setup_fund(client, parent, child_id)
 
     expected = 0
     for amount in (1000, 2500, 5000):
         c = contribute(client, parent, child_id, amount_cents=amount)
         client.post(f"/contributions/{c['id']}/confirm", headers=parent)
-        expected += amount - (amount * 250) // 10_000
+        expected += amount - (-(-amount * 290 // 10_000) + 30)
 
     r = client.get(f"/children/{child_id}/fund", headers=parent)
     assert r.json()["balance_cents"] == expected
@@ -88,6 +93,7 @@ def test_outsider_cannot_contribute_or_view_fund(client):
     parent = signup(client, "parent@example.com")
     family_id = create_family(client, parent)
     child_id = add_child(client, parent, family_id)
+    setup_fund(client, parent, child_id)
 
     outsider = signup(client, "outsider@example.com")
     r = client.post(
@@ -103,6 +109,7 @@ def test_cannot_confirm_someone_elses_contribution(client):
     parent = signup(client, "parent@example.com")
     family_id = create_family(client, parent)
     child_id = add_child(client, parent, family_id)
+    setup_fund(client, parent, child_id)
     gran = make_grandparent(client, parent, family_id)
     c = contribute(client, gran, child_id)
 
@@ -114,6 +121,7 @@ def test_minimum_contribution_enforced(client):
     parent = signup(client, "parent@example.com")
     family_id = create_family(client, parent)
     child_id = add_child(client, parent, family_id)
+    setup_fund(client, parent, child_id)
     r = client.post(
         f"/children/{child_id}/contributions",
         json={"amount_cents": 50},
@@ -130,6 +138,7 @@ def test_ledger_is_append_only_no_updates(client):
     parent = signup(client, "parent@example.com")
     family_id = create_family(client, parent)
     child_id = add_child(client, parent, family_id)
+    setup_fund(client, parent, child_id)
     c = contribute(client, parent, child_id, amount_cents=1000)
     client.post(f"/contributions/{c['id']}/confirm", headers=parent)
 

@@ -13,6 +13,12 @@ const STATUS_CHIP: Record<string, string> = {
   refunded: "bg-stone-200 text-stone-600",
 };
 
+const FUND_CHIP: Record<string, { label: string; cls: string } | undefined> = {
+  onboarding: { label: "Fund: setting up", cls: "bg-amber-100 text-amber-800" },
+  active: { label: "Fund active", cls: "bg-emerald-100 text-emerald-800" },
+  restricted: { label: "✋ Fund needs attention", cls: "bg-amber-100 text-amber-800" },
+};
+
 function ago(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
@@ -113,14 +119,27 @@ export default function AdminFamilyDetailPage() {
             </h3>
             <Card className="p-0">
               <ul className="divide-y divide-stone-100">
-                {f.children.map((c) => (
-                  <li key={c.id} className="flex items-center justify-between px-4 py-2.5">
-                    <span className="font-medium text-stone-900">{c.first_name}</span>
-                    <span className="font-bold tabular-nums text-emerald-800">
-                      {formatMoney(c.fund_cents)}
-                    </span>
-                  </li>
-                ))}
+                {f.children.map((c) => {
+                  const chip = FUND_CHIP[c.fund_account_status];
+                  return (
+                    <li key={c.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5">
+                      <span className="font-medium text-stone-900">{c.first_name}</span>
+                      {chip && (
+                        <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${chip.cls}`}>
+                          {chip.label}
+                        </span>
+                      )}
+                      {c.stripe_account_id && (
+                        <span className="font-mono text-[11px] text-stone-400">
+                          {c.stripe_account_id}
+                        </span>
+                      )}
+                      <span className="ml-auto font-bold tabular-nums text-emerald-800">
+                        {formatMoney(c.fund_cents)}
+                      </span>
+                    </li>
+                  );
+                })}
                 {f.children.length === 0 && (
                   <li className="px-4 py-6 text-center text-sm text-stone-500">No children yet.</li>
                 )}

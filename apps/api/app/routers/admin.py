@@ -155,6 +155,10 @@ class ChildRef(BaseModel):
     id: uuid.UUID
     first_name: str
     fund_cents: int
+    # Connect account state — the admin console is the ONE surface where the
+    # Stripe account id may appear (for off-site tracing in the dashboard).
+    fund_account_status: str
+    stripe_account_id: str | None
 
 
 class AdminBugRow(BaseModel):
@@ -199,6 +203,17 @@ class Page(BaseModel):
 def _fund_cents_for_child(db, child_id: uuid.UUID) -> int:
     account = db.query(FundAccount).filter(FundAccount.child_id == child_id).first()
     return fund_balance_cents(db, account.id) if account else 0
+
+
+def _child_ref(db, child: Child) -> ChildRef:
+    account = db.query(FundAccount).filter(FundAccount.child_id == child.id).first()
+    return ChildRef(
+        id=child.id,
+        first_name=child.first_name,
+        fund_cents=fund_balance_cents(db, account.id) if account else 0,
+        fund_account_status=account.account_status.value if account else "none",
+        stripe_account_id=account.stripe_account_id if account else None,
+    )
 
 
 def _mini_contribution(c: Contribution, contributor: User | None, child: Child | None) -> MiniContribution:
@@ -543,10 +558,7 @@ def family_detail(family_id: uuid.UUID, db: DbSession, admin: AdminUser) -> Admi
             )
             for m, u in members
         ],
-        children=[
-            ChildRef(id=c.id, first_name=c.first_name, fund_cents=_fund_cents_for_child(db, c.id))
-            for c in children
-        ],
+        children=[_child_ref(db, c) for c in children],
         contributions=[_mini_contribution(c, u, ch) for c, u, ch in contribs],
     )
 

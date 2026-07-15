@@ -17,7 +17,7 @@ from app.config import settings
 from app.main import app
 from app.testnet.router import router as _testnet_routes  # name must not start with "test"
 
-from .conftest import add_child, create_family, signup
+from .conftest import add_child, create_family, setup_fund, signup
 
 # The default (family-product) app never mounts /testnet. Mount it once here
 # so the harness can be exercised; the require_testnet dependency still 404s
@@ -244,6 +244,7 @@ def test_north_star_journey_scores_heaviest(testnet_on, client):
 
     family_id = create_family(client, parent)  # +75
     child_id = add_child(client, parent, family_id)  # +60
+    setup_fund(client, parent, child_id)  # fund must be live before gifts
 
     r = client.post(
         f"/families/{family_id}/invites",

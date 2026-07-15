@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
-import { api, ApiError, formatMoney, getToken } from "@/lib/api";
+import { api, ApiError, formatMoney, FundAccountStatus, getToken } from "@/lib/api";
 import { Button, Card, ErrorNote, Input } from "@/components/ui";
 
 const PRESETS = [1000, 2500, 5000];
@@ -24,11 +24,19 @@ export default function ContributePage() {
   // Stripe step: set when the API returns a client_secret
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [pendingAmount, setPendingAmount] = useState(0);
+  // Card-processing amount from the API; net = gross - fee, no client math beyond that
+  const [pendingFee, setPendingFee] = useState(0);
+  // Gifts only flow when the child's Future Fund is active
+  const [fundStatus, setFundStatus] = useState<FundAccountStatus | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const family = await api.familyDetail(familyId);
+      const [family, status] = await Promise.all([
+        api.familyDetail(familyId),
+        api.fundStatus(childId),
+      ]);
       setChildName(family.children.find((c) => c.id === childId)?.first_name ?? "");
+      setFundStatus(status.account_status);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         router.replace(`/login?next=${encodeURIComponent(location.pathname)}`);
@@ -56,6 +64,7 @@ export default function ContributePage() {
         amount_cents: effectiveAmount,
         message: message || undefined,
       });
+      setPendingFee(contribution.fee_cents);
       if (contribution.client_secret) {
         if (!stripePromise) {
           setError("Payments aren't configured on this site yet. Please try again later.");
@@ -88,6 +97,12 @@ export default function ContributePage() {
           {childName ? ` ${childName}'s` : " their"} timeline for the whole family to see,
           and it will be waiting for {childName || "them"} for years to come.
         </p>
+        {pendingFee > 0 && (
+          <p className="text-stone-600">
+            {formatMoney(finalAmount - pendingFee)} is on its way to{" "}
+            {childName ? `${childName}'s` : "their"} account.
+          </p>
+        )}
         <Button onClick={() => router.push(`/family/${familyId}`)} className="w-full">
           See the family feed
         </Button>
@@ -105,6 +120,31 @@ export default function ContributePage() {
             {formatMoney(pendingAmount)} for {childName || "their"} future
           </h1>
         </div>
+        {pendingFee > 0 && (
+          <div className="rounded-xl bg-emerald-50/50 p-4">
+            <dl className="space-y-1">
+              <div className="flex items-baseline justify-between gap-4 text-base text-stone-700">
+                <dt>Your gift</dt>
+                <dd className="text-right tabular-nums">{formatMoney(pendingAmount)}</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-4 text-sm text-stone-500">
+                <dt>Card processing</dt>
+                <dd className="text-right tabular-nums">{formatMoney(pendingFee)}</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-4 pt-2 text-lg font-semibold text-emerald-900">
+                <dt>🌳 Goes straight to {childName || "them"}</dt>
+                <dd className="text-right tabular-nums">
+                  {formatMoney(pendingAmount - pendingFee)}
+                </dd>
+              </div>
+            </dl>
+            <p className="mt-3 text-xs text-stone-500">
+              This covers what the card costs to process. FutureRoots doesn&apos;t
+              profit from gifts; the rest is all{" "}
+              {childName ? `${childName}'s` : "theirs"}.
+            </p>
+          </div>
+        )}
         <Elements
           stripe={stripePromise}
           options={{ clientSecret, appearance: { variables: { colorPrimary: "#047857" } } }}
@@ -117,6 +157,43 @@ export default function ContributePage() {
         >
           ← Change amount
         </button>
+      </Card>
+    );
+  }
+
+  // Never show a payment form until we know the fund can receive gifts.
+  if (fundStatus === null) {
+    return error ? (
+      <div className="mx-auto max-w-lg">
+        <ErrorNote>{error}</ErrorNote>
+      </div>
+    ) : (
+      <p className="text-center text-stone-500">One moment…</p>
+    );
+  }
+
+  if (fundStatus !== "active") {
+    const paused = fundStatus === "restricted";
+    return (
+      <Card className="mx-auto max-w-lg space-y-4 text-center">
+        <div className="text-5xl">🌳</div>
+        <h1 className="text-2xl font-bold text-emerald-900">
+          {paused
+            ? `Gifts to ${childName || "this little one"} are paused just now`
+            : `${childName ? `${childName}'s` : "Their"} Future Fund is on its way`}
+        </h1>
+        <p className="text-stone-600">
+          {paused
+            ? "The family is updating a detail. Please try again soon."
+            : `${childName ? `${childName}'s` : "The"} family is getting the Future Fund ready. We'll be glad to see you back soon.`}
+        </p>
+        <Button
+          variant="soft"
+          className="w-full"
+          onClick={() => router.push(`/family/${familyId}/child/${childId}`)}
+        >
+          Back to the vault
+        </Button>
       </Card>
     );
   }
@@ -173,8 +250,8 @@ export default function ContributePage() {
         {busy ? "One moment…" : `Continue with ${formatMoney(effectiveAmount)}`}
       </Button>
       <p className="text-center text-xs text-stone-400">
-        Gifts are added to {childName || "the child"}&apos;s future fund, safe until
-        they&apos;re grown.
+        Gifts are added to {childName || "the child"}&apos;s Future Fund and go
+        straight to the account their family chose.
       </p>
     </Card>
   );

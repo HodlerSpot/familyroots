@@ -1,7 +1,7 @@
 """Notification preferences (email discipline) and the caller's own
 contribution history."""
 
-from .conftest import add_child, create_family, signup
+from .conftest import add_child, create_family, setup_fund, signup
 from .test_goals import make_grandparent
 
 
@@ -117,6 +117,7 @@ def test_my_contributions(client):
     parent = signup(client, "parent@example.com")
     family_id = create_family(client, parent, "The Salignas")
     child_id = add_child(client, parent, family_id, "Emma")
+    setup_fund(client, parent, child_id)
     gran = make_grandparent(client, parent, family_id, name="Gran")
 
     client.post(
@@ -132,6 +133,7 @@ def test_my_contributions(client):
     assert rows[0]["child_name"] == "Emma"
     assert rows[0]["family_name"] == "The Salignas"
     assert rows[0]["amount_cents"] == 2500
+    assert rows[0]["fee_cents"] == 103  # what the platform kept, visible to the giver
     assert rows[0]["message"] == "For you"
     assert rows[0]["refunded_cents"] == 0
 

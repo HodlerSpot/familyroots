@@ -110,6 +110,26 @@ users ──< family_members >── families ──< children
 - Sealed time capsules are visible only to their creator.
 - Supporters (`family_members.role = supporter`) see only vault items flagged `visible_to_supporters`; they are blocked from funds, capsules, goals, the legacy archive, children's birthdates, and family video calls, but may react/comment on shared items and contribute.
 
+## Future Fund accounts (Stripe Connect)
+
+`fund_accounts` (one per child) now carries the child's REAL account: a Stripe
+Express connected account (`stripe_account_id`, server-only, admin console
+excepted) legally owned by the parent (`setup_by`), earmarked for the child.
+`account_status` (none/onboarding/active/restricted) is a cache of Stripe's
+live state, refreshed only from `accounts.retrieve` (setup polling + the
+signed `account.updated` Connect webhook), never from client say-so.
+Contributions are destination charges: gross to the platform, application fee
+(= card-cost pass-through, 2.9% + 30¢ ceil) kept by the platform to cover
+Stripe's fee, net transferred to the connected account. The ledger entry is
+the NET and is written only by verified payment events; the webhook (and the
+admin reconcile path) refuse to settle a payment whose live destination/fee
+don't match what we route today. Contributions require `active` and the
+fund's own currency. `fund_nudges` throttles "ask a parent to set it up"
+emails (7-day/user/child; rows swept after 30 days). Opening a fund records
+a `consent_records` row (`contributions`). No child PII ever goes to Stripe:
+the account holder is the parent, and metadata carries only our opaque
+fund-account id.
+
 ## Family video call
 
 Live, ephemeral, family-only (Agora RTC). Four tables: `family_calls` (one active call per family via a `UNIQUE(active_family_id)` sentinel; stores only started/ended facts, no child data), `call_participants` (a member's seat + server-assigned `agora_uid` + heartbeat `last_seen_at`; presence = not-left and last_seen within the TTL), `call_child_presence` (parent-attested "this child is in the room", set only by an in-call member and hard-deleted when they leave or the call ends), and `planned_calls` (one mutable next-call time per family). No audio/video is ever recorded or stored. RTC tokens are minted server-side (short-lived, publisher-role, one random per-call channel) using the Agora App Certificate, which never leaves the server. Supporters are excluded from every call endpoint.

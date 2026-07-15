@@ -1,4 +1,4 @@
-from .conftest import TestingSession, add_child, create_family, signup
+from .conftest import TestingSession, add_child, create_family, setup_fund, signup
 
 
 def make_admin(client, email="admin@example.com"):
@@ -67,10 +67,11 @@ def test_refund_reverses_ledger(client):
     parent = signup(client, "parent@example.com")
     family_id = create_family(client, parent)
     child_id = add_child(client, parent, family_id)
+    setup_fund(client, parent, child_id)
     c = _succeeded_contribution(client, parent, child_id, 2500)
 
     fund = client.get(f"/children/{child_id}/fund", headers=parent).json()
-    assert fund["balance_cents"] == 2500 - 62  # net of the 2.5% fee
+    assert fund["balance_cents"] == 2500 - 103  # net of the 2.9% + 30¢ fee
 
     r = client.post(f"/admin/contributions/{c['id']}/refund", headers=admin)
     assert r.status_code == 200 and r.json()["status"] == "refunded"
@@ -88,16 +89,17 @@ def test_partial_refunds_accumulate(client):
     parent = signup(client, "parent@example.com")
     family_id = create_family(client, parent)
     child_id = add_child(client, parent, family_id)
-    c = _succeeded_contribution(client, parent, child_id, 3000)  # net 2925 after 75 fee
+    setup_fund(client, parent, child_id)
+    c = _succeeded_contribution(client, parent, child_id, 3000)  # net 2883 after 117 fee
 
-    assert client.get(f"/children/{child_id}/fund", headers=parent).json()["balance_cents"] == 2925
+    assert client.get(f"/children/{child_id}/fund", headers=parent).json()["balance_cents"] == 2883
 
-    # partial refund of 1000 gross -> ~975 net reversed
+    # partial refund of 1000 gross -> ~961 net reversed
     r = client.post(f"/admin/contributions/{c['id']}/refund", json={"amount_cents": 1000}, headers=admin)
     assert r.status_code == 200
     assert r.json()["status"] == "succeeded"  # still partially live
     assert r.json()["refunded_cents"] == 1000
-    assert client.get(f"/children/{child_id}/fund", headers=parent).json()["balance_cents"] == 2925 - 975
+    assert client.get(f"/children/{child_id}/fund", headers=parent).json()["balance_cents"] == 2883 - 961
 
     # over-refund is rejected
     assert client.post(
@@ -115,6 +117,7 @@ def test_contribution_status_filter_and_csv(client):
     parent = signup(client, "parent@example.com")
     family_id = create_family(client, parent)
     child_id = add_child(client, parent, family_id)
+    setup_fund(client, parent, child_id)
     _succeeded_contribution(client, parent, child_id)
 
     r = client.get("/admin/contributions?status=succeeded", headers=admin)
@@ -205,6 +208,7 @@ def test_reconcile_pending_contribution(client, monkeypatch):
     parent = signup(client, "parent@example.com")
     family_id = create_family(client, parent)
     child_id = add_child(client, parent, family_id)
+    setup_fund(client, parent, child_id)
     # create (pending) but do NOT confirm -> stuck pending like a missed webhook
     c = client.post(
         f"/children/{child_id}/contributions", json={"amount_cents": 1000}, headers=parent

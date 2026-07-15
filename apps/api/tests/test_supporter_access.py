@@ -1,7 +1,7 @@
 """Section E: the supporter role sees a deliberately narrow slice of a family
 and is locked out of funds, capsules, goals, and the legacy archive."""
 
-from .conftest import TestingSession, add_child, create_family, signup
+from .conftest import TestingSession, add_child, create_family, setup_fund, signup
 from .test_capsules import seal_capsule
 from .test_vault import PNG_BYTES, upload_photo
 
@@ -99,6 +99,7 @@ def test_supporter_can_contribute(client):
     parent = signup(client, "parent@example.com")
     family_id = create_family(client, parent)
     child_id = add_child(client, parent, family_id)
+    setup_fund(client, parent, child_id)
     supporter = make_supporter(client, parent, family_id)
 
     r = client.post(
@@ -180,6 +181,7 @@ def test_supporter_feed_is_filtered(client):
     client.post(
         f"/children/{child_id}/milestones", json={"title": "First steps"}, headers=parent
     )
+    setup_fund(client, parent, child_id)
     c = client.post(
         f"/children/{child_id}/contributions", json={"amount_cents": 2500}, headers=parent
     ).json()

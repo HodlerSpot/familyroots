@@ -11,6 +11,7 @@ from .routers import (
     contributions,
     families,
     feed,
+    funds,
     goals,
     invites,
     issues,
@@ -42,6 +43,7 @@ app.include_router(vault.router)
 app.include_router(feed.router)
 app.include_router(goals.router)
 app.include_router(contributions.router)
+app.include_router(funds.router)
 app.include_router(capsules.router)
 app.include_router(legacy.router)
 app.include_router(social.router)

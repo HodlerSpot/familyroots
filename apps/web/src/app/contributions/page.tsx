@@ -93,6 +93,12 @@ export default function ContributionsPage() {
                   >
                     {STATUS_LABEL[c.status]}
                   </span>
+                  {c.fee_cents > 0 && (
+                    <p className="mt-1 text-[11px] text-stone-500">
+                      {formatMoney(c.amount_cents - c.fee_cents, c.currency)} delivered to{" "}
+                      {c.child_name}&apos;s fund
+                    </p>
+                  )}
                   {c.refunded_cents > 0 && (
                     <p className="mt-1 text-[11px] font-medium text-stone-400">
                       {formatMoney(c.refunded_cents, c.currency)} refunded

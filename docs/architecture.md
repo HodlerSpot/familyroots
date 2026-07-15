@@ -101,6 +101,7 @@ Capsules store a release condition. A scheduled job (EventBridge cron in prod, s
 - All monetary amounts are **integer cents** with explicit currency
 - The future fund ledger is **append-only**; corrections are compensating entries, never updates
 - Stripe is the source of truth for payment status; ledger entries are created only from verified webhook events
+- **Real Future Fund accounts (Stripe Connect):** each child's fund is a Stripe Express connected account (legally the parent's, set up via hosted onboarding). Contributions are **destination charges** — the platform charges the card, keeps an application fee equal to the card-processing cost (2.9% + 30¢, ceiling; the platform nets ~0 and absorbs Amex/international variance and the kept processing fee on refunds), and Stripe transfers the net to the connected account. **FutureRoots holds no child balances**; the ledger records the net and settlement additionally verifies the live intent's destination + fee before writing. Connect account state arrives on a second webhook endpoint (`/webhooks/stripe-connect`, own signing secret) and is always re-fetched from Stripe, never trusted from a payload
 - MVP holds no real invested assets — the ledger tracks contributions and balances only (RESP/ETF/custodial investments are future phases)
 
 ## Compliance-driven design decisions

@@ -3,7 +3,14 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 
 from ..deps import CurrentUser, DbSession, get_child_with_access, require_not_supporter
-from ..models import Contribution, ContributionStatus, FundAccount, FundLedgerEntry, User
+from ..models import (
+    Contribution,
+    ContributionStatus,
+    FundAccount,
+    FundAccountStatus,
+    FundLedgerEntry,
+    User,
+)
 from ..schemas import ContributionCreate, ContributionOut, FundOut, LedgerEntryOut
 from ..services.payments import (
     contribution_fee_cents,
@@ -23,19 +30,45 @@ router = APIRouter(tags=["contributions"])
 def create_contribution(
     child_id: uuid.UUID, payload: ContributionCreate, db: DbSession, user: CurrentUser
 ) -> ContributionOut:
-    """Any family member can contribute — this is the north-star flow."""
-    get_child_with_access(db, child_id, user)
+    """Any family member can contribute — this is the north-star flow. The
+    child's Future Fund (connected account) must be active: money only ever
+    moves toward a real, payout-ready account. The destination is resolved
+    server-side — never from the client."""
+    child, _ = get_child_with_access(db, child_id, user)
+    account = db.query(FundAccount).filter(FundAccount.child_id == child_id).first()
+    account_status = account.account_status if account else FundAccountStatus.none
+    if account_status == FundAccountStatus.restricted:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Gifts to {child.first_name} are paused just now. Please try again soon.",
+        )
+    if account_status != FundAccountStatus.active:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{child.first_name}'s Future Fund isn't ready for gifts yet. "
+            f"A parent needs to finish setting it up first.",
+        )
+    # Currency is the FUND's, never the client's: a crafted non-USD currency
+    # would otherwise charge in that currency while the USD ledger records the
+    # raw cents figure, diverging the balance from the money actually moved.
+    if payload.currency != account.currency:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"Gifts to {child.first_name} are in {account.currency}.",
+        )
     contribution = Contribution(
         child_id=child_id,
         contributor_user_id=user.id,
         amount_cents=payload.amount_cents,
-        currency=payload.currency,
+        currency=account.currency,
         fee_cents=contribution_fee_cents(payload.amount_cents),
         message=payload.message,
         media_id=payload.media_id,
         trigger_feed_event_id=payload.trigger_feed_event_id,
     )
-    provider_id, client_secret = get_payment_provider().create_payment(contribution)
+    provider_id, client_secret = get_payment_provider().create_payment(
+        contribution, destination_account=account.stripe_account_id
+    )
     contribution.provider_payment_id = provider_id
     db.add(contribution)
     db.commit()
@@ -54,7 +87,7 @@ def confirm_contribution(
     if contribution is None or contribution.contributor_user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Contribution not found")
     if contribution.status == ContributionStatus.succeeded:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Already completed")
+        raise HTTPException(status.HTTP_409_CONFLICT, "This gift already went through. Thank you!")
 
     provider = get_payment_provider()
     if provider.settles_via_webhook:
@@ -79,7 +112,16 @@ def child_fund(child_id: uuid.UUID, db: DbSession, user: CurrentUser) -> FundOut
     require_not_supporter(membership)
     account = db.query(FundAccount).filter(FundAccount.child_id == child_id).first()
     if account is None:
-        return FundOut(child_id=child_id, currency="USD", balance_cents=0, entries=[])
+        return FundOut(
+            child_id=child_id,
+            currency="USD",
+            balance_cents=0,
+            account_status=FundAccountStatus.none,
+            setup_by_name=None,
+            entries=[],
+        )
+
+    setup_by = db.get(User, account.setup_by) if account.setup_by else None
 
     rows = (
         db.query(FundLedgerEntry, Contribution, User)
@@ -93,6 +135,8 @@ def child_fund(child_id: uuid.UUID, db: DbSession, user: CurrentUser) -> FundOut
         child_id=child_id,
         currency=account.currency,
         balance_cents=fund_balance_cents(db, account.id),
+        account_status=account.account_status,
+        setup_by_name=setup_by.display_name if setup_by else None,
         entries=[
             LedgerEntryOut(
                 id=entry.id,

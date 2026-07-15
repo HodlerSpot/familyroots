@@ -110,6 +110,7 @@ def my_contributions(db: DbSession, user: CurrentUser) -> list[MyContributionOut
             family_name=family.name,
             amount_cents=contribution.amount_cents,
             currency=contribution.currency,
+            fee_cents=contribution.fee_cents,
             status=contribution.status,
             refunded_cents=contribution.refunded_cents,
             message=contribution.message,
