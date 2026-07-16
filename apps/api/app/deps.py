@@ -82,6 +82,15 @@ def require_guardian_role(membership: FamilyMember) -> None:
         )
 
 
+def require_parent_role(membership: FamilyMember) -> None:
+    """Billing is founder-fixed to parents — stricter than require_guardian_role
+    (guardians manage children, not the family's plan)."""
+    if membership.role != FamilyRole.parent:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Only a parent can manage the family plan"
+        )
+
+
 def is_supporter(role: FamilyRole) -> bool:
     """A supporter is a trusted non-family adult with a deliberately narrow
     view: shared memories/milestones only — no funds, capsules, goals, legacy."""

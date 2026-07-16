@@ -16,6 +16,8 @@ import { Button, Card, ErrorNote, Input, Label } from "@/components/ui";
 import { FamilyFeedList } from "@/components/feed";
 import { FamilyCallCard } from "@/components/family-call/FamilyCallCard";
 import { useCallState } from "@/components/family-call/useCallState";
+import { PremiumPill } from "@/components/premium/PremiumPill";
+import { PlanSection } from "@/components/premium/PlanSection";
 
 export default function FamilyPage() {
   const router = useRouter();
@@ -72,7 +74,10 @@ export default function FamilyPage() {
         <a href="/family" className="text-sm text-stone-500 underline">
           ← All families
         </a>
-        <h1 className="mt-2 text-3xl font-bold text-emerald-900">{family.name}</h1>
+        <div className="mt-2 flex items-center gap-3">
+          <h1 className="text-3xl font-bold text-emerald-900">{family.name}</h1>
+          {family.plan && <PremiumPill plan={family.plan} />}
+        </div>
       </div>
 
       {!isSupporter && (
@@ -82,6 +87,8 @@ export default function FamilyPage() {
           children={family.children}
           state={callState}
           onRefresh={refreshCall}
+          capabilities={family.capabilities}
+          role={myRole}
         />
       )}
 
@@ -201,6 +208,8 @@ export default function FamilyPage() {
               <FamilyFeedList events={latest} />
             )}
           </section>
+
+          <PlanSection familyId={family.id} />
         </div>
       </div>
     </div>

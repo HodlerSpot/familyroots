@@ -12,12 +12,14 @@ import {
   FundOut,
   getToken,
   GoalOut,
+  isPremiumRequired,
   mediaUrl,
   VaultItemOut,
 } from "@/lib/api";
 import { Button, Card, ErrorNote, Input, Label, ZoomableImage } from "@/components/ui";
 import { CapsulesSection } from "@/components/capsules";
 import { FamilyFundCard, SupporterFundCard } from "@/components/fund";
+import { PremiumUpsellCard } from "@/components/premium/PremiumUpsell";
 
 const TYPE_ICONS: Record<string, string> = {
   photo: "📷",
@@ -40,6 +42,7 @@ export default function ChildVaultPage() {
   const [capsules, setCapsules] = useState<CapsuleOut[]>([]);
   const [myRole, setMyRole] = useState<FamilyRole | null>(null);
   const [parentFirstName, setParentFirstName] = useState<string | null>(null);
+  const [capabilities, setCapabilities] = useState<string[] | undefined>(undefined);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -48,6 +51,7 @@ export default function ChildVaultPage() {
       const child = family.children.find((c) => c.id === childId);
       setChildName(child?.first_name ?? "");
       setAvatarMediaId(child?.avatar_media_id ?? null);
+      setCapabilities(family.capabilities);
       const role = family.members.find((m) => m.user.id === me.id)?.role ?? null;
       setMyRole(role);
       const firstParent = family.members.find((m) => m.role === "parent");
@@ -100,6 +104,9 @@ export default function ChildVaultPage() {
   const isSupporter = myRole === "supporter";
   const isParent = myRole === "parent";
   const canManage = myRole === "parent" || myRole === "guardian";
+  // Affordance only; the API enforces. Before the capabilities field exists on
+  // the payload we allow the attempt and rely on the server's 402 backstop.
+  const videoAllowed = capabilities ? capabilities.includes("video_upload") : true;
 
   return (
     <div className="space-y-8">
@@ -180,6 +187,9 @@ export default function ChildVaultPage() {
             capsules={capsules}
             goals={goals}
             onChanged={load}
+            familyId={familyId}
+            role={myRole}
+            videoAllowed={videoAllowed}
           />
         </>
       )}
@@ -194,12 +204,18 @@ export default function ChildVaultPage() {
               onPosted={load}
               childName={childName}
               showSupporterOptIn={isParent}
+              familyId={familyId}
+              role={myRole}
+              videoAllowed={videoAllowed}
             />
             <MemoryForm
               childId={childId}
               onAdded={load}
               childName={childName}
               showSupporterOptIn={isParent}
+              familyId={familyId}
+              role={myRole}
+              videoAllowed={videoAllowed}
             />
           </div>
         )}
@@ -223,6 +239,13 @@ export default function ChildVaultPage() {
                     src={mediaUrl(item.media_id)}
                     alt={item.title}
                     className="mt-3 max-h-72 rounded-xl object-cover"
+                  />
+                )}
+                {item.media_id && item.media_content_type?.startsWith("video/") && (
+                  <video
+                    controls
+                    src={mediaUrl(item.media_id)}
+                    className="mt-3 max-h-72 w-full rounded-xl"
                   />
                 )}
                 <p className="mt-2 text-xs text-stone-400">
@@ -416,21 +439,39 @@ function MilestoneForm({
   childName,
   showSupporterOptIn,
   onPosted,
+  familyId,
+  role,
+  videoAllowed,
 }: {
   childId: string;
   childName: string;
   showSupporterOptIn: boolean;
   onPosted: () => void;
+  familyId: string;
+  role: FamilyRole | null;
+  videoAllowed: boolean;
 }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [shareWithSupporters, setShareWithSupporters] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [videoBlocked, setVideoBlocked] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  function onFileChange() {
+    const file = fileRef.current?.files?.[0];
+    setVideoBlocked(!!file && file.type.startsWith("video/") && !videoAllowed);
+  }
+
+  function dismissUpsell() {
+    if (fileRef.current) fileRef.current.value = "";
+    setVideoBlocked(false);
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (videoBlocked) return;
     setBusy(true);
     setError("");
     try {
@@ -450,7 +491,12 @@ function MilestoneForm({
       if (fileRef.current) fileRef.current.value = "";
       onPosted();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong");
+      if (isPremiumRequired(err)) {
+        // Server-side gate backstop: show the warm invitation, never an error.
+        setVideoBlocked(true);
+      } else {
+        setError(err instanceof ApiError ? err.message : "Something went wrong");
+      }
     } finally {
       setBusy(false);
     }
@@ -482,9 +528,24 @@ function MilestoneForm({
           />
         </div>
         <div>
-          <Label htmlFor="mphoto">Add a photo (optional)</Label>
-          <input id="mphoto" ref={fileRef} type="file" accept="image/*" className="text-sm" />
+          <Label htmlFor="mphoto">Add a photo or video (optional)</Label>
+          <input
+            id="mphoto"
+            ref={fileRef}
+            type="file"
+            accept="image/*,video/*"
+            onChange={onFileChange}
+            className="text-sm"
+          />
         </div>
+        {videoBlocked && (
+          <PremiumUpsellCard
+            familyId={familyId}
+            capability="video_upload"
+            role={role}
+            onDismiss={dismissUpsell}
+          />
+        )}
         {showSupporterOptIn && (
           <label className="flex items-center gap-2 text-sm text-stone-600">
             <input
@@ -497,7 +558,7 @@ function MilestoneForm({
           </label>
         )}
         <ErrorNote>{error}</ErrorNote>
-        <Button type="submit" disabled={busy} className="w-full">
+        <Button type="submit" disabled={busy || videoBlocked} className="w-full">
           {busy ? "Sharing…" : "Share the news"}
         </Button>
       </form>
@@ -510,28 +571,46 @@ function MemoryForm({
   childName,
   showSupporterOptIn,
   onAdded,
+  familyId,
+  role,
+  videoAllowed,
 }: {
   childId: string;
   childName: string;
   showSupporterOptIn: boolean;
   onAdded: () => void;
+  familyId: string;
+  role: FamilyRole | null;
+  videoAllowed: boolean;
 }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [shareWithSupporters, setShareWithSupporters] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [videoBlocked, setVideoBlocked] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  function onFileChange() {
+    const file = fileRef.current?.files?.[0];
+    setVideoBlocked(!!file && file.type.startsWith("video/") && !videoAllowed);
+  }
+
+  function dismissUpsell() {
+    if (fileRef.current) fileRef.current.value = "";
+    setVideoBlocked(false);
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (videoBlocked) return;
     setBusy(true);
     setError("");
     try {
       const file = fileRef.current?.files?.[0];
       const media_id = file ? await api.uploadMedia(childId, file) : undefined;
       const created = await api.addVaultItem(childId, {
-        type: file ? "photo" : "message",
+        type: file ? (file.type.startsWith("video/") ? "video" : "photo") : "message",
         title,
         body: body || undefined,
         media_id,
@@ -545,7 +624,12 @@ function MemoryForm({
       if (fileRef.current) fileRef.current.value = "";
       onAdded();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong");
+      if (isPremiumRequired(err)) {
+        // Server-side gate backstop: show the warm invitation, never an error.
+        setVideoBlocked(true);
+      } else {
+        setError(err instanceof ApiError ? err.message : "Something went wrong");
+      }
     } finally {
       setBusy(false);
     }
@@ -555,7 +639,7 @@ function MemoryForm({
     <Card>
       <h3 className="mb-1 font-semibold text-emerald-900">📷 Add a memory</h3>
       <p className="mb-4 text-sm text-stone-500">
-        A photo or a note for {childName || "them"} to treasure later.
+        A photo, video, or note for {childName || "them"} to treasure later.
       </p>
       <form onSubmit={submit} className="space-y-3">
         <div>
@@ -573,9 +657,24 @@ function MemoryForm({
           <Input id="vbody" value={body} onChange={(e) => setBody(e.target.value)} />
         </div>
         <div>
-          <Label htmlFor="vphoto">Photo (optional)</Label>
-          <input id="vphoto" ref={fileRef} type="file" accept="image/*" className="text-sm" />
+          <Label htmlFor="vphoto">Photo or video (optional)</Label>
+          <input
+            id="vphoto"
+            ref={fileRef}
+            type="file"
+            accept="image/*,video/*"
+            onChange={onFileChange}
+            className="text-sm"
+          />
         </div>
+        {videoBlocked && (
+          <PremiumUpsellCard
+            familyId={familyId}
+            capability="video_upload"
+            role={role}
+            onDismiss={dismissUpsell}
+          />
+        )}
         {showSupporterOptIn && (
           <label className="flex items-center gap-2 text-sm text-stone-600">
             <input
@@ -588,7 +687,7 @@ function MemoryForm({
           </label>
         )}
         <ErrorNote>{error}</ErrorNote>
-        <Button type="submit" disabled={busy} className="w-full">
+        <Button type="submit" disabled={busy || videoBlocked} className="w-full">
           {busy ? "Saving…" : "Save to the vault"}
         </Button>
       </form>

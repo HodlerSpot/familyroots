@@ -8,11 +8,15 @@ import {
   CallParticipant,
   CallState,
   ChildOut,
+  FamilyRole,
+  isPremiumRequired,
   mediaUrl,
 } from "@/lib/api";
 import { Button, Card, ErrorNote, Input, Label, Modal } from "@/components/ui";
 import { WhoIsHereModal } from "./WhoIsHereModal";
 import { FamilyCallLayer } from "./FamilyCallLayer";
+import { PremiumPill } from "@/components/premium/PremiumPill";
+import { PremiumUpsellModal } from "@/components/premium/PremiumUpsell";
 
 type Phase = "idle" | "picking" | "in-call";
 
@@ -22,23 +26,35 @@ export function FamilyCallCard({
   children,
   state,
   onRefresh,
+  capabilities,
+  role,
 }: {
   familyId: string;
   familyName: string;
   children: ChildOut[];
   state: CallState | null;
   onRefresh: () => void;
+  /** Family capabilities from the family payload; affordance only, the API
+   * enforces. When absent we behave as before and let the 402 backstop catch. */
+  capabilities?: string[];
+  role?: FamilyRole | null;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [join, setJoin] = useState<CallJoin | null>(null);
   const [busy, setBusy] = useState(false);
   const [joinError, setJoinError] = useState("");
+  const [upsellOpen, setUpsellOpen] = useState(false);
   const launchRef = useRef<HTMLButtonElement>(null);
 
   const active = !!state?.active;
+  const callAllowed = capabilities ? capabilities.includes("family_video_call") : true;
 
   function launch() {
     setJoinError("");
+    if (!callAllowed) {
+      setUpsellOpen(true);
+      return;
+    }
     if (children.length === 0) {
       void doJoin([]);
     } else {
@@ -61,6 +77,12 @@ export function FamilyCallCard({
       setJoin(j);
       setPhase("in-call");
     } catch (err) {
+      if (isPremiumRequired(err)) {
+        // Server-side gate backstop: show the warm invitation, never an error.
+        setUpsellOpen(true);
+        setPhase("idle");
+        return;
+      }
       setJoinError(
         err instanceof ApiError ? err.message : "We couldn't start the call just now. Please try again."
       );
@@ -89,7 +111,12 @@ export function FamilyCallCard({
           launchRef={launchRef}
         />
       ) : (
-        <IdleCard onStart={launch} busy={busy} launchRef={launchRef} />
+        <IdleCard
+          onStart={launch}
+          busy={busy}
+          launchRef={launchRef}
+          premiumLocked={!callAllowed}
+        />
       )}
 
       {joinError && (
@@ -99,8 +126,22 @@ export function FamilyCallCard({
       )}
 
       <div className="mt-3">
-        <PlannedCallSection familyId={familyId} state={state} onRefresh={onRefresh} />
+        <PlannedCallSection
+          familyId={familyId}
+          state={state}
+          onRefresh={onRefresh}
+          locked={!callAllowed}
+          onLocked={() => setUpsellOpen(true)}
+        />
       </div>
+
+      <PremiumUpsellModal
+        open={upsellOpen}
+        onClose={() => setUpsellOpen(false)}
+        familyId={familyId}
+        capability="family_video_call"
+        role={role ?? null}
+      />
 
       <WhoIsHereModal
         open={phase === "picking"}
@@ -127,16 +168,23 @@ function IdleCard({
   onStart,
   busy,
   launchRef,
+  premiumLocked,
 }: {
   onStart: () => void;
   busy: boolean;
   launchRef: React.RefObject<HTMLButtonElement | null>;
+  premiumLocked: boolean;
 }) {
   return (
     <Card className="bg-gradient-to-br from-emerald-50 to-amber-50">
       <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <h2 className="text-xl font-bold text-emerald-900">Gather the family in the living room</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-xl font-bold text-emerald-900">
+              Gather the family in the living room
+            </h2>
+            {premiumLocked && <PremiumPill plan="premium" />}
+          </div>
           <p className="mt-1 text-stone-600">
             Start a family call and see everyone&apos;s faces, wherever they are.
           </p>
@@ -243,14 +291,24 @@ function PlannedCallSection({
   familyId,
   state,
   onRefresh,
+  locked,
+  onLocked,
 }: {
   familyId: string;
   state: CallState | null;
   onRefresh: () => void;
+  /** Scheduling is part of Premium; when locked, taps open the upsell. */
+  locked: boolean;
+  onLocked: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const planned = state?.planned_call ?? null;
+
+  function startEditing() {
+    if (locked) onLocked();
+    else setOpen(true);
+  }
 
   async function clear() {
     setBusy(true);
@@ -275,7 +333,7 @@ function PlannedCallSection({
           </div>
           <div className="flex gap-2">
             <button
-              onClick={() => setOpen(true)}
+              onClick={startEditing}
               className="rounded-lg px-3 py-2 text-sm font-medium text-emerald-800 hover:bg-emerald-50"
             >
               Change
@@ -291,10 +349,11 @@ function PlannedCallSection({
         </div>
       ) : (
         <button
-          onClick={() => setOpen(true)}
-          className="text-sm font-medium text-emerald-800 hover:text-emerald-900"
+          onClick={startEditing}
+          className="inline-flex items-center gap-2 text-sm font-medium text-emerald-800 hover:text-emerald-900"
         >
           + Set the next call
+          {locked && <PremiumPill plan="premium" />}
         </button>
       )}
 
@@ -307,6 +366,10 @@ function PlannedCallSection({
           setOpen(false);
           onRefresh();
         }}
+        onPremiumNeeded={() => {
+          setOpen(false);
+          onLocked();
+        }}
       />
     </div>
   );
@@ -318,12 +381,14 @@ function PlannedCallModal({
   initial,
   onClose,
   onSaved,
+  onPremiumNeeded,
 }: {
   open: boolean;
   familyId: string;
   initial: CallState["planned_call"];
   onClose: () => void;
   onSaved: () => void;
+  onPremiumNeeded: () => void;
 }) {
   const [when, setWhen] = useState("");
   const [note, setNote] = useState("");
@@ -348,6 +413,11 @@ function PlannedCallModal({
       await api.setPlannedCall(familyId, new Date(when).toISOString(), note.trim() || undefined);
       onSaved();
     } catch (err) {
+      if (isPremiumRequired(err)) {
+        // Server-side gate backstop: hand off to the warm upsell.
+        onPremiumNeeded();
+        return;
+      }
       setError(err instanceof ApiError ? err.message : "We couldn't save that. Please try again.");
     } finally {
       setBusy(false);

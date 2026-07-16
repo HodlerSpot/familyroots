@@ -17,6 +17,7 @@ from .routers import (
     issues,
     legacy,
     me,
+    premium,
     social,
     vault,
     webhooks,
@@ -47,6 +48,7 @@ app.include_router(funds.router)
 app.include_router(capsules.router)
 app.include_router(legacy.router)
 app.include_router(social.router)
+app.include_router(premium.router)
 app.include_router(calls.router)
 app.include_router(me.router)
 app.include_router(webhooks.router)

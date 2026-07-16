@@ -21,6 +21,15 @@ class Settings(BaseSettings):
     # Second endpoint secret: Connect events (account.updated) for Express
     # accounts arrive only on a connected-accounts webhook with its own secret.
     stripe_connect_webhook_secret: str = ""
+    # Premium (family subscription). Prices are Stripe Price ids — amounts live
+    # in Stripe, never as floats in code. Empty ids ⇒ premium checkout 503s in
+    # stripe mode ("Premium isn't set up yet") so the feature stays dark, never
+    # broken.
+    stripe_price_monthly: str = ""      # $9.99/mo recurring
+    stripe_price_annual: str = ""       # $99/yr recurring
+    stripe_price_gift_year: str = ""    # $99 one-time (12-month gift)
+    premium_grant_days: int = 365
+    premium_gift_amount_cents: int = 9900   # local-backend simulation + display only
     web_base_url: str = "http://localhost:3000"
     cors_extra_origins: str = ""  # comma-separated additional allowed origins
     # Testnet harness (testnet.futureroots.app only). Gates the /testnet

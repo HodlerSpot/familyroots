@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError, FamilySummary, getToken, setToken } from "@/lib/api";
 import { Button, Card, ErrorNote, Input, Label } from "@/components/ui";
+import { PremiumPill } from "@/components/premium/PremiumPill";
 
 export default function FamilyDashboard() {
   const router = useRouter();
@@ -54,16 +55,42 @@ export default function FamilyDashboard() {
       {families === null && !error && <p className="text-stone-500">Loading…</p>}
 
       {families?.map((f) => (
-        <Card key={f.id} className="cursor-pointer transition hover:border-emerald-400">
-          <a href={`/family/${f.id}`} className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <h2 className="text-xl font-semibold text-stone-900">{f.name}</h2>
-              <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold capitalize text-emerald-800">
+        <Card key={f.id} className="transition hover:border-emerald-400">
+          <div className="flex items-center justify-between gap-3">
+            <a href={`/family/${f.id}`} className="flex min-w-0 flex-1 items-center gap-3">
+              <h2 className="truncate text-xl font-semibold text-stone-900">{f.name}</h2>
+              <span className="shrink-0 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold capitalize text-emerald-800">
                 {f.role}
               </span>
+            </a>
+            <div className="flex shrink-0 items-center gap-3">
+              {f.plan && (
+                // The badge deep-links: a parent on a Free family lands on the
+                // plan picker; everyone else lands on the family's Plan section.
+                <a
+                  href={
+                    f.role === "parent" && f.plan === "free"
+                      ? `/family/${f.id}/premium`
+                      : `/family/${f.id}#plan`
+                  }
+                >
+                  <PremiumPill
+                    plan={f.plan}
+                    tooltip={
+                      f.plan === "premium"
+                        ? "This family is on FutureRoots Premium."
+                        : f.role === "parent"
+                          ? "On the Free plan. See what Premium adds."
+                          : "On the Free plan. You can gift Premium anytime."
+                    }
+                  />
+                </a>
+              )}
+              <a href={`/family/${f.id}`} aria-label={`Open ${f.name}`} className="text-emerald-700">
+                →
+              </a>
             </div>
-            <span className="text-emerald-700">→</span>
-          </a>
+          </div>
         </Card>
       ))}
 

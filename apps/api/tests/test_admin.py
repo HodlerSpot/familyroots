@@ -242,3 +242,48 @@ def test_role_management_and_self_protection(client):
 
     with TestingSession() as db:
         assert db.query(AdminAuditLog).filter(AdminAuditLog.action == "role_changed").count() >= 1
+
+
+def test_void_premium_grant_clears_message(client):
+    """Voiding a refunded gift also nulls its free-text message (which may name
+    a child) — a voided grant is no longer displayed and shouldn't retain PII.
+    voided_at + message-null are the only permitted mutations."""
+    import uuid
+    from datetime import timedelta
+
+    from app.models import PremiumGrant, User, utcnow
+
+    admin = make_admin(client)
+    parent = signup(client, "parent@example.com", "Pat")
+    family_id = create_family(client, parent, "The Salignas")
+
+    with TestingSession() as db:
+        parent_id = db.query(User).filter(User.email == "parent@example.com").one().id
+        grant = PremiumGrant(
+            id=uuid.uuid4(),
+            family_id=uuid.UUID(family_id),
+            source="gift",
+            granted_by_user_id=parent_id,
+            stripe_checkout_session_id="cs_void_test",
+            amount_cents=9900,
+            currency="USD",
+            message="For Emma's recital videos",
+            starts_at=utcnow(),
+            ends_at=utcnow() + timedelta(days=365),
+        )
+        db.add(grant)
+        db.commit()
+        grant_id = str(grant.id)
+
+    r = client.post(f"/admin/premium-grants/{grant_id}/void", headers=admin)
+    assert r.status_code == 200, r.text
+
+    with TestingSession() as db:
+        row = db.query(PremiumGrant).filter(PremiumGrant.id == uuid.UUID(grant_id)).one()
+        assert row.voided_at is not None
+        assert row.voided_by_user_id is not None
+        assert row.message is None  # PII cleared
+
+    # Idempotency: a second void is a 409 (already voided), message stays null.
+    r = client.post(f"/admin/premium-grants/{grant_id}/void", headers=admin)
+    assert r.status_code == 409

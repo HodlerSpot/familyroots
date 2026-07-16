@@ -40,6 +40,7 @@ from ..schemas import (
 )
 from ..security import decode_access_token
 from ..services.email_templates import render_email
+from ..services.entitlements import Capability, require_capability
 from ..services.feed import emit
 from ..services.notifications import notify_members
 from ..services.storage import get_storage
@@ -48,6 +49,41 @@ from .children import child_out
 router = APIRouter(tags=["vault"])
 
 DEFAULT_MAX_UPLOAD_MB = 10  # default attachment cap; families can be raised/lowered by an admin
+
+# Common video-container ISO-BMFF brands (mp4/mov/m4v/3gp...). Deliberately an
+# ALLOWLIST of clearly-video brands so we never mis-flag HEIC/AVIF stills
+# (which also use the `ftyp` box) or m4a audio as video.
+_VIDEO_FTYP_BRANDS = {
+    b"isom", b"iso2", b"iso4", b"iso5", b"iso6", b"mp41", b"mp42", b"avc1",
+    b"mmp4", b"m4v ", b"qt  ", b"dash", b"msnv", b"3gp4", b"3gp5", b"3gp6",
+    b"3g2a",
+}
+
+
+def _sniffed_is_video(head: bytes) -> bool:
+    """Cheap, dependency-free container-signature sniff: True when the leading
+    bytes look like a video container. Covers the realistic paywall bypass
+    (rename a .mp4 to .jpg and declare image/*). Residual gap: exotic or
+    fragmented containers with uncommon brands aren't caught — acceptable for a
+    lightweight signature check; robust probing would need a media library."""
+    if len(head) < 12:
+        return False
+    # ISO base media (mp4/mov/m4v/3gp): `ftyp` box at offset 4, brand at 8.
+    if head[4:8] == b"ftyp" and head[8:12].lower() in _VIDEO_FTYP_BRANDS:
+        return True
+    # Matroska / WebM: EBML magic.
+    if head[:4] == b"\x1a\x45\xdf\xa3":
+        return True
+    # AVI: RIFF....AVI  (RIFF is shared with WAV/WebP, so require the AVI tag).
+    if head[:4] == b"RIFF" and head[8:12] == b"AVI ":
+        return True
+    # Flash Video.
+    if head[:3] == b"FLV":
+        return True
+    # MPEG program stream / video sequence header.
+    if head[:4] in (b"\x00\x00\x01\xba", b"\x00\x00\x01\xb3"):
+        return True
+    return False
 
 
 def _max_upload_bytes(db, media: MediaObject) -> int:
@@ -87,7 +123,12 @@ def _vault_item_out(item: VaultItem) -> VaultItemOut:
 def create_media(
     child_id: uuid.UUID, payload: MediaCreate, db: DbSession, user: CurrentUser
 ) -> MediaUploadTicket:
-    get_child_with_access(db, child_id, user)
+    child, _ = get_child_with_access(db, child_id, user)
+    # Video is a Premium capability (photos/voice/text stay free). Server-side
+    # enforcement — the client's inline upsell is never the gate. Uploads in
+    # flight at downgrade still complete: only the ticket is gated.
+    if payload.content_type.startswith("video/"):
+        require_capability(db, child.family_id, Capability.video_upload)
     media = MediaObject(
         child_id=child_id,
         storage_key=str(uuid.uuid4()),
@@ -144,6 +185,21 @@ def complete_media_upload(media_id: uuid.UUID, db: DbSession, user: CurrentUser)
             status.HTTP_413_CONTENT_TOO_LARGE,
             f"That file is too large ({limit // (1024 * 1024)} MB max)",
         )
+    # Video is a Premium capability and is gated at ticket time on the DECLARED
+    # content_type. Verify the bytes don't smuggle a video in under an image/
+    # audio declaration (a free family renaming clip.mp4 to photo.jpg). We only
+    # sniff the non-video declarations — a legitimately declared video/* was
+    # already entitlement-gated when its ticket was issued.
+    declared = (media.content_type or "").lower()
+    if declared.startswith(("image/", "audio/")):
+        head = get_storage().read_head(media, 16)
+        if head and _sniffed_is_video(head):
+            get_storage().delete(media.storage_key)
+            raise HTTPException(
+                status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                "That file looks like a video. Video memories are part of "
+                "FutureRoots Premium.",
+            )
     media.byte_size = size
     media.status = MediaStatus.uploaded
     db.commit()

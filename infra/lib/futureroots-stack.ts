@@ -141,6 +141,12 @@ export class FutureRootsStack extends cdk.Stack {
         // separate connected-accounts endpoint with its own signing secret.
         FUTUREROOTS_STRIPE_CONNECT_WEBHOOK_SECRET:
           process.env.STRIPE_CONNECT_WEBHOOK_SECRET ?? "",
+        // FutureRoots Premium — Stripe Price ids (not secrets; amounts live in
+        // Stripe). Empty ids keep Premium checkout dark (503), never broken.
+        FUTUREROOTS_STRIPE_PRICE_MONTHLY: process.env.STRIPE_PRICE_MONTHLY ?? "",
+        FUTUREROOTS_STRIPE_PRICE_ANNUAL: process.env.STRIPE_PRICE_ANNUAL ?? "",
+        FUTUREROOTS_STRIPE_PRICE_GIFT_YEAR:
+          process.env.STRIPE_PRICE_GIFT_YEAR ?? "",
         FUTUREROOTS_AGORA_APP_ID: "c58c8181f4204f07bc1a36d93cae5514",
         FUTUREROOTS_AGORA_APP_CERTIFICATE: agoraSecret,
       },

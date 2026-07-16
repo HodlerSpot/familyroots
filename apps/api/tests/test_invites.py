@@ -1,4 +1,4 @@
-from .conftest import add_child, create_family, signup
+from .conftest import add_child, create_family, make_premium, signup
 
 
 def _get_token(db_session_factory):
@@ -52,6 +52,29 @@ def test_full_invite_flow(client):
             ChildRelationship.relationship_type == FamilyRole.grandparent
         ).all()
         assert len(edges) == 1
+
+
+def test_accept_invite_to_premium_family_reports_premium_plan(client):
+    """The accept response is a FamilySummary — it must carry the family's real
+    plan (derived, same as GET /families) rather than defaulting to 'free'."""
+    from .conftest import TestingSession
+
+    parent = signup(client, "parent@example.com", "Pat")
+    family_id = create_family(client, parent, "The Salignas")
+    make_premium(client, parent, family_id)  # local backend settles synchronously
+
+    r = client.post(
+        f"/families/{family_id}/invites",
+        json={"email": "gran@example.com", "role": "grandparent"},
+        headers=parent,
+    )
+    assert r.status_code == 201
+    token = _get_token(TestingSession)
+
+    gran = signup(client, "gran@example.com", "Gran")
+    r = client.post("/invites/accept", json={"token": token}, headers=gran)
+    assert r.status_code == 200, r.text
+    assert r.json()["plan"] == "premium"
 
 
 def test_invite_email_written_to_outbox(client, tmp_path, monkeypatch):

@@ -19,10 +19,18 @@ export interface UserOut {
   avatar_media_id: string | null;
 }
 
+/** Family-level plan, derived server-side. The client uses it for warm
+ * affordances only; the API is always the enforcement. */
+export type FamilyPlan = "free" | "premium";
+
+/** Recurring billing plan for FutureRoots Premium. */
+export type PremiumBillingPlan = "monthly" | "annual";
+
 export interface FamilySummary {
   id: string;
   name: string;
   role: FamilyRole;
+  plan: FamilyPlan;
 }
 
 export interface MemberOut {
@@ -45,6 +53,9 @@ export interface FamilyDetail {
   name: string;
   members: MemberOut[];
   children: ChildOut[];
+  plan: FamilyPlan;
+  premium_until: string | null;
+  capabilities: string[];
 }
 
 export interface InvitePreview {
@@ -74,7 +85,9 @@ export type FeedEventType =
   | "memory_added"
   | "capsule_created"
   | "capsule_released"
-  | "member_joined";
+  | "member_joined"
+  | "premium_activated"
+  | "premium_gifted";
 
 export interface FeedEventOut {
   id: string;
@@ -260,10 +273,56 @@ export interface LegacyOut {
   created_at: string;
 }
 
+// --- FutureRoots Premium (family membership) ---
+
+export interface PremiumSubscription {
+  plan: PremiumBillingPlan;
+  status: "active" | "past_due" | "canceled";
+  current_period_end: string;
+  cancel_at_period_end: boolean;
+  owner_name: string;
+  /** Viewer started this subscription (enables the billing portal button). */
+  is_owner: boolean;
+}
+
+export interface PremiumGrant {
+  gifter_name: string;
+  starts_at: string;
+  ends_at: string;
+  message: string | null;
+}
+
+export interface PremiumStatus {
+  plan: FamilyPlan;
+  premium_until: string | null;
+  capabilities: string[];
+  /** Viewer is an active parent (may upgrade/cancel/resume). */
+  can_manage: boolean;
+  /** Viewer is an active non-parent (may gift Premium). */
+  can_gift: boolean;
+  /** Billing detail; present for parents only (billing trouble is private). */
+  subscription: PremiumSubscription | null;
+  grants: PremiumGrant[];
+}
+
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(
+    public status: number,
+    message: string,
+    /** Machine-readable error code from a structured API error detail,
+     * e.g. "premium_required", "already_premium", "use_subscribe". */
+    public code: string | null = null,
+    /** The gated capability when code === "premium_required". */
+    public capability: string | null = null
+  ) {
     super(message);
   }
+}
+
+/** True when a call failed because the family needs FutureRoots Premium.
+ * Callers of gated actions catch this and show the warm upsell, not a toast. */
+export function isPremiumRequired(err: unknown): err is ApiError & { capability: string } {
+  return err instanceof ApiError && err.status === 402 && err.code === "premium_required";
 }
 
 export function getToken(): string | null {
@@ -288,13 +347,24 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
   if (!res.ok) {
     let detail = res.statusText;
+    let code: string | null = null;
+    let capability: string | null = null;
     try {
       const body = await res.json();
-      if (typeof body.detail === "string") detail = body.detail;
+      const d = body.detail;
+      if (typeof d === "string") {
+        detail = d;
+      } else if (d && typeof d === "object") {
+        // Structured error detail, e.g. the 402 premium_required shape:
+        // {"code": "premium_required", "capability": "...", "message": "..."}
+        if (typeof d.message === "string") detail = d.message;
+        if (typeof d.code === "string") code = d.code;
+        if (typeof d.capability === "string") capability = d.capability;
+      }
     } catch {
       // non-JSON error body; keep statusText
     }
-    throw new ApiError(res.status, detail);
+    throw new ApiError(res.status, detail, code, capability);
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -560,6 +630,37 @@ export const api = {
     }),
   clearPlannedCall: (familyId: string) =>
     request<void>(`/families/${familyId}/call/planned`, { method: "DELETE" }),
+
+  // --- FutureRoots Premium (family membership) ---
+  getPremiumStatus: (familyId: string) =>
+    request<PremiumStatus>(`/families/${familyId}/premium`),
+  /** Parent-only: start a Stripe-hosted checkout for the recurring plan.
+   * Navigate the browser to the returned checkout_url. */
+  createPremiumCheckout: (familyId: string, plan: PremiumBillingPlan) =>
+    request<{ checkout_url: string }>(`/families/${familyId}/premium/checkout`, {
+      method: "POST",
+      body: JSON.stringify({ plan }),
+    }),
+  /** Non-parent: one-time 12-month gift checkout. The message stays with
+   * FutureRoots only; it is never sent to the payment processor. */
+  createGiftCheckout: (familyId: string, message?: string) =>
+    request<{ checkout_url: string }>(`/families/${familyId}/premium/gift-checkout`, {
+      method: "POST",
+      body: JSON.stringify({ message: message ?? null }),
+    }),
+  cancelPremium: (familyId: string) =>
+    request<PremiumStatus>(`/families/${familyId}/premium/cancel`, { method: "POST" }),
+  resumePremium: (familyId: string) =>
+    request<PremiumStatus>(`/families/${familyId}/premium/resume`, { method: "POST" }),
+  /** Subscription owner only: hosted billing portal (payment method, receipts). */
+  createBillingPortal: (familyId: string) =>
+    request<{ portal_url: string }>(`/families/${familyId}/premium/portal`, { method: "POST" }),
+  /** Reconcile-on-read; used by the success pages when the webhook is slow. */
+  syncPremium: (familyId: string, sessionId?: string) =>
+    request<PremiumStatus>(`/families/${familyId}/premium/sync`, {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId ?? null }),
+    }),
 };
 
 // --- Admin command center (role-gated on the server) ---
