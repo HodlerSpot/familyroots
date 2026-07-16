@@ -6,20 +6,20 @@
 # the API loads it at Lambda cold start (apps/api/app/config.py overlay) -
 # the values never appear in the CloudFormation template or Lambda env vars.
 #
+# Database credentials are NOT in this secret: the RDS master password is
+# generated and rotated by RDS itself (manageMasterUserPassword in the CDK
+# stack) in its own managed secret (name pattern rds!db-...), and the app
+# composes the database URL from that secret plus FUTUREROOTS_DB_HOST.
+# DB_PASSWORD in infra/.env is obsolete and ignored here.
+#
 # Idempotent: creates the secret if absent, otherwise puts a new version.
 # Never prints secret values. Run BEFORE `cdk deploy` whenever .env changes:
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\push_secrets.ps1
-#
-# The database URL embeds the RDS endpoint, which is read from the deployed
-# stack's DbEndpoint output (override with -DbEndpoint on a fresh account
-# where the stack doesn't exist yet - then re-run after the first deploy).
 
 param(
     [string]$SecretName = "futureroots/api",
-    [string]$StackName = "FutureRoots",
-    [string]$Region = "us-east-1",
-    [string]$DbEndpoint = ""
+    [string]$Region = "us-east-1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,25 +44,8 @@ function Get-Optional([string]$name) {
     return $envVars[$name]
 }
 
-# --- Resolve the RDS endpoint (for the database URLs)
-if (-not $DbEndpoint) {
-    $DbEndpoint = aws cloudformation describe-stacks --stack-name $StackName --region $Region `
-        --query "Stacks[0].Outputs[?OutputKey=='DbEndpoint'].OutputValue" --output text
-    if ($LASTEXITCODE -ne 0 -or -not $DbEndpoint -or $DbEndpoint -eq "None") {
-        throw "Could not read DbEndpoint output from stack '$StackName' - pass -DbEndpoint explicitly"
-    }
-    $DbEndpoint = $DbEndpoint.Trim()
-}
-
 # --- Build the JSON blob (keys = the env-var names the API expects).
-# The URL format matches what the CDK stack used to inline (no URL-encoding of
-# the password - same constraint as before: avoid @ : / # ? in DB_PASSWORD).
-$dbPassword = Get-Required "DB_PASSWORD"
 $payload = [ordered]@{
-    FUTUREROOTS_DATABASE_URL                  = "postgresql+psycopg://futureroots:$dbPassword@${DbEndpoint}:5432/futureroots"
-    # Testnet Lambda: same server, own database. The config overlay maps this
-    # onto FUTUREROOTS_DATABASE_URL when FUTUREROOTS_TESTNET_MODE=1.
-    FUTUREROOTS_TESTNET_DATABASE_URL          = "postgresql+psycopg://futureroots:$dbPassword@${DbEndpoint}:5432/futureroots_testnet"
     FUTUREROOTS_JWT_SECRET                    = (Get-Required "JWT_SECRET")
     FUTUREROOTS_STRIPE_SECRET_KEY             = (Get-Optional "STRIPE_SECRET_KEY")
     FUTUREROOTS_STRIPE_WEBHOOK_SECRET         = (Get-Optional "STRIPE_WEBHOOK_SECRET")

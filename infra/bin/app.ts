@@ -4,7 +4,9 @@ import * as path from "path";
 import * as cdk from "aws-cdk-lib";
 import { FutureRootsStack } from "../lib/futureroots-stack";
 
-// Load infra/.env (gitignored) — DB_PASSWORD, JWT_SECRET, SES_FROM_ADDRESS, WEB_BASE_URL
+// Load infra/.env (gitignored) — SES_FROM_ADDRESS, WEB_BASE_URL, Stripe price ids
+// (the RDS master password is managed by RDS/Secrets Manager; app secrets are
+// pushed out-of-band by scripts/push_secrets.ps1 — neither is read here)
 const envFile = path.join(__dirname, "..", ".env");
 if (fs.existsSync(envFile)) {
   for (const line of fs.readFileSync(envFile, "utf-8").split(/\r?\n/)) {

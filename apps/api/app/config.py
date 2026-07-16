@@ -1,18 +1,128 @@
 import json
 import os
+import threading
+import time
+from urllib.parse import quote_plus
 
 from pydantic_settings import BaseSettings
 
 _ENV_PREFIX = "FUTUREROOTS_"
 
 
+def _testnet_mode_enabled() -> bool:
+    return os.environ.get(f"{_ENV_PREFIX}TESTNET_MODE", "").strip().lower() in {"1", "true", "yes"}
+
+
+class ManagedDbSecret:
+    """Cached accessor for the RDS-managed master-user secret.
+
+    In AWS the RDS instance's master password is generated and rotated by RDS
+    itself (``manageMasterUserPassword`` in the CDK stack); the secret's JSON
+    contains only ``username`` and ``password`` — host and dbname come from
+    plain env vars. Because RDS can rotate the password at any time, code that
+    opens NEW database connections must be able to pick up fresh values:
+
+    - ``get()`` serves a cached ``(username, password)`` pair for up to
+      ``ttl_seconds`` (default 5 min) and refetches after that, so a warm
+      Lambda converges on a rotated password without a cold start.
+    - ``get(force_refresh=True)`` bypasses the cache — used by ``app.db`` when
+      a new connection fails to authenticate, i.e. the cached password just
+      rotated out from under us mid-TTL.
+    """
+
+    def __init__(self, secret_arn: str, ttl_seconds: float = 300.0) -> None:
+        self._secret_arn = secret_arn
+        self._ttl_seconds = ttl_seconds
+        self._lock = threading.Lock()
+        self._cached: tuple[str, str] | None = None
+        self._fetched_at = 0.0
+
+    def get(self, *, force_refresh: bool = False) -> tuple[str, str]:
+        """Return ``(username, password)``, fetching from Secrets Manager as needed."""
+        with self._lock:
+            if (
+                not force_refresh
+                and self._cached is not None
+                and time.monotonic() - self._fetched_at < self._ttl_seconds
+            ):
+                return self._cached
+            # boto3 is imported lazily: a dependency of the Lambda bundle, not
+            # of local dev or the test suite (tests install a fake module).
+            import boto3
+
+            try:
+                response = boto3.client("secretsmanager").get_secret_value(
+                    SecretId=self._secret_arn
+                )
+                values = json.loads(response["SecretString"])
+                credentials = (values["username"], values["password"])
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Could not load DB credentials from Secrets Manager "
+                    f"({self._secret_arn!r}): {exc}"
+                ) from exc
+            self._cached = credentials
+            self._fetched_at = time.monotonic()
+            return self._cached
+
+
+# Populated at import time when FUTUREROOTS_DB_SECRET_ARN is set (i.e. in
+# AWS, unless an explicit FUTUREROOTS_DATABASE_URL overrides it). app.db uses
+# it to refresh credentials for new connections after a password rotation.
+db_secret: ManagedDbSecret | None = None
+
+
+def _compose_database_url_from_db_secret() -> None:
+    """Build FUTUREROOTS_DATABASE_URL from the RDS-managed master-user secret.
+
+    The Lambda env carries ``FUTUREROOTS_DB_SECRET_ARN`` (the secret RDS owns,
+    JSON with ``username``/``password`` only) and ``FUTUREROOTS_DB_HOST`` (the
+    instance endpoint hostname — not a secret). This composes the SQLAlchemy
+    URL from those parts, against the ``futureroots_testnet`` database when
+    testnet mode is on and ``futureroots`` otherwise.
+
+    Precedence: an explicitly set ``FUTUREROOTS_DATABASE_URL`` env var still
+    wins (and disables the rotation hook — the operator pinned a URL). This
+    runs BEFORE the consolidated-secret overlay, so the composed URL also wins
+    over any ``FUTUREROOTS_DATABASE_URL`` key left in the ``futureroots/api``
+    blob (that key is retired; the overlay only injects missing defaults).
+    No ARN set (local dev, tests) is a complete no-op.
+    """
+    global db_secret
+    secret_arn = os.environ.get(f"{_ENV_PREFIX}DB_SECRET_ARN")
+    if not secret_arn:
+        return
+    if os.environ.get(f"{_ENV_PREFIX}DATABASE_URL"):
+        return
+    host = os.environ.get(f"{_ENV_PREFIX}DB_HOST")
+    if not host:
+        raise RuntimeError(
+            f"{_ENV_PREFIX}DB_SECRET_ARN is set but {_ENV_PREFIX}DB_HOST is not - "
+            "the stack must pass the RDS endpoint hostname alongside the secret ARN"
+        )
+    db_secret = ManagedDbSecret(secret_arn)
+    username, password = db_secret.get()
+    dbname = "futureroots_testnet" if _testnet_mode_enabled() else "futureroots"
+    # RDS-generated passwords can contain URL-reserved characters — always
+    # percent-encode the userinfo. (alembic/env.py additionally escapes `%`
+    # for ConfigParser when it re-uses this URL.)
+    os.environ[f"{_ENV_PREFIX}DATABASE_URL"] = (
+        f"postgresql+psycopg://{quote_plus(username)}:{quote_plus(password)}"
+        f"@{host}:5432/{dbname}"
+    )
+
+
 def _load_secrets_overlay() -> None:
     """Overlay sensitive settings from AWS Secrets Manager onto the process env.
 
     In AWS the Lambda env carries only ``FUTUREROOTS_SECRETS_ARN``; the actual
-    secrets (database URL, JWT secret, Stripe keys, Agora certificate) live in
-    ONE consolidated Secrets Manager secret whose SecretString is a JSON object
+    app-level secrets (JWT secret, Stripe keys, Agora certificate) live in ONE
+    consolidated Secrets Manager secret whose SecretString is a JSON object
     keyed by env-var name (``{"FUTUREROOTS_JWT_SECRET": "...", ...}``).
+    Database credentials are NOT in this blob anymore — they come from the
+    RDS-managed secret (``_compose_database_url_from_db_secret`` above, which
+    runs first so a stale ``FUTUREROOTS_DATABASE_URL`` key left in the blob
+    can never override the composed URL).
 
     Values are injected as *defaults*: an env var that is already set
     explicitly always wins, and local dev (no ARN set) is a complete no-op.
@@ -40,10 +150,12 @@ def _load_secrets_overlay() -> None:
         raise RuntimeError(
             f"Secret {secret_id!r} must be a JSON object mapping env-var names to values"
         )
-    # The testnet Lambda shares this secret but points at its own database: the
-    # blob carries FUTUREROOTS_TESTNET_DATABASE_URL, which becomes the DATABASE_URL
-    # default only when the function runs in testnet mode.
-    if os.environ.get(f"{_ENV_PREFIX}TESTNET_MODE", "").strip().lower() in {"1", "true", "yes"}:
+    # Transitional (retired key): older blobs carried
+    # FUTUREROOTS_TESTNET_DATABASE_URL for the testnet Lambda. Keep mapping it
+    # as a *default* so a blob that still has it doesn't point testnet at the
+    # prod database; the RDS-secret composition above already set DATABASE_URL
+    # in AWS, so this is inert there.
+    if _testnet_mode_enabled():
         testnet_url = values.get(f"{_ENV_PREFIX}TESTNET_DATABASE_URL")
         if testnet_url:
             values = {**values, f"{_ENV_PREFIX}DATABASE_URL": testnet_url}
@@ -52,6 +164,10 @@ def _load_secrets_overlay() -> None:
             os.environ[key] = value
 
 
+# Order matters: the DB-secret composition sets FUTUREROOTS_DATABASE_URL
+# first, so the overlay (defaults only) can never clobber it with a stale
+# blob key.
+_compose_database_url_from_db_secret()
 _load_secrets_overlay()
 
 

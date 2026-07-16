@@ -23,12 +23,13 @@ export class FutureRootsStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // DB_PASSWORD is needed here ONLY to configure the RDS master password.
-    // All runtime secrets (DB URL, JWT, Stripe keys, Agora certificate) live
-    // in the consolidated Secrets Manager secret `futureroots/api`, pushed
-    // out-of-band by infra/scripts/push_secrets.ps1 — they are deliberately
-    // NOT read into Lambda env vars (plaintext in the CFN template) anymore.
-    const dbPassword = required("DB_PASSWORD");
+    // No secret values are read here at all: the RDS master password is
+    // generated and stored by RDS itself (manageMasterUserPassword below),
+    // and the app-level runtime secrets (JWT, Stripe keys, Agora certificate)
+    // live in the consolidated Secrets Manager secret `futureroots/api`,
+    // pushed out-of-band by infra/scripts/push_secrets.ps1 — they are
+    // deliberately NOT read into Lambda env vars (plaintext in the CFN
+    // template) anymore.
     const sesFrom = required("SES_FROM_ADDRESS");
     const webBaseUrl = process.env.WEB_BASE_URL ?? "http://localhost:3000";
     const extraOrigins = (process.env.EXTRA_ORIGINS ?? "")
@@ -84,10 +85,13 @@ export class FutureRootsStack extends cdk.Stack {
       allocatedStorage: 20,
       storageType: rds.StorageType.GP3,
       databaseName: "futureroots",
-      credentials: rds.Credentials.fromPassword(
-        "futureroots",
-        cdk.SecretValue.unsafePlainText(dbPassword)
-      ),
+      // RDS generates the master password and manages it in a Secrets Manager
+      // secret it owns (name pattern `rds!db-...`) — no password in infra/.env
+      // or the CFN template. Switching an existing instance from an inline
+      // MasterUserPassword to ManageMasterUserPassword is an in-place update:
+      // RDS mints a fresh password during the deploy (the old one dies).
+      credentials: rds.Credentials.fromUsername("futureroots"),
+      manageMasterUserPassword: true,
       multiAz: false,
       backupRetention: cdk.Duration.days(7),
       // Real families are aboard: the instance must survive both an explicit
@@ -95,6 +99,18 @@ export class FutureRootsStack extends cdk.Stack {
       deletionProtection: true,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
+    // The RDS-managed master-user secret. `db.secret` resolves through the
+    // instance's `MasterUserSecret.Secret.Arn` attribute, so every reference
+    // below (Lambda env, IAM grants) carries an implicit CloudFormation
+    // dependency on the RDS update: on the cutover deploy the instance
+    // switches to the managed password FIRST, and only then does the Lambda
+    // configuration start pointing at the secret.
+    const dbMasterSecret = db.secret;
+    if (!dbMasterSecret) {
+      throw new Error(
+        "RDS instance exposes no managed master-user secret — manageMasterUserPassword must stay enabled"
+      );
+    }
 
     // --- Secrets: ONE consolidated secret (JSON blob keyed by env-var name),
     // created/populated OUT-OF-BAND via infra/scripts/push_secrets.ps1 so the
@@ -143,10 +159,17 @@ export class FutureRootsStack extends cdk.Stack {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [apiSecurityGroup],
       environment: {
-        // Sensitive values (FUTUREROOTS_DATABASE_URL, _JWT_SECRET, the Stripe
-        // secrets, _AGORA_APP_CERTIFICATE) are NOT set here — the app fetches
-        // them from the consolidated secret at cold start (app/config.py).
+        // Sensitive values (_JWT_SECRET, the Stripe secrets,
+        // _AGORA_APP_CERTIFICATE) are NOT set here — the app fetches them
+        // from the consolidated secret at cold start (app/config.py).
         FUTUREROOTS_SECRETS_ARN: apiSecrets.secretArn,
+        // Database credentials: the RDS-managed master-user secret plus the
+        // plain (non-secret) endpoint hostname. app/config.py composes the
+        // SQLAlchemy URL at cold start; app/db.py re-fetches the secret and
+        // retries once when a NEW connection hits an auth failure after a
+        // password rotation, so rotations need no forced cold starts.
+        FUTUREROOTS_DB_SECRET_ARN: dbMasterSecret.secretArn,
+        FUTUREROOTS_DB_HOST: db.dbInstanceEndpointAddress,
         FUTUREROOTS_STORAGE_BACKEND: "s3",
         FUTUREROOTS_MEDIA_BUCKET: mediaBucket.bucketName,
         FUTUREROOTS_EMAIL_BACKEND: "ses",
@@ -165,6 +188,7 @@ export class FutureRootsStack extends cdk.Stack {
       },
     });
     apiSecrets.grantRead(apiFn);
+    dbMasterSecret.grantRead(apiFn);
     mediaBucket.grantReadWrite(apiFn);
     mediaBucket.grantPut(apiFn);
     apiFn.addToRolePolicy(
@@ -212,12 +236,13 @@ export class FutureRootsStack extends cdk.Stack {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [apiSecurityGroup],
       environment: {
-        // Same consolidated secret as the main API. Because the secret's DB
-        // password/JWT are shared with prod, leaving them plaintext here would
-        // hollow out the prod migration. With FUTUREROOTS_TESTNET_MODE=1 the
-        // config overlay maps FUTUREROOTS_TESTNET_DATABASE_URL from the blob
-        // onto FUTUREROOTS_DATABASE_URL (separate database, same server).
+        // Same consolidated secret and same RDS-managed DB secret as the main
+        // API. With FUTUREROOTS_TESTNET_MODE=1 the config overlay composes the
+        // database URL against the `futureroots_testnet` database (separate
+        // database, same server, same master user).
         FUTUREROOTS_SECRETS_ARN: apiSecrets.secretArn,
+        FUTUREROOTS_DB_SECRET_ARN: dbMasterSecret.secretArn,
+        FUTUREROOTS_DB_HOST: db.dbInstanceEndpointAddress,
         FUTUREROOTS_STORAGE_BACKEND: "s3",
         FUTUREROOTS_MEDIA_BUCKET: mediaBucket.bucketName,
         FUTUREROOTS_EMAIL_BACKEND: "ses",
@@ -233,6 +258,7 @@ export class FutureRootsStack extends cdk.Stack {
       },
     });
     apiSecrets.grantRead(testnetFn);
+    dbMasterSecret.grantRead(testnetFn);
     mediaBucket.grantReadWrite(testnetFn);
     testnetFn.addToRolePolicy(
       new iam.PolicyStatement({ actions: ["ses:SendEmail"], resources: ["*"] })
