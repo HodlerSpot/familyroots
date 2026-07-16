@@ -102,6 +102,9 @@ env-var name: `FUTUREROOTS_DATABASE_URL`, `FUTUREROOTS_TESTNET_DATABASE_URL`,
 `FUTUREROOTS_AGORA_APP_CERTIFICATE`, `FUTUREROOTS_TESTNET_ADMIN_TOKEN`,
 `FUTUREROOTS_X_CLIENT_SECRET`.
 
+Note: `.ps1` scripts in this repo must stay pure ASCII (PowerShell 5.1 parses
+BOM-less UTF-8 as ANSI; curly quotes from mojibake silently corrupt parsing).
+
 - **Source of values**: still `infra/.env` (gitignored). Push with
   `infra\scripts\push_secrets.ps1` (idempotent; composes the DB URLs from
   `DB_PASSWORD` + the stack's `DbEndpoint` output; never prints values).
@@ -170,6 +173,9 @@ of a week-long full session token.
 ## Deploy / update
 
 ```powershell
+# 0. If infra/.env changed: push secrets first (from infra/)
+powershell -File scripts\push_secrets.ps1
+
 # 1. Package the API for Lambda (from apps/api)
 powershell -ExecutionPolicy Bypass -File scripts\package_lambda.ps1
 
@@ -250,4 +256,4 @@ Resolved (2026-07-16):
   exist and call `handle_owner_departure` (subscription set to
   cancel-at-period-end, remaining parents emailed)
 - ~~Media auth hardening (JWT in media URLs)~~ → short-lived media-scoped
-  tokens (see **Media auth** below)
+  tokens (see **Media auth** above)

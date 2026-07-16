@@ -81,8 +81,8 @@ So local dev exercises the real settlement code — only the transport (inline c
 - `apply_subscription_state(db, state, *, family_id=None, owner_user_id=None)` — upsert keyed on `stripe_subscription_id`, converging to live `state`. First creation for a not-already-premium family → activation feed event + email (exactly once). Enforces the double-subscribe guard before insert; catches the partial-unique-index `IntegrityError` as the race backstop. Transition to `canceled` → `_maybe_premium_ended`.
 - `apply_gift_paid(db, *, session_id, payment_intent_id, amount_cents, currency, family_id, gifter_user_id)` — idempotent on unique `stripe_checkout_session_id`. Row-locks the `Family` to serialize concurrent gifts. Stacks: `starts_at = max(now, latest unvoided grant ends_at)`, `ends_at = starts_at + premium_grant_days`. Joins the gift message from `premium_gift_intents`. Feed event + gifter/parent emails.
 - `handle_invoice_payment_failed` / `handle_invoice_upcoming` — re-mirror live state, email (owner only), deduped per invoice / per period.
-- `handle_owner_departure(db, family_id, user_id)` — best-effort `cancel_at_period_end` when the subscription owner leaves. **Currently implemented + tested but has no caller** (no member-removal/account-deletion endpoints exist yet — wire it there when they land).
-- `run_lazy_lifecycle(db, family_id)` — the **no-cron** substitute: runs inside `GET .../premium` and family detail; sends "gift ending soon" / "premium ended" for gift-only coverage Stripe gives no webhook for. Deduped via `premium_email_log`.
+- `handle_owner_departure(db, family_id, user_id)` — best-effort `cancel_at_period_end` when the subscription owner leaves. **Called by the leave-family and remove-member endpoints** (shipped 2026-07-16): the departing Premium owner's subscription stops renewing (coverage runs out the paid period) and remaining parents are emailed.
+- `run_lazy_lifecycle(db, family_id)` — the **no-cron** substitute: runs inside `GET .../premium` and family detail; sends "gift ending soon" / "premium ended" for gift-only coverage Stripe gives no webhook for. Deduped via `premium_email_log`. The "gift ending soon" email is **deliberately purely informational** (no upsell, no marketing CTA) so it stays CASL-safe — do not add promotional content to it.
 - `reconcile_family_premium(db, family_id)` — admin reconcile; re-fetches live state and re-mirrors (not a settlement bypass — same verification discipline).
 
 ## Webhooks — `apps/api/app/routers/webhooks.py`
@@ -146,7 +146,7 @@ Metadata sent to Stripe: subscribe `{kind:"premium_subscription", family_id, own
 
 ## Config (`apps/api/app/config.py`, env prefix `FUTUREROOTS_`)
 
-`contribution_fee_bps` (290), `contribution_fee_fixed_cents` (30), `payment_backend` ("local"|"stripe"), `stripe_secret_key`, `stripe_webhook_secret`, `stripe_connect_webhook_secret`, `stripe_price_monthly`, `stripe_price_annual`, `stripe_price_gift_year`, `premium_grant_days` (365), `premium_gift_amount_cents` (9900), `web_base_url`. Empty price ids ⇒ Premium checkout **503s** in Stripe mode (feature stays dark, never crashes). In prod these are set from `infra/.env` → `FUTUREROOTS_*` Lambda env via the CDK stack (`infra/lib/futureroots-stack.ts`).
+`contribution_fee_bps` (290), `contribution_fee_fixed_cents` (30), `payment_backend` ("local"|"stripe"), `stripe_secret_key`, `stripe_webhook_secret`, `stripe_connect_webhook_secret`, `stripe_price_monthly`, `stripe_price_annual`, `stripe_price_gift_year`, `premium_grant_days` (365), `premium_gift_amount_cents` (9900), `web_base_url`. Empty price ids ⇒ Premium checkout **503s** in Stripe mode (feature stays dark, never crashes). In prod the **secret** values (`stripe_secret_key`, `stripe_webhook_secret`, `stripe_connect_webhook_secret`) come from the consolidated `futureroots/api` Secrets Manager secret, fetched once at Lambda cold start by `config.py` and overlaid as env-var defaults (values sourced from `infra/.env`, pushed via `infra/scripts/push_secrets.ps1`; rotation needs new cold starts). Non-secret values (price ids, backend, amounts, `web_base_url`) remain plain `FUTUREROOTS_*` Lambda env set from `infra/.env` via the CDK stack (`infra/lib/futureroots-stack.ts`).
 
 ## Stripe dashboard setup (see `docs/deploy.md`)
 
@@ -161,4 +161,5 @@ Metadata sent to Stripe: subscribe `{kind:"premium_subscription", family_id, own
 - Adding a premium feature? New `Capability` + `require_capability` at the server choke point + client upsell; never a client-only check.
 - New Stripe object? Metadata = opaque UUIDs + `kind` only. No child data. Free text stays in a local staging table.
 - New money field? Integer cents + currency. Ledger stays append-only; balances derived.
+- Touching membership (leave-family / remove-member / future account deletion)? Those paths call `handle_owner_departure` so a departing Premium owner's billing stops renewing — preserve that wiring (and extend it to any new departure path).
 - Verify locally first: `payment_backend=local` runs the full flow with no keys; then test-mode Stripe CLI before live.

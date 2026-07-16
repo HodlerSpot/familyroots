@@ -1,6 +1,6 @@
 # FutureRoots — Local Development
 
-Local-first: everything runs on your machine. No AWS until Phase 5.
+Local-first: everything runs on your machine. No AWS account or Stripe keys needed (production config paths like the Secrets Manager fetch only activate when their env vars are set — no ARN, no fetch).
 
 ## Prerequisites
 
@@ -46,6 +46,15 @@ npm run dev                               # http://localhost:3000
 ```
 
 The web app expects the API at `http://localhost:8000` (`NEXT_PUBLIC_API_URL` to override).
+
+## What works locally with no keys
+
+- **Payments & Premium:** the local `PaymentProvider` settles synchronously in the same request — contribution confirm, Premium subscription checkout, and gift checkout all complete end to end (entitlements, feed events, emails) with no Stripe account.
+- **Media:** the web client mints a short-lived media token (`POST /auth/media-token`) automatically and appends it to media URLs, so photos/video render locally with nothing to configure.
+
+## Writing PowerShell scripts
+
+`.ps1` scripts in this repo must stay **pure ASCII** — PowerShell 5.1 parses BOM-less UTF-8 as ANSI, so curly quotes/dashes from mojibake silently corrupt parsing.
 
 ## Migrations
 

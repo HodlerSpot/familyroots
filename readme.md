@@ -12,11 +12,13 @@ Every child gets a lifetime **FutureRoots Vault**: memories, milestones, family 
 
 | Area | State |
 |------|-------|
-| Family Graph | Signup/login, families, child profiles (recorded parental consent), email invites |
+| Family Graph | Signup/login, families, child profiles (recorded parental consent), email invites, leave-family and remove-member flows |
 | Vault, Feed & Memories | Photo/media upload (S3 presigned), private family feed, milestone posts with email notifications |
 | Achievement Economy | Goals, badges, append-only future-fund ledger, one-screen grandparent contribution flow |
 | Payments | Live Stripe — future-fund contributions as Connect destination charges, plus Premium subscriptions/gifts, all settled via signature-verified webhooks |
-| Premium membership | Family-level paid plan ($9.99/mo or $99/yr); parent-activated, gift-able by relatives; entitlement-gated video upload and Family Video Call |
+| Premium membership | Family-level paid plan ($9.99/mo or $99/yr, one-time $99 gift year); parent-activated, gift-able by relatives; entitlement-gated video upload and Family Video Call; Free/Premium badges and lifecycle emails |
+| Security | Runtime secrets in one AWS Secrets Manager secret loaded at Lambda cold start; short-lived media-scoped tokens for media fetches; signature-verified Stripe webhooks; RDS deletion protection |
+| Compliance | COPPA-clean billing (no child data reaches Stripe), GDPR/PIPEDA erasure runbook, EU/UK checkout consent notice (counsel review pending) |
 | Time Capsules & Legacy | Sealed capsules with age/date/milestone release; family legacy archive |
 | Accounts | Password complexity + show/hide, forgot/reset, change password |
 | Email | Branded HTML + plain-text, sent from a DKIM/SPF/DMARC-authenticated domain |
@@ -44,6 +46,7 @@ Every child gets a lifetime **FutureRoots Vault**: memories, milestones, family 
 - [Roadmap](docs/roadmap.md) — phased build plan (all phases complete)
 - [Dev setup](docs/dev.md) — run the stack locally
 - [Deployment](docs/deploy.md) — AWS runbook, custom domain, Stripe, email
+- [Erasure runbook](docs/erasure-runbook.md) — GDPR/PIPEDA erasure operational flow
 - [Premium spec](docs/specs/premium.md) & [architecture](docs/specs/premium-architecture.md) — the paid-membership feature; Stripe interfaces are documented in the `.claude/skills/stripe-integration` skill
 - [Testnet harness](docs/testnet.md) — gamified tester program design
 - [Agent team](docs/agents.md) — the AI role team in `.claude/agents/`

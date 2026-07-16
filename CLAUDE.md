@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **FutureRoots** — a Family Wealth Network ("Building Generational Wealth & Memories"): families preserve memories, transfer wisdom, teach financial literacy, and build generational wealth around child-centered vaults. It is a **family platform, not a crypto product** — blockchain (Base) is invisible infrastructure only.
 
-**Current status: Phase 5 complete — live at https://futureroots.app.** All product phases (Family Graph, Vault/Feed/Memories, Achievement Economy, Time Capsules, Legacy Archive) are deployed: web on Amplify Hosting (futureroots.app + www), API on Lambda + RDS at `https://api.futureroots.app` (us-east-1, CDK stack in `infra/`, runbook in `docs/deploy.md`). DNS lives in Cloudflare (domain registered there). SES is in sandbox mode. Next: Phase 6 (AI & growth) and the hardening backlog in `docs/deploy.md`.
+**Current status: Phase 5 complete — live at https://futureroots.app.** All product phases (Family Graph, Vault/Feed/Memories, Achievement Economy, Time Capsules, Legacy Archive) are deployed: web on Amplify Hosting (futureroots.app + www), API on Lambda + RDS at `https://api.futureroots.app` (us-east-1, CDK stack in `infra/`, runbook in `docs/deploy.md`). DNS lives in Cloudflare (domain registered there). SES is in sandbox mode. **FutureRoots Premium** went live 2026-07-15 (family membership via Stripe Checkout subscriptions + gift year, entitlement-gated video — `docs/specs/premium.md`), and the hardening backlog round completed 2026-07-16 (runtime secrets in the `futureroots/api` Secrets Manager secret, media-scoped token auth, leave/remove-member with owner-departure billing, daily EventBridge maintenance command); the remaining backlog is the slimmed "Open" list in `docs/deploy.md`. Next: Phase 6 (AI & growth).
 
 ## Source-of-truth documents (read before designing or building anything)
 
@@ -23,11 +23,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 3. **Children are profiles, not accounts** (COPPA/GDPR/PIPEDA): no child credentials; parental consent is recorded data; access is scoped by explicit family relationships.
 4. **Money discipline:** integer cents + currency; the future-fund ledger is append-only; ledger entries only from verified Stripe webhooks; balances always derived.
 5. **Private by design:** family-only experience, no public social features, no cross-family data access.
-6. **Local-first dev, Lambda-shaped code:** everything runs locally (docker-compose Postgres, uvicorn, next dev); cloud services (Cognito/SES/S3/Base) sit behind thin abstractions with local implementations. AWS deployment is Phase 5. MVP infra cost ceiling ~$50/month.
+6. **Local-first dev, Lambda-shaped code:** everything runs locally (native Postgres service, uvicorn, next dev — no keys needed; local providers settle payments synchronously); cloud services (SES/S3/Stripe/Secrets Manager/Base) sit behind thin abstractions with local implementations. Deployed on AWS since Phase 5. Infra cost ceiling ~$50/month.
 
 ## Stack (decided — do not relitigate)
 
-Web: Next.js + TypeScript + Tailwind + ShadCN (`apps/web`, planned) · API: FastAPI + Pydantic + SQLAlchemy/Alembic (`apps/api`, planned) · PostgreSQL · Stripe · S3 presigned uploads · AI via APIs only (no self-hosted models) · Mobile (Expo) deferred.
+Web: Next.js + TypeScript + Tailwind + ShadCN (`apps/web`) · API: FastAPI + Pydantic + SQLAlchemy/Alembic (`apps/api`) · PostgreSQL · Stripe · S3 presigned uploads · AI via APIs only (no self-hosted models) · Mobile (Expo) deferred.
 
 ## Out of MVP scope (do not build)
 
@@ -53,6 +53,8 @@ npm run build                            # type-checks + production build
 ```
 
 Dev email (invites) is written to `apps/api/var/outbox/` as text files — invite links are in there. On this machine `uv` lives at `$env:LOCALAPPDATA\Microsoft\WinGet\Packages\astral-sh.uv_*\uv.exe` and node at `C:\Program Files\nodejs` (add to PATH in fresh shells if not picked up).
+
+`.ps1` scripts in this repo must stay **pure ASCII** — PowerShell 5.1 parses BOM-less UTF-8 as ANSI, so curly quotes/dashes from mojibake silently corrupt parsing.
 
 Note: `apps/web` is **Next.js 15** (pinned — Amplify Hosting SSR doesn't support 16 yet; see `apps/web/AGENTS.md`). Dynamic-route `params` are Promises in server components (use `useParams()` in client components); `useSearchParams` needs a Suspense boundary.
 

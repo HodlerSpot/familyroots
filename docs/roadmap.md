@@ -2,7 +2,7 @@
 
 Local-first, web-first. Each phase ends with something demonstrable. AWS deployment is deferred until Phase 2 is worth showing to real family members.
 
-## Phase 0 — Foundation docs ✦ (current)
+## Phase 0 — Foundation docs ✅
 
 - [x] Vision source of truth (`docs/vision.md`)
 - [x] Architecture (`docs/architecture.md`)
@@ -69,6 +69,12 @@ Goal: the 60-second grandparent flow works.
 - [x] Live: Web `https://futureroots.app` (+ www) · API `https://api.futureroots.app` — DNS in Cloudflare (domain registered there), certs via ACM
 - [x] Cost ~$22–25/month — under the ~$50 ceiling
 - Hardening backlog (see `docs/deploy.md`): Cognito swap, Secrets Manager, SES production access, custom domain + CloudFront/WAF, RDS deletion protection, formal COPPA/GDPR/PIPEDA review before real families
+
+## Post-Phase 5 — Premium & hardening ✅ (Premium 2026-07-15 · hardening 2026-07-16)
+
+- [x] **FutureRoots Premium** (live 2026-07-15): family-level membership $9.99/mo · $99/yr via Stripe Checkout subscriptions, plus one-time $99 12-month gifts from non-parents; entitlements always derived (never a stored flag) and server-enforced, gating video upload everywhere + Family Video Call; Free/Premium badges; 8 lifecycle emails; webhook-driven state in `family_subscriptions`/`premium_grants` — spec in `docs/specs/premium.md` + `premium-architecture.md`, Stripe interfaces in `.claude/skills/stripe-integration/SKILL.md`
+- [x] **Hardening round** (2026-07-16): all runtime secrets in one Secrets Manager secret (`futureroots/api`, loaded at cold start; push via `infra/scripts/push_secrets.ps1`); RDS deletion protection + RETAIN; daily EventBridge maintenance command (data-lifecycle sweeps); leave-family/remove-member endpoints wired to `handle_owner_departure` (departing Premium owner's billing stops renewing; `member_left` feed event); contribution celebration emails post-commit only (double-send race fixed); race-safe fund-nudge throttle (migration `d41f7b6a90c3`); video-call 90-day retention + 15-min abandoned-call cap; CASL-safe informational "gift ending soon" email; EU/UK immediate-performance consent checkbox on both checkout pages (counsel review pending); media-scoped token auth for `GET /media/{id}`; GDPR/PIPEDA erasure runbook (`docs/erasure-runbook.md`); warm 503s on Stripe errors — 293 API tests passing
+- Deferred by founder decision (2026-07-16): Cognito auth swap; CloudFront + WAF in front of the API. Next hardening step: Secrets-Manager-managed RDS master credential (the master password still sits inline in the CFN template)
 
 ## Phase 6 — AI & Growth
 
