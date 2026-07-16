@@ -1,4 +1,4 @@
-from .conftest import add_child, create_family, signup
+from .conftest import add_child, create_family, media_token, signup
 from .test_goals import make_grandparent
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nfakeimagedata"
@@ -52,12 +52,12 @@ def test_legacy_item_with_family_media(client):
     assert r.json()["media_content_type"] == "image/png"
 
     # Family members can download family-scoped media...
-    token = parent["Authorization"].removeprefix("Bearer ")
+    token = media_token(client, parent)
     assert client.get(f"/media/{media_id}?token={token}").status_code == 200
 
-    # ...outsiders cannot
+    # ...outsiders cannot, even with a perfectly valid media token of their own
     outsider = signup(client, "outsider@example.com")
-    outsider_token = outsider["Authorization"].removeprefix("Bearer ")
+    outsider_token = media_token(client, outsider)
     assert client.get(f"/media/{media_id}?token={outsider_token}").status_code == 404
 
 

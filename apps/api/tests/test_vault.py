@@ -1,4 +1,4 @@
-from .conftest import add_child, create_family, signup
+from .conftest import add_child, create_family, media_token, signup
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nfakeimagedata"
 
@@ -80,15 +80,15 @@ def test_media_download_requires_family_membership(client):
     child_id = add_child(client, headers, family_id)
     media_id = upload_photo(client, headers, child_id)
 
-    token = headers["Authorization"].removeprefix("Bearer ")
+    token = media_token(client, headers)
     r = client.get(f"/media/{media_id}?token={token}")
     assert r.status_code == 200
     assert r.content == PNG_BYTES
 
-    # No token → 401; outsider's token → 404 (child existence never leaks)
+    # No token → 401; outsider's media token → 404 (child existence never leaks)
     assert client.get(f"/media/{media_id}").status_code == 401
     outsider = signup(client, "outsider@example.com")
-    outsider_token = outsider["Authorization"].removeprefix("Bearer ")
+    outsider_token = media_token(client, outsider)
     assert client.get(f"/media/{media_id}?token={outsider_token}").status_code == 404
 
 

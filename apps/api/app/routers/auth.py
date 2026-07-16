@@ -11,12 +11,18 @@ from ..schemas import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
+    MediaTokenResponse,
     ResetPasswordRequest,
     SignupRequest,
     TokenResponse,
     UserOut,
 )
-from ..security import create_access_token, hash_password, verify_password
+from ..security import (
+    create_access_token,
+    create_media_token,
+    hash_password,
+    verify_password,
+)
 from ..services.email import get_email_sender
 from ..services.email_templates import render_email
 
@@ -102,6 +108,20 @@ def login(payload: LoginRequest, db: DbSession) -> TokenResponse:
 @router.get("/me", response_model=UserOut)
 def me(user: CurrentUser) -> UserOut:
     return UserOut.model_validate(user)
+
+
+@router.post("/media-token", response_model=MediaTokenResponse)
+def issue_media_token(user: CurrentUser) -> MediaTokenResponse:
+    """Mint the short-lived, media-only token the web client puts in
+    <img>/<video> query strings (tags can't send Authorization headers).
+    Issuance requires a live session — the same gate that used to front every
+    media fetch — and GET /media/{id} still runs its full per-media
+    authorization, so this token never widens access; it only replaces the
+    full session JWT in URLs with a narrow, expiring, read-only credential."""
+    return MediaTokenResponse(
+        media_token=create_media_token(user.id),
+        expires_in_seconds=settings.media_token_ttl_minutes * 60,
+    )
 
 
 @router.post("/forgot-password", status_code=status.HTTP_204_NO_CONTENT)

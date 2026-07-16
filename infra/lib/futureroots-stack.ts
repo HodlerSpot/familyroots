@@ -3,10 +3,13 @@ import * as cdk from "aws-cdk-lib";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
+import * as events from "aws-cdk-lib/aws-events";
+import * as targets from "aws-cdk-lib/aws-events-targets";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { FckNatInstanceProvider } from "cdk-fck-nat";
 import { Construct } from "constructs";
 
@@ -20,12 +23,13 @@ export class FutureRootsStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
+    // DB_PASSWORD is needed here ONLY to configure the RDS master password.
+    // All runtime secrets (DB URL, JWT, Stripe keys, Agora certificate) live
+    // in the consolidated Secrets Manager secret `futureroots/api`, pushed
+    // out-of-band by infra/scripts/push_secrets.ps1 — they are deliberately
+    // NOT read into Lambda env vars (plaintext in the CFN template) anymore.
     const dbPassword = required("DB_PASSWORD");
-    const jwtSecret = required("JWT_SECRET");
     const sesFrom = required("SES_FROM_ADDRESS");
-    // Agora App Certificate: the secret that signs family-call RTC tokens.
-    // Server-side only, never shipped to the client (the App ID is public).
-    const agoraSecret = required("AGORA_SECRET");
     const webBaseUrl = process.env.WEB_BASE_URL ?? "http://localhost:3000";
     const extraOrigins = (process.env.EXTRA_ORIGINS ?? "")
       .split(",")
@@ -86,9 +90,22 @@ export class FutureRootsStack extends cdk.Stack {
       ),
       multiAz: false,
       backupRetention: cdk.Duration.days(7),
-      deletionProtection: false,
-      removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
+      // Real families are aboard: the instance must survive both an explicit
+      // delete attempt (deletionProtection) and a stack teardown (RETAIN).
+      deletionProtection: true,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
+
+    // --- Secrets: ONE consolidated secret (JSON blob keyed by env-var name),
+    // created/populated OUT-OF-BAND via infra/scripts/push_secrets.ps1 so the
+    // values never enter the CloudFormation template. Imported by name here;
+    // the API reads it once per cold start (app/config.py overlay) via the
+    // NAT instance — no VPC endpoint needed (and none added: it costs money).
+    const apiSecrets = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      "ApiSecrets",
+      "futureroots/api"
+    );
 
     // --- Media bucket: private, browser uploads via presigned URLs
     const mediaBucket = new s3.Bucket(this, "MediaBucket", {
@@ -126,8 +143,10 @@ export class FutureRootsStack extends cdk.Stack {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [apiSecurityGroup],
       environment: {
-        FUTUREROOTS_DATABASE_URL: `postgresql+psycopg://futureroots:${dbPassword}@${db.dbInstanceEndpointAddress}:5432/futureroots`,
-        FUTUREROOTS_JWT_SECRET: jwtSecret,
+        // Sensitive values (FUTUREROOTS_DATABASE_URL, _JWT_SECRET, the Stripe
+        // secrets, _AGORA_APP_CERTIFICATE) are NOT set here — the app fetches
+        // them from the consolidated secret at cold start (app/config.py).
+        FUTUREROOTS_SECRETS_ARN: apiSecrets.secretArn,
         FUTUREROOTS_STORAGE_BACKEND: "s3",
         FUTUREROOTS_MEDIA_BUCKET: mediaBucket.bucketName,
         FUTUREROOTS_EMAIL_BACKEND: "ses",
@@ -135,28 +154,39 @@ export class FutureRootsStack extends cdk.Stack {
         FUTUREROOTS_WEB_BASE_URL: webBaseUrl,
         FUTUREROOTS_CORS_EXTRA_ORIGINS: extraOrigins.join(","),
         FUTUREROOTS_PAYMENT_BACKEND: "stripe",
-        FUTUREROOTS_STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY ?? "",
-        FUTUREROOTS_STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET ?? "",
-        // Second webhook secret: Connect events (account.updated) arrive on a
-        // separate connected-accounts endpoint with its own signing secret.
-        FUTUREROOTS_STRIPE_CONNECT_WEBHOOK_SECRET:
-          process.env.STRIPE_CONNECT_WEBHOOK_SECRET ?? "",
         // FutureRoots Premium — Stripe Price ids (not secrets; amounts live in
         // Stripe). Empty ids keep Premium checkout dark (503), never broken.
         FUTUREROOTS_STRIPE_PRICE_MONTHLY: process.env.STRIPE_PRICE_MONTHLY ?? "",
         FUTUREROOTS_STRIPE_PRICE_ANNUAL: process.env.STRIPE_PRICE_ANNUAL ?? "",
         FUTUREROOTS_STRIPE_PRICE_GIFT_YEAR:
           process.env.STRIPE_PRICE_GIFT_YEAR ?? "",
+        // Public app id (shipped to clients); the certificate is in the secret.
         FUTUREROOTS_AGORA_APP_ID: "c58c8181f4204f07bc1a36d93cae5514",
-        FUTUREROOTS_AGORA_APP_CERTIFICATE: agoraSecret,
       },
     });
+    apiSecrets.grantRead(apiFn);
     mediaBucket.grantReadWrite(apiFn);
     mediaBucket.grantPut(apiFn);
     apiFn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["ses:SendEmail"],
         resources: ["*"],
+      })
+    );
+
+    // --- Daily maintenance: EventBridge invokes the API Lambda's management
+    // entrypoint (app/lambda_handler.py dispatches on `futureroots_command`)
+    // for scheduled sweeps (gift-intent prune, email-log retention, ...).
+    // 09:00 UTC — early morning US, before family traffic picks up.
+    const maintenanceRule = new events.Rule(this, "DailyMaintenanceRule", {
+      description: "FutureRoots daily maintenance sweep (API Lambda management command)",
+      schedule: events.Schedule.cron({ minute: "0", hour: "9" }),
+    });
+    maintenanceRule.addTarget(
+      new targets.LambdaFunction(apiFn, {
+        event: events.RuleTargetInput.fromObject({
+          futureroots_command: "maintenance",
+        }),
       })
     );
 
@@ -182,8 +212,12 @@ export class FutureRootsStack extends cdk.Stack {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [apiSecurityGroup],
       environment: {
-        FUTUREROOTS_DATABASE_URL: `postgresql+psycopg://futureroots:${dbPassword}@${db.dbInstanceEndpointAddress}:5432/futureroots_testnet`,
-        FUTUREROOTS_JWT_SECRET: jwtSecret,
+        // Same consolidated secret as the main API. Because the secret's DB
+        // password/JWT are shared with prod, leaving them plaintext here would
+        // hollow out the prod migration. With FUTUREROOTS_TESTNET_MODE=1 the
+        // config overlay maps FUTUREROOTS_TESTNET_DATABASE_URL from the blob
+        // onto FUTUREROOTS_DATABASE_URL (separate database, same server).
+        FUTUREROOTS_SECRETS_ARN: apiSecrets.secretArn,
         FUTUREROOTS_STORAGE_BACKEND: "s3",
         FUTUREROOTS_MEDIA_BUCKET: mediaBucket.bucketName,
         FUTUREROOTS_EMAIL_BACKEND: "ses",
@@ -192,13 +226,13 @@ export class FutureRootsStack extends cdk.Stack {
         FUTUREROOTS_CORS_EXTRA_ORIGINS: "http://localhost:3000",
         FUTUREROOTS_PAYMENT_BACKEND: "local",
         FUTUREROOTS_TESTNET_MODE: "1",
-        FUTUREROOTS_TESTNET_ADMIN_TOKEN: process.env.TESTNET_ADMIN_TOKEN ?? "",
+        // Testnet-only secrets (admin token, X OAuth secret) also live in the
+        // blob; only the public X client id stays as a plain env var.
         FUTUREROOTS_X_CLIENT_ID: process.env.X_CLIENT_ID ?? "",
-        FUTUREROOTS_X_CLIENT_SECRET: process.env.X_CLIENT_SECRET ?? "",
         FUTUREROOTS_AGORA_APP_ID: "c58c8181f4204f07bc1a36d93cae5514",
-        FUTUREROOTS_AGORA_APP_CERTIFICATE: agoraSecret,
       },
     });
+    apiSecrets.grantRead(testnetFn);
     mediaBucket.grantReadWrite(testnetFn);
     testnetFn.addToRolePolicy(
       new iam.PolicyStatement({ actions: ["ses:SendEmail"], resources: ["*"] })

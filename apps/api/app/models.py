@@ -87,6 +87,7 @@ class FeedEventType(str, enum.Enum):
     capsule_created = "capsule_created"
     capsule_released = "capsule_released"
     member_joined = "member_joined"
+    member_left = "member_left"
     premium_activated = "premium_activated"
     premium_gifted = "premium_gifted"
 
@@ -483,10 +484,16 @@ class FundAccount(Base):
 
 class FundNudge(Base):
     """A non-guardian member's gentle 'I'm ready to give' nudge to the
-    parents to finish Future Fund setup. Kept so each member can nudge each
-    child at most once every 7 days (checked at write time)."""
+    parents to finish Future Fund setup. ONE row per (member, child) — the
+    unique constraint is the race-safe 7-day throttle: a re-nudge after the
+    window refreshes created_at in place, and a concurrent double-tap loses
+    the insert race instead of double-sending. Rows older than 30 days are
+    swept by the daily maintenance command (storage limitation)."""
 
     __tablename__ = "fund_nudges"
+    __table_args__ = (
+        UniqueConstraint("child_id", "user_id", name="uq_fund_nudges_member_child"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
@@ -804,7 +811,8 @@ class PremiumGiftIntent(Base):
     """Created when a gifter starts checkout; holds the gift message locally so
     free text (which may name a child) is NEVER sent to Stripe. Not a money
     row — abandoned checkouts leave a harmless orphan here (no grant, no feed
-    event, no email). Prunable after 30 days by the admin sweep."""
+    event, no email). Pruned after 30 days by the daily maintenance command
+    (services/maintenance.py; the admin endpoint stays as a manual trigger)."""
 
     __tablename__ = "premium_gift_intents"
 

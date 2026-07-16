@@ -141,33 +141,54 @@ def accept_invite(payload: InviteAccept, db: DbSession, user: CurrentUser) -> Fa
         .filter(
             FamilyMember.family_id == invite.family_id,
             FamilyMember.user_id == user.id,
-            FamilyMember.status == MemberStatus.active,
         )
         .first()
     )
-    if existing:
+    if existing is not None and existing.status == MemberStatus.active:
         raise HTTPException(status.HTTP_409_CONFLICT, "You're already part of this family")
 
-    db.add(
-        FamilyMember(
-            family_id=invite.family_id,
-            user_id=user.id,
-            role=invite.role,
-            status=MemberStatus.active,
-            invited_by=invite.invited_by,
-        )
-    )
-
-    # New member gets a Family Graph edge to every existing child
-    children = db.query(Child).filter(Child.family_id == invite.family_id).all()
-    for child in children:
+    if existing is not None:
+        # Someone who left (or was removed) and is invited back: reactivate
+        # their membership row — (family_id, user_id) is unique by design.
+        existing.role = invite.role
+        existing.status = MemberStatus.active
+        existing.invited_by = invite.invited_by
+        existing.joined_at = utcnow()
+    else:
         db.add(
-            ChildRelationship(
-                child_id=child.id,
+            FamilyMember(
+                family_id=invite.family_id,
                 user_id=user.id,
-                relationship_type=invite.role,
+                role=invite.role,
+                status=MemberStatus.active,
+                invited_by=invite.invited_by,
             )
         )
+
+    # New member gets a Family Graph edge to every existing child; a returning
+    # member's existing edges are refreshed ((child_id, user_id) is unique).
+    children = db.query(Child).filter(Child.family_id == invite.family_id).all()
+    existing_edges = {
+        rel.child_id: rel
+        for rel in db.query(ChildRelationship)
+        .filter(
+            ChildRelationship.user_id == user.id,
+            ChildRelationship.child_id.in_([c.id for c in children]),
+        )
+        .all()
+    }
+    for child in children:
+        edge = existing_edges.get(child.id)
+        if edge is not None:
+            edge.relationship_type = invite.role
+        else:
+            db.add(
+                ChildRelationship(
+                    child_id=child.id,
+                    user_id=user.id,
+                    relationship_type=invite.role,
+                )
+            )
 
     invite.accepted_at = utcnow()
     emit(

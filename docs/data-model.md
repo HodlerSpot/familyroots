@@ -99,8 +99,13 @@ users ──< family_members >── families ──< children
 
 ### Notifications
 
-**notifications**
-- `id`, `user_id`, `type`, `payload` (jsonb), `channel` (`email | in_app`), `sent_at`, `read_at`
+**notification_preferences** (per-user on/off switches; no message content or history)
+- `id`, `user_id`, per-event boolean columns (see `NotificationPreference` in `models.py`)
+
+> Note: an earlier draft of this doc described a `notifications` history table
+> (`payload`/`sent_at`/`read_at`). That table was never built — email delivery
+> is fire-and-forget through the SES abstraction, and the only per-send record
+> is `premium_email_log` (dedupe keys, no content). Corrected 2026-07-16.
 
 ## Access rules (enforced in the API layer)
 

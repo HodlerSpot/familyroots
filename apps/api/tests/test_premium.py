@@ -16,7 +16,14 @@ from app.models import (
     User,
     utcnow,
 )
-from .conftest import TestingSession, add_child, create_family, make_premium, signup
+from .conftest import (
+    TestingSession,
+    add_child,
+    create_family,
+    make_premium,
+    media_token,
+    signup,
+)
 from .test_goals import make_grandparent
 from .test_supporter_access import make_supporter
 
@@ -732,7 +739,7 @@ def test_downgrade_blocks_new_videos_but_existing_media_plays(client):
         ),
         "video_upload",
     )
-    token = parent["Authorization"].removeprefix("Bearer ")
+    token = media_token(client, parent)
     assert client.get(f"/media/{media_id}?token={token}").status_code == 200
     titles = [i["title"] for i in client.get(f"/children/{child_id}/vault", headers=parent).json()]
     assert "First steps" in titles
@@ -754,6 +761,16 @@ def test_gift_ending_soon_email_sent_once(client, tmp_path):
     assert len(ending) == 1
     assert "To: parent@example.com" in ending[0]
     assert "June" in ending[0]
+
+    # CASL (compliance finding M2): recipients never opted into marketing, so
+    # this must stay purely informational — no pricing, no upsell, and the CTA
+    # goes to the family's own Plan settings, never the purchase page.
+    assert "$9.99" not in ending[0] and "$99" not in ending[0]
+    assert "returns to the Free plan" in ending[0]
+    assert "stays yours" in ending[0]
+    assert "See your family's plan" in ending[0]
+    assert f"/family/{family_id}#plan" in ending[0]
+    assert f"/family/{family_id}/premium" not in ending[0]
 
     # Poll again (and via family detail): the send-once log holds.
     premium_status(client, parent, family_id)
@@ -790,6 +807,23 @@ def test_gift_lapse_premium_ended_email_once(client, tmp_path):
 
     premium_status(client, parent, family_id)
     assert len([t for t in outbox_texts(tmp_path) if "back on the Free plan" in t]) == 1
+
+
+def test_gift_lapsed_long_ago_sends_no_stale_premium_ended_email(client, tmp_path):
+    """The 'back on the Free plan' email is a lifecycle moment, not history:
+    coverage that ended beyond PREMIUM_ENDED_STALE_AFTER stays silent (this
+    also makes the maintenance sweep's 1-year premium_email_log prune safe —
+    nothing can re-fire from a pruned dedupe row)."""
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    make_grandparent(client, parent, family_id)
+    insert_grant(
+        family_id, "gran@example.com",
+        starts_delta=timedelta(days=-430), ends_delta=timedelta(days=-65),
+    )
+
+    assert premium_status(client, parent, family_id)["plan"] == "free"
+    assert not [t for t in outbox_texts(tmp_path) if "back on the Free plan" in t]
 
 
 # --- owner departure hook ---

@@ -65,6 +65,14 @@ def signup(client, email: str, name: str = "Test User") -> dict:
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
+def media_token(client, headers: dict) -> str:
+    """Exchange a session for the short-lived media-scoped token that media
+    URLs carry as ?token= (the only credential /media/{id} accepts there)."""
+    r = client.post("/auth/media-token", headers=headers)
+    assert r.status_code == 200, r.text
+    return r.json()["media_token"]
+
+
 def create_family(client, headers: dict, name: str = "The Salignas") -> str:
     r = client.post("/families", json={"name": name}, headers=headers)
     assert r.status_code == 201, r.text

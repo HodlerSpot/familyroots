@@ -55,6 +55,52 @@ def create_impersonation_token(user_id: uuid.UUID, admin_id: uuid.UUID, minutes:
 def decode_access_token(token: str) -> uuid.UUID | None:
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+        # Scoped tokens (aud-bearing, e.g. media tokens) are never sessions.
+        # PyJWT already raises InvalidAudienceError for an unexpected aud claim;
+        # this explicit check keeps the invariant even if decode options change.
+        if "aud" in payload:
+            return None
+        return uuid.UUID(payload["sub"])
+    except (jwt.InvalidTokenError, KeyError, ValueError):
+        return None
+
+
+# --- media tokens ---
+# <img>/<video>/<audio> tags can't send an Authorization header, so media URLs
+# must carry a credential in the query string — a leak surface (proxy logs,
+# browser history, Referer). Trade-off: we keep the query string but make the
+# credential a short-lived token honored ONLY by GET /media/{id}. It is useless
+# as an access token (decode_access_token rejects its aud claim), it is
+# read-only by construction, and the media route still runs its full per-media
+# authorization on every fetch — so a leaked URL exposes at most what its owner
+# could already view, and only until the token expires.
+
+MEDIA_TOKEN_AUDIENCE = "futureroots:media"
+
+
+def create_media_token(user_id: uuid.UUID) -> str:
+    """Short-lived, media-scoped credential for <img>/<video> URLs. Carries
+    only the user id; per-media access checks still happen at fetch time."""
+    payload = {
+        "sub": str(user_id),
+        "aud": MEDIA_TOKEN_AUDIENCE,
+        "exp": datetime.now(timezone.utc)
+        + timedelta(minutes=settings.media_token_ttl_minutes),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
+def decode_media_token(token: str) -> uuid.UUID | None:
+    """Accepts ONLY media-scoped tokens: requiring aud == MEDIA_TOKEN_AUDIENCE
+    makes PyJWT reject ordinary access tokens (which carry no aud claim), so a
+    full session JWT pasted into a media URL never works."""
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=["HS256"],
+            audience=MEDIA_TOKEN_AUDIENCE,
+        )
         return uuid.UUID(payload["sub"])
     except (jwt.InvalidTokenError, KeyError, ValueError):
         return None

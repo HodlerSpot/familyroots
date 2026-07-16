@@ -578,7 +578,10 @@ def test_bug_with_screenshot(testnet_on, client):
     assert r.json()["media_id"] == media_id
     assert r.json()["image_url"] == f"/media/{media_id}"
     # the uploader can view the screenshot; the shared media route authorizes it
-    tok = headers["Authorization"].split()[1]
+    # (testers are backed by real users, so the shared media-token flow works)
+    from .conftest import media_token
+
+    tok = media_token(client, headers)
     assert client.get(f"/media/{media_id}?token={tok}").status_code == 200
     # it shows in the admin queue
     assert client.get("/testnet/bugs", headers=headers).json()[0]["media_id"] == media_id

@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 
 from ..deps import CurrentUser, DbSession, get_child_with_access, require_not_supporter
 from ..models import (
@@ -101,8 +102,18 @@ def confirm_contribution(
         db.commit()
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "The payment didn't go through")
 
-    settle_contribution(db, contribution)
-    db.commit()
+    settlement = settle_contribution(db, contribution)
+    try:
+        db.commit()
+    except IntegrityError:
+        # A concurrent confirm settled first (ledger unique constraint on
+        # source_contribution_id). This one is a replay: no email, same 409
+        # the serialized replay gets above.
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "This gift already went through. Thank you!")
+    # Celebration emails go out only after the ledger write is committed —
+    # never inside the transaction (double-send race, see settle_contribution).
+    settlement.send_emails()
     return ContributionOut.model_validate(contribution)
 
 

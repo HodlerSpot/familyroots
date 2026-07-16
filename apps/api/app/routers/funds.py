@@ -15,10 +15,11 @@ Discipline:
 """
 
 import uuid
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 
 from ..config import settings
 from ..deps import CurrentUser, DbSession, get_child_with_access, require_guardian_role
@@ -61,6 +62,17 @@ class FundStatusOut(BaseModel):
 
 class FundNudgeOut(BaseModel):
     sent: bool
+
+
+def _nudge_claim(db, child_id: uuid.UUID, user_id: uuid.UUID) -> FundNudge | None:
+    """The member's single throttle row for this child, row-locked so
+    concurrent re-nudges serialize (with_for_update is a no-op on SQLite)."""
+    return (
+        db.query(FundNudge)
+        .filter(FundNudge.child_id == child_id, FundNudge.user_id == user_id)
+        .with_for_update()
+        .first()
+    )
 
 
 @router.post("/children/{child_id}/fund/setup", response_model=FundSetupOut)
@@ -175,24 +187,30 @@ def nudge_fund_setup(
             "You can set up the Future Fund yourself. No need to ask.",
         )
 
-    # Storage limitation: nudge rows exist only for this 7-day throttle, so
-    # sweep anything older than 30 days while we're here (lazy, no scheduler).
-    db.query(FundNudge).filter(
-        FundNudge.created_at < utcnow() - timedelta(days=30)
-    ).delete(synchronize_session=False)
-
-    week_ago = utcnow() - timedelta(days=7)
-    recent = (
-        db.query(FundNudge)
-        .filter(
-            FundNudge.child_id == child_id,
-            FundNudge.user_id == user.id,
-            FundNudge.created_at >= week_ago,
-        )
-        .first()
-    )
-    if recent is not None:
-        return FundNudgeOut(sent=False)
+    # Claim the throttle BEFORE anything is sent. fund_nudges keeps ONE row
+    # per (member, child); the unique constraint makes a concurrent double-tap
+    # race-safe — exactly one request owns the claim, the loser quietly
+    # returns sent=false. (Rows older than 30 days are swept by the daily
+    # maintenance command.)
+    now = utcnow()
+    week_ago = now - timedelta(days=7)
+    existing = _nudge_claim(db, child_id, user.id)
+    if existing is not None:
+        created = existing.created_at
+        if created.tzinfo is None:  # SQLite drops tz in tests
+            created = created.replace(tzinfo=timezone.utc)
+        if created >= week_ago:
+            return FundNudgeOut(sent=False)
+        existing.created_at = now  # re-nudge after the window: refresh in place
+        db.flush()
+    else:
+        db.add(FundNudge(child_id=child_id, user_id=user.id, created_at=now))
+        try:
+            db.flush()
+        except IntegrityError:
+            # First-nudge race: a concurrent request inserted the claim first.
+            db.rollback()
+            return FundNudgeOut(sent=False)
 
     guardians = (
         db.query(User)
@@ -204,6 +222,9 @@ def nudge_fund_setup(
         )
         .all()
     )
+    # The claim is durable before any email leaves (send-after-commit, same
+    # discipline as contribution settlement).
+    db.commit()
     sender = get_email_sender()
     child_url = f"{settings.web_base_url}/family/{child.family_id}/child/{child.id}"
     for guardian in guardians:
@@ -234,6 +255,4 @@ def nudge_fund_setup(
                 cta_url=child_url,
             ),
         )
-    db.add(FundNudge(child_id=child_id, user_id=user.id))
-    db.commit()
     return FundNudgeOut(sent=True)

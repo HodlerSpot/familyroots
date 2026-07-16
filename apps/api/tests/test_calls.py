@@ -221,6 +221,40 @@ def test_presence_expiry_reaps_participant_and_ends_call(client):
         assert db.query(CallChildPresence).count() == 0
 
 
+def test_abandoned_call_elapsed_cap_ends_at_lookup(client):
+    """A call nobody heartbeats for CALL_ABANDONED_AFTER is treated as ended
+    the moment anyone observes it — enforced in the _active_call derivation
+    every endpoint uses, and persisted as ended."""
+    import uuid as uuid_mod
+
+    from app.models import CallParticipant, FamilyCall, utcnow
+    from app.routers.calls import _active_call
+    from app.services.maintenance import CALL_ABANDONED_AFTER
+
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    _join(client, parent, family_id)
+
+    stale = utcnow() - CALL_ABANDONED_AFTER - timedelta(minutes=5)
+    with TestingSession() as db:
+        db.query(CallParticipant).one().last_seen_at = stale
+        db.query(FamilyCall).one().started_at = stale
+        db.commit()
+
+    with TestingSession() as db:
+        assert _active_call(db, uuid_mod.UUID(family_id)) is None
+
+    with TestingSession() as db:
+        call = db.query(FamilyCall).one()
+        assert call.status == CallStatus.ended
+        assert call.active_family_id is None
+        assert call.ended_at is not None
+
+    # And the family page read agrees.
+    r = client.get(f"/families/{family_id}/call", headers=parent)
+    assert r.status_code == 200 and r.json()["active"] is False
+
+
 def test_leave_ends_call_only_when_last_person_out(client):
     parent = signup(client, "parent@example.com")
     family_id = create_family(client, parent)

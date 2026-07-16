@@ -1,13 +1,9 @@
 """Section E: the supporter role sees a deliberately narrow slice of a family
 and is locked out of funds, capsules, goals, and the legacy archive."""
 
-from .conftest import TestingSession, add_child, create_family, setup_fund, signup
+from .conftest import TestingSession, add_child, create_family, media_token, setup_fund, signup
 from .test_capsules import seal_capsule
 from .test_vault import PNG_BYTES, upload_photo
-
-
-def _token(headers: dict) -> str:
-    return headers["Authorization"].removeprefix("Bearer ")
 
 
 def make_supporter(client, parent, family_id, email="coach@example.com", name="Coach"):
@@ -264,7 +260,7 @@ def test_supporter_media_download_is_gated(client):
     client.post(f"/media/{fam_media}/complete", headers=parent)
 
     supporter = make_supporter(client, parent, family_id)
-    tok = _token(supporter)
+    tok = media_token(client, supporter)
 
     # Unshared memory media: blocked. Avatar: allowed. Family media: blocked.
     assert client.get(f"/media/{media_id}?token={tok}").status_code == 404

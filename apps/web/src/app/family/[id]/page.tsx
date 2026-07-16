@@ -11,8 +11,9 @@ import {
   FeedEventOut,
   getToken,
   mediaUrl,
+  MemberOut,
 } from "@/lib/api";
-import { Button, Card, ErrorNote, Input, Label } from "@/components/ui";
+import { Button, Card, ErrorNote, Input, Label, Modal } from "@/components/ui";
 import { FamilyFeedList } from "@/components/feed";
 import { FamilyCallCard } from "@/components/family-call/FamilyCallCard";
 import { useCallState } from "@/components/family-call/useCallState";
@@ -25,7 +26,18 @@ export default function FamilyPage() {
   const [family, setFamily] = useState<FamilyDetail | null>(null);
   const [feed, setFeed] = useState<FeedEventOut[]>([]);
   const [myRole, setMyRole] = useState<FamilyRole | null>(null);
+  const [meId, setMeId] = useState<string | null>(null);
   const [error, setError] = useState("");
+
+  // Departure flows: a quiet way out for yourself, and (parents only) a
+  // gentle way to remove someone. Nothing anyone shared is ever deleted.
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [leaveBusy, setLeaveBusy] = useState(false);
+  const [leaveError, setLeaveError] = useState("");
+  const [ownsPremium, setOwnsPremium] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState<MemberOut | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeError, setRemoveError] = useState("");
 
   // Supporters (coaches, mentors, friends) get a warm, view-only experience:
   // no legacy archive, no family administration. Everyone else sees the archive
@@ -47,6 +59,7 @@ export default function FamilyPage() {
         api.familyFeed(id),
       ]);
       setFamily(detail);
+      setMeId(me.id);
       setMyRole(detail.members.find((m) => m.user.id === me.id)?.role ?? null);
       setFeed(events);
     } catch (err) {
@@ -62,6 +75,55 @@ export default function FamilyPage() {
     }
     load();
   }, [router, load]);
+
+  async function openLeave() {
+    setLeaveError("");
+    setOwnsPremium(false);
+    setConfirmLeave(true);
+    // Only a parent can own the family's Premium subscription; if the person
+    // leaving started it, the dialog must say so before they decide.
+    if (myRole === "parent") {
+      try {
+        const s = await api.getPremiumStatus(id);
+        setOwnsPremium(
+          Boolean(s.subscription && s.subscription.is_owner && s.subscription.status !== "canceled")
+        );
+      } catch {
+        // If the plan can't be checked, keep the dialog calm and generic.
+      }
+    }
+  }
+
+  async function doLeave() {
+    setLeaveBusy(true);
+    setLeaveError("");
+    try {
+      await api.leaveFamily(id);
+      router.replace("/family");
+    } catch (err) {
+      setLeaveError(
+        err instanceof ApiError ? err.message : "Something went wrong. Please try again."
+      );
+      setLeaveBusy(false);
+    }
+  }
+
+  async function doRemove() {
+    if (!removeTarget) return;
+    setRemoveBusy(true);
+    setRemoveError("");
+    try {
+      await api.removeFamilyMember(id, removeTarget.user.id);
+      setRemoveTarget(null);
+      await load();
+    } catch (err) {
+      setRemoveError(
+        err instanceof ApiError ? err.message : "Something went wrong. Please try again."
+      );
+    } finally {
+      setRemoveBusy(false);
+    }
+  }
 
   if (error) return <ErrorNote>{error}</ErrorNote>;
   if (!family) return <p className="text-stone-500">Loading…</p>;
@@ -158,13 +220,36 @@ export default function FamilyPage() {
                         )}
                         {m.user.display_name}
                       </span>
-                      <span className="text-sm capitalize text-stone-500">{m.role}</span>
+                      <span className="flex items-center gap-3">
+                        <span className="text-sm capitalize text-stone-500">{m.role}</span>
+                        {myRole === "parent" && m.user.id !== meId && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRemoveError("");
+                              setRemoveTarget(m);
+                            }}
+                            className="text-xs text-stone-400 underline hover:text-stone-600"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </span>
                     </li>
                   );
                 })}
               </ul>
             </Card>
             {canManage && <InviteForm familyId={family.id} />}
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={openLeave}
+                className="text-xs text-stone-400 underline hover:text-stone-600"
+              >
+                Leave this family
+              </button>
+            </div>
           </section>
         </div>
 
@@ -212,6 +297,52 @@ export default function FamilyPage() {
           <PlanSection familyId={family.id} />
         </div>
       </div>
+
+      <Modal open={confirmLeave} onClose={() => setConfirmLeave(false)} title="Leave this family?">
+        <p className="text-stone-700">
+          You can step away whenever you need to. Everything you&apos;ve shared stays with the
+          family, and a parent can invite you back any time.
+        </p>
+        {ownsPremium && (
+          <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            You started this family&apos;s Premium membership, so it won&apos;t renew after you
+            leave. Premium stays on for everyone until the end of the current billing period.
+          </p>
+        )}
+        {leaveError && (
+          <div className="mt-3">
+            <ErrorNote>{leaveError}</ErrorNote>
+          </div>
+        )}
+        <div className="mt-5 flex flex-col gap-2">
+          <Button onClick={() => setConfirmLeave(false)}>Stay</Button>
+          <Button variant="soft" onClick={doLeave} disabled={leaveBusy}>
+            {leaveBusy ? "One moment…" : "Leave family"}
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={removeTarget !== null}
+        onClose={() => setRemoveTarget(null)}
+        title={`Remove ${removeTarget?.user.display_name ?? "this member"}?`}
+      >
+        <p className="text-stone-700">
+          {removeTarget?.user.display_name} won&apos;t see this family anymore. Nothing
+          they&apos;ve shared is deleted, and you can invite them back whenever you like.
+        </p>
+        {removeError && (
+          <div className="mt-3">
+            <ErrorNote>{removeError}</ErrorNote>
+          </div>
+        )}
+        <div className="mt-5 flex flex-col gap-2">
+          <Button onClick={() => setRemoveTarget(null)}>Keep them</Button>
+          <Button variant="soft" onClick={doRemove} disabled={removeBusy}>
+            {removeBusy ? "One moment…" : "Remove"}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

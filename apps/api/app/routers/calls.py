@@ -45,6 +45,7 @@ from ..schemas import (
 )
 from ..services.agora.tokens import mint_rtc_token
 from ..services.entitlements import Capability, require_capability
+from ..services.maintenance import call_is_abandoned
 
 router = APIRouter(prefix="/families/{family_id}/call", tags=["call"])
 
@@ -69,11 +70,20 @@ def _is_present(p: CallParticipant, cutoff) -> bool:
 # --- call lookup / lifecycle ---
 
 def _active_call(db, family_id: uuid.UUID) -> FamilyCall | None:
-    return (
+    call = (
         db.query(FamilyCall)
         .filter(FamilyCall.family_id == family_id, FamilyCall.status == CallStatus.active)
         .first()
     )
+    if call is not None and call_is_abandoned(db, call):
+        # Elapsed-time cap: no heartbeat for CALL_ABANDONED_AFTER means the
+        # call was abandoned (nobody polled it, so the lazy reap never ran).
+        # Persist the end the moment anyone observes the call; the daily
+        # maintenance command applies the same cap to calls nobody observes.
+        _end_call(db, call)
+        db.commit()
+        return None
+    return call
 
 
 def _end_call(db, call: FamilyCall) -> None:
@@ -121,8 +131,8 @@ def _reap(db, call: FamilyCall) -> None:
             CallChildPresence.marked_by.in_(stale_user_ids),
         ).delete(synchronize_session=False)
     db.flush()
-    # Nobody present -> end. This also satisfies the 12h safety cap: an old,
-    # empty call has no present participants and so is ended here.
+    # Nobody present -> end. (Abandoned calls nobody reads at all are capped
+    # by _active_call's elapsed-time check and the daily maintenance sweep.)
     if present_count == 0:
         _end_call(db, call)
 

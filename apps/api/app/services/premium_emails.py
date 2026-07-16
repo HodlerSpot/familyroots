@@ -296,27 +296,32 @@ def renewal_upcoming(*, owner_name: str, renewal_date: datetime, family_id) -> d
 
 
 # --- 2.8 Gift ending soon — to all active parents ---
+# CASL discipline: recipients never opted into marketing and this email has no
+# unsubscribe, so it must stay purely transactional — a service notice about a
+# change to their account. State the facts (coverage ends on {date}, everything
+# saved stays theirs, the family returns to the Free plan) with NO pricing, NO
+# upsell, and a CTA that goes to their own Plan settings, not a purchase page.
 
 def gift_ending_soon(
     *, parent_name: str, gifter_name: str, end_date: datetime, family_id
 ) -> dict:
     return _build(
         subject=f"{gifter_name}'s gift of Premium ends on {_date(end_date)}",
-        preheader="One more week of Premium. Keep it going anytime, or let it "
-        "rest.",
+        preheader="A heads-up about your family's plan. Everything you've "
+        "saved stays yours.",
         greeting=f"Hi {parent_name},",
         paragraphs=[
             f"The year of FutureRoots Premium that {gifter_name} gave your "
             f"family ends on {_date(end_date)}. What a year of memories it has "
             f"held.",
-            "If you'd like to keep saving videos and gathering for family "
-            "calls, you can pick up right where the gift leaves off: $9.99 a "
-            "month or $99 a year.",
-            "And if now isn't the time, that's completely fine. Everything "
-            "you've saved stays yours on the Free plan, including every video.",
+            "When the gift ends, your family simply returns to the Free plan. "
+            "Everything you've saved stays yours, including every video, and "
+            "it will always play and download just as before.",
+            "There's nothing you need to do. This is just a heads-up so the "
+            "change never takes you by surprise.",
         ],
-        cta_label="Keep Premium going",
-        cta_url=premium_page_url(family_id),
+        cta_label="See your family's plan",
+        cta_url=plan_section_url(family_id),
     )
 
 

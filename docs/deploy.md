@@ -16,9 +16,9 @@ Estimated baseline: ~$18–21/month (RDS ~$15, fck-nat ~$3.3, rest pennies at MV
 
 ## Payments (Stripe, live mode)
 
-- `PaymentProvider` backend switched by `FUTUREROOTS_PAYMENT_BACKEND` (`local` in dev, `stripe` in prod). Keys live in `infra/.env` (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`) → Lambda env; the publishable key is a public Amplify env var (`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`).
+- `PaymentProvider` backend switched by `FUTUREROOTS_PAYMENT_BACKEND` (`local` in dev, `stripe` in prod). Secret keys live in the `futureroots/api` Secrets Manager secret (see **Secrets** below; values still sourced from `infra/.env` via `push_secrets.ps1`); the publishable key is a public Amplify env var (`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`).
 - Settlement happens **only** via the signature-verified `POST /webhooks/stripe` (webhook endpoint `we_1Ts44zAXijaNn5C5yVSHU2UT` in the Stripe dashboard, events: `payment_intent.succeeded`/`payment_failed`). The local `/confirm` endpoint refuses in stripe mode.
-- Key rotation: update `infra/.env`, `cdk deploy`; publishable key via Amplify console + rebuild.
+- Key rotation: update `infra/.env`, run `infra\scripts\push_secrets.ps1`, force new cold starts (`cdk deploy`); publishable key via Amplify console + rebuild.
 - Refunds: Stripe dashboard → refund the payment; then add a compensating `adjustment` ledger entry (there is no automated refund webhook handling yet — see hardening backlog).
 
 ### Future Fund accounts (Stripe Connect) — one-time dashboard setup
@@ -35,7 +35,8 @@ onboarding works, the owner must, in the Stripe Dashboard:
    `https://api.futureroots.app/webhooks/stripe-connect` with **"Listen to
    events on Connected accounts"** enabled, event `account.updated`. Put its
    signing secret in `infra/.env` as `STRIPE_CONNECT_WEBHOOK_SECRET`, then
-   `cdk deploy`. (Connect events do NOT arrive on the existing endpoint.)
+   run `infra\scripts\push_secrets.ps1` and `cdk deploy`. (Connect events do
+   NOT arrive on the existing endpoint.)
 4. **Live-mode platform review**: Stripe reviews Connect platforms before live
    Express accounts can onboard — start early, it gates launch.
 5. Verify test-mode end to end (test Express account → contribution → net
@@ -85,23 +86,86 @@ every family stays Free. To light it up:
 SES production access remains the dependency for Premium lifecycle emails at
 scale (sandbox only delivers to verified addresses).
 
-**Hardening backlog (Premium data lifecycle, not launch-blocking):**
+**Premium data lifecycle** — handled by the daily maintenance command (below):
+gift-intent prune (>30 days; the admin endpoint
+`POST /admin/premium/prune-gift-intents` remains as a manual trigger) and
+`premium_email_log` prune (>1 year; safe because no lifecycle email can
+re-fire after 30 days).
 
-- **Gift-intent prune.** `premium_gift_intents` rows for abandoned checkouts
-  are harmless orphans but hold the free-text gift message (which may name a
-  child). The admin sweep `POST /admin/premium/prune-gift-intents` deletes rows
-  older than 30 days; schedule it on an **EventBridge** rule (daily) invoking a
-  small Lambda that calls the endpoint (or a management-command entrypoint), so
-  the prune doesn't depend on an admin remembering to run it.
-- **`premium_email_log` retention.** This table grows unbounded (one row per
-  lifecycle email ever sent) and has **no retention bound yet**. It carries no
-  message content — only `family_id`, `kind`, `dedupe_key`, `sent_at` — so it
-  is low-sensitivity, but a periodic prune of rows older than ~1 year (same
-  EventBridge cadence) is a cleanliness follow-up.
+## Secrets (AWS Secrets Manager)
 
-## Secrets
+Runtime secrets no longer live in Lambda env vars. ONE consolidated secret,
+**`futureroots/api`** (us-east-1, ~$0.40/mo), holds a JSON object keyed by
+env-var name: `FUTUREROOTS_DATABASE_URL`, `FUTUREROOTS_TESTNET_DATABASE_URL`,
+`FUTUREROOTS_JWT_SECRET`, `FUTUREROOTS_STRIPE_SECRET_KEY`,
+`FUTUREROOTS_STRIPE_WEBHOOK_SECRET`, `FUTUREROOTS_STRIPE_CONNECT_WEBHOOK_SECRET`,
+`FUTUREROOTS_AGORA_APP_CERTIFICATE`, `FUTUREROOTS_TESTNET_ADMIN_TOKEN`,
+`FUTUREROOTS_X_CLIENT_SECRET`.
 
-`infra/.env` (gitignored, never committed): `DB_PASSWORD`, `JWT_SECRET`, `SES_FROM_ADDRESS`, `WEB_BASE_URL`. Rotate by editing and redeploying. Hardening TODO (Phase 5+): move to Secrets Manager + rotation.
+- **Source of values**: still `infra/.env` (gitignored). Push with
+  `infra\scripts\push_secrets.ps1` (idempotent; composes the DB URLs from
+  `DB_PASSWORD` + the stack's `DbEndpoint` output; never prints values).
+- **How it loads**: the CDK stack imports the secret by name, grants both
+  Lambdas read, and passes only `FUTUREROOTS_SECRETS_ARN`. At cold start
+  `apps/api/app/config.py` fetches the JSON (over the fck-nat egress path —
+  no VPC endpoint) and injects the values as env-var *defaults*; explicitly
+  set env vars win, and local dev (no ARN) is untouched. The testnet Lambda
+  uses the same secret; with `FUTUREROOTS_TESTNET_MODE=1` the overlay maps
+  `FUTUREROOTS_TESTNET_DATABASE_URL` onto `FUTUREROOTS_DATABASE_URL`.
+- **Rotation**: edit `infra/.env` → run `push_secrets.ps1` → force new cold
+  starts (`cdk deploy`, or `aws lambda update-function-configuration` with a
+  touched description). Values are read once per cold start, so warm
+  containers keep old values until recycled.
+- **Not in the secret**: Stripe price ids, backends, SES from-address,
+  `WEB_BASE_URL`, Agora App ID (all non-secret, still plain env vars), and
+  `X_CLIENT_ID` (public). `DB_PASSWORD` also stays in `infra/.env` because the
+  RDS resource still sets the master password inline — the CFN template still
+  contains it there (pre-existing; next hardening step is a
+  Secrets-Manager-managed RDS credential, which rotates the password).
+
+## Scheduled maintenance
+
+An EventBridge rule (`cron(0 9 * * ? *)`, daily 09:00 UTC) invokes the API
+Lambda with `{"futureroots_command": "maintenance"}` — an idempotent
+data-lifecycle sweep (one DB session, one commit, a one-line count summary in
+CloudWatch; handler in `apps/api/app/lambda_handler.py` /
+`app/services/maintenance.py`). It runs: `premium_gift_intents` prune
+(>30 days), `premium_email_log` prune (>1 year), `fund_nudges` sweep
+(>30 days), abandoned-video-call end (active call with no heartbeat for
+15 min), and `call_participants`/`call_child_presence` retention (rows of
+calls ended >90 days ago). It never touches money records. Manual trigger:
+
+```powershell
+aws lambda invoke --function-name <ApiFunctionName> `
+  --payload '{\"futureroots_command\":\"maintenance\"}' `
+  --cli-binary-format raw-in-base64-out out.json
+```
+
+## RDS protection
+
+The database has `deletionProtection: true` and removal policy `RETAIN`: it
+survives both an accidental delete-instance call and a stack teardown. To
+ever decommission it, first flip both in `infra/lib/futureroots-stack.ts`
+and deploy.
+
+## Media auth
+
+`GET /media/{id}` never accepts a session JWT in the URL. Browsers load media
+through `?token=<media token>` — a signed, stateless JWT
+(`aud: futureroots:media`, 60-min TTL, `FUTUREROOTS_MEDIA_TOKEN_TTL_MINUTES`)
+minted by `POST /auth/media-token` for any authenticated user. The token is a
+narrow read credential: it authenticates the user on the media route only
+(every other endpoint rejects it as a bearer token, and the media route
+rejects access JWTs in the query string), and the route still runs full
+per-media authorization (family membership, supporter sharing, sealed-capsule
+creator-only) on every fetch, so it grants nothing its owner couldn't already
+view. API clients may use a normal `Authorization: Bearer <access JWT>` header
+instead. The web client caches the token in localStorage and refreshes it
+opportunistically on API traffic (background refresh under 15 min remaining),
+clearing it on any identity change. Query-string credentials remain a
+Referer/history/proxy-log leak surface (plain `<img>/<video>` tags can't send
+headers); the exposure is now capped at ≤1 h of read-only media access instead
+of a week-long full session token.
 
 ## Deploy / update
 
@@ -147,15 +211,43 @@ Amplify app builds `apps/web` from the GitHub repo (monorepo root `apps/web`). A
 
 ## Hardening backlog (tracked for post-MVP)
 
-- Cognito auth swap (needs an egress path for JWKS or a Cognito VPC endpoint)
-- Secrets Manager for DB/JWT secrets
-- CloudFront in front of API + custom domain + WAF
-- RDS deletion protection on once real families are aboard
-- GDPR erasure runbook (S3 cascade delete exists in code; document the operational flow)
-- Secrets Manager for the Agora App Certificate (`FUTUREROOTS_AGORA_APP_CERTIFICATE`), currently a plaintext Lambda env var like the other secrets
-- Media auth hardening (app-wide): the `/media/{id}?token=` route embeds the full access JWT in the URL (proxy/history/Referer leak surface). Move to a short-lived media-scoped token or cookie auth for `<img>/<video>` fetches (security review L2)
-- Video-call erasure: the new `family_calls`, `call_participants`, `call_child_presence`, `planned_calls` tables reference children/families/users with no `ON DELETE CASCADE`; the future erasure routine must cascade to all four (esp. `call_child_presence.child_id`)
-- Future Fund erasure: `fund_accounts` + `fund_nudges` join the erasure cascade. The routine must also decide the Stripe side (the Express account is the PARENT's; likely deauthorize/leave it) and note that `contributions`/`fund_ledger_entries` are financial records retained under a legal-obligation basis — anonymize the child linkage rather than delete money records (GDPR Art. 17(3)(b)). Counsel items: money-transmission posture (processor exemption as merchant of record), legacy platform-held balances disposition/escheatment, "earmarked for the child" copy vs. no legal custody (any UTMA/529 product is lawyer-first), retention period for money records post-erasure
-- Contribution settle: emails are sent inside `settle_contribution` before commit, so two concurrent `payment_intent.succeeded` deliveries can double-send the celebration email (ledger stays single via the unique constraint). Move sends after commit
-- Fund nudge throttle is check-then-insert (no unique constraint): a concurrent double-tap can double-send the nudge email. Nuisance-level
-- Video-call retention sweep: `call_participants` rows persist after a call ends (adult "who was on, when" history); add a retention/cleanup policy, and an elapsed-time cap so an abandoned (never-polled) call ends without waiting for the next family-page visit
+Open:
+
+- Cognito auth swap (needs an egress path for JWKS or a Cognito VPC endpoint) — **deferred by founder decision 2026-07-16** (multi-day effort)
+- CloudFront in front of API + custom domain + WAF — **deferred by founder decision 2026-07-16** (adds ~$10–15/mo)
+- Secrets-Manager-managed RDS master credential: the master password still
+  appears inline in the CFN template (`Credentials.fromPassword`); moving to a
+  managed credential rotates the password and touches the DB resource
+- Account-deletion / erasure endpoints: the manual operational flow is now
+  documented in `docs/erasure-runbook.md`; its §7 "automation backlog" is the
+  spec for the eventual self-serve endpoints (table walks, tombstone-vs-delete
+  for `users`, media walk on `MediaStorage.delete()`, Stripe
+  Customer/Connect handling, `consent_records.revoked_at` writes). Counsel
+  items (money-transmission posture, legacy balance escheatment, retention
+  period for money records) are flagged inline there
+- EU/UK withdrawal-right consent line on checkout is live (immediate-performance
+  acknowledgment, unchecked by default) — **pending counsel review**
+
+Resolved (2026-07-16):
+
+- ~~Secrets Manager for DB/JWT/Stripe/Agora secrets~~ → the `futureroots/api`
+  consolidated secret (see **Secrets** above)
+- ~~RDS deletion protection~~ → on, with removal policy RETAIN
+- ~~GDPR erasure runbook~~ → `docs/erasure-runbook.md` (note: the old claim
+  "S3 cascade delete exists in code" was an overstatement — the
+  `MediaStorage.delete()` primitive exists; the erasure walk does not yet)
+- ~~Contribution settle email double-send race~~ → emails send only after the
+  ledger commit; a concurrent duplicate delivery loses the unique constraint,
+  acks, and emails nobody
+- ~~Fund nudge throttle race~~ → one row per (member, child) under a unique
+  constraint (migration `d41f7b6a90c3`); re-nudges refresh in place
+- ~~Video-call retention sweep + abandoned-call cap~~ → 90-day
+  participant/presence retention in the maintenance command; abandoned calls
+  (no heartbeat 15 min) ended at read time and by the daily sweep
+- ~~Gift-intent prune scheduling / email-log retention~~ → daily maintenance
+  command (see **Scheduled maintenance** above)
+- ~~Owner-departure billing gap~~ → leave-family / remove-member endpoints now
+  exist and call `handle_owner_departure` (subscription set to
+  cancel-at-period-end, remaining parents emailed)
+- ~~Media auth hardening (JWT in media URLs)~~ → short-lived media-scoped
+  tokens (see **Media auth** below)

@@ -182,19 +182,21 @@ Paragraphs:
 
 Sent only when no active subscription continues coverage.
 
+**CASL note (compliance finding M2):** recipients never opted into marketing and this email carries no unsubscribe, so it must stay a purely transactional service notice. It states the facts — the gift coverage ends on {endDate}, everything they've saved stays theirs (including videos), and the family returns to the Free plan — with **no pricing, no upsell**, and a CTA to the family's own Plan settings, never a purchase page.
+
 | Field | Copy |
 |---|---|
 | Subject | `{gifterName}'s gift of Premium ends on {endDate}` |
-| Preheader | `One more week of Premium. Keep it going anytime, or let it rest.` |
+| Preheader | `A heads-up about your family's plan. Everything you've saved stays yours.` |
 | Greeting | `Hi {parentName},` |
 
 Paragraphs:
 
 1. `The year of FutureRoots Premium that {gifterName} gave your family ends on {endDate}. What a year of memories it has held.`
-2. `If you'd like to keep saving videos and gathering for family calls, you can pick up right where the gift leaves off: $9.99 a month or $99 a year.`
-3. `And if now isn't the time, that's completely fine. Everything you've saved stays yours on the Free plan, including every video.`
+2. `When the gift ends, your family simply returns to the Free plan. Everything you've saved stays yours, including every video, and it will always play and download just as before.`
+3. `There's nothing you need to do. This is just a heads-up so the change never takes you by surprise.`
 
-- CTA: `Keep Premium going` → `/family/{id}/premium`
+- CTA: `See your family's plan` → Plan section
 
 ---
 
@@ -216,6 +218,7 @@ Plan cards (Annual preselected):
 | Badge on card | `Save $20.88 (about 2 months free)` | none |
 | Card note | `Renews yearly. Cancel anytime.` | `Renews monthly. Cancel anytime.` |
 
+- **Immediate-performance acknowledgment (required checkbox, above the CTA, unchecked by default):** `Premium starts the moment your payment goes through. I agree to it starting right away, and I understand this means I give up the 14-day cancellation right that applies in some countries. Refund questions? Our support team is happy to help.` — EU/UK immediate-performance consent (counsel review pending). CTA stays disabled until checked.
 - **CTA:** `Continue to secure checkout`
 - **Fine print (under CTA):** `Your plan renews automatically until you cancel. Cancel anytime; your family keeps Premium until the end of the paid period.`
 - **Already-Premium state (server 409 `already_premium`):** `Your family is already on Premium. There's nothing to buy twice.`
@@ -230,6 +233,7 @@ Plan cards (Annual preselected):
 - **Message field placeholder:** `For all the recital videos to come ♥`
 - **Message helper text (char limit):** `Up to 500 characters. It appears on the family feed and in the parents' email.`
 - **Already-Premium notice (shown before payment):** `This family already has Premium. Your gift will extend it by a full year, starting when their current coverage ends.`
+- **Immediate-performance acknowledgment (required checkbox, above the CTA, unchecked by default):** `The gift year starts right away, the moment your payment goes through. I agree to it starting immediately, and I understand this means I give up the 14-day cancellation right that applies in some countries. Refund questions? Our support team is happy to help.` — EU/UK immediate-performance consent (counsel review pending). CTA stays disabled until checked.
 - **CTA:** `Continue to payment`
 - **Fine print (under CTA):** `One-time payment of $99. Nothing renews, and no one is charged later.`
 - **Checkout-cancelled return (`?canceled=1` banner):** `No worries at all. The family is right here whenever you're ready, and so is the gift.`

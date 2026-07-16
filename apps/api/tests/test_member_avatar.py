@@ -1,7 +1,7 @@
 """Member profile headshots: user-scoped media, avatar set, and download
 access (owner + co-family members only)."""
 
-from .conftest import add_child, create_family, signup
+from .conftest import add_child, create_family, media_token, signup
 from .test_goals import make_grandparent
 from .test_vault import PNG_BYTES
 
@@ -13,10 +13,6 @@ def upload_my_photo(client, headers) -> str:
     assert client.put(r.json()["upload_url"], content=PNG_BYTES, headers=headers).status_code == 204
     assert client.post(f"/media/{media_id}/complete", headers=headers).status_code == 204
     return media_id
-
-
-def _tok(headers: dict) -> str:
-    return headers["Authorization"].removeprefix("Bearer ")
 
 
 def test_avatar_upload_set_and_co_member_download(client):
@@ -39,11 +35,11 @@ def test_avatar_upload_set_and_co_member_download(client):
     assert pat["user"]["avatar_media_id"] == media_id
 
     # Owner and a co-family member can fetch the image; a stranger cannot.
-    assert client.get(f"/media/{media_id}?token={_tok(parent)}").status_code in (200, 307)
-    assert client.get(f"/media/{media_id}?token={_tok(gran)}").status_code in (200, 307)
+    assert client.get(f"/media/{media_id}?token={media_token(client, parent)}").status_code in (200, 307)
+    assert client.get(f"/media/{media_id}?token={media_token(client, gran)}").status_code in (200, 307)
 
     stranger = signup(client, "stranger@example.com")
-    assert client.get(f"/media/{media_id}?token={_tok(stranger)}").status_code == 404
+    assert client.get(f"/media/{media_id}?token={media_token(client, stranger)}").status_code == 404
 
 
 def test_cannot_set_someone_elses_media_as_avatar(client):

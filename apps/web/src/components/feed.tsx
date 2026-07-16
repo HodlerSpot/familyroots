@@ -41,6 +41,9 @@ function eventLine(e: FeedEventOut): { icon: string; text: string } {
       };
     case "member_joined":
       return { icon: "🌱", text: `${p.member_name} joined the family as a ${p.role}` };
+    case "member_left":
+      // A quiet, no-shame goodbye. Everything they shared stays in the vault.
+      return { icon: "🕊️", text: `${p.member_name} has stepped away from the family` };
     case "achievement":
       return { icon: "🏅", text: `${p.child_name} reached a goal: ${p.title}` };
     case "capsule_created":

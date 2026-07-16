@@ -129,6 +129,100 @@ def test_failed_payment_marks_contribution_failed(client):
     assert fund["balance_cents"] == 0
 
 
+def test_celebration_email_sent_once_and_never_on_replay(client, tmp_path):
+    """The celebration email leaves only AFTER the ledger commit, exactly once
+    per settle; replayed deliveries (Stripe retries) send nothing."""
+    from .test_goals import make_grandparent
+
+    parent = signup(client, "parent@example.com", "Pat")
+    family_id = create_family(client, parent)
+    child_id = add_child(client, parent, family_id, "Emma")
+    setup_fund(client, parent, child_id)
+    gran = make_grandparent(client, parent, family_id, name="Grandma Rose")
+    c = contribute(client, gran, child_id, amount_cents=2500)
+    with TestingSession() as db:
+        from app.models import Contribution, FundAccount
+        import uuid as uuid_mod
+
+        intent_id = db.get(Contribution, uuid_mod.UUID(c["id"])).provider_payment_id
+        account_id = (
+            db.query(FundAccount)
+            .filter(FundAccount.child_id == uuid_mod.UUID(child_id))
+            .one()
+            .stripe_account_id
+        )
+
+    before = set(tmp_path.glob("*.txt"))
+    payload = intent_event("payment_intent.succeeded", intent_id, account_id, 103)
+    for _ in range(3):
+        r = client.post(
+            "/webhooks/stripe", content=payload, headers={"Stripe-Signature": sign(payload)}
+        )
+        assert r.status_code == 200
+
+    new_mail = [
+        f.read_text(encoding="utf-8") for f in set(tmp_path.glob("*.txt")) - before
+    ]
+    assert len(new_mail) == 1
+    assert "To: parent@example.com" in new_mail[0]
+    assert "Grandma Rose" in new_mail[0]
+    fund = client.get(f"/children/{child_id}/fund", headers=parent).json()
+    assert len(fund["entries"]) == 1
+
+
+def test_concurrent_settle_loser_acks_without_email(client, tmp_path):
+    """The double-send race: two concurrent deliveries of the same
+    payment_intent.succeeded both read the contribution as pending. The winner
+    commits the ledger row; the loser's commit then fails on the unique
+    source_contribution_id. It must roll back, ack, and email NOBODY. This
+    materializes the loser's view: ledger row already committed, contribution
+    still read as pending."""
+    import uuid as uuid_mod
+
+    from .test_goals import make_grandparent
+
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    child_id = add_child(client, parent, family_id)
+    setup_fund(client, parent, child_id)
+    gran = make_grandparent(client, parent, family_id)
+    c = contribute(client, gran, child_id, amount_cents=2500)
+
+    with TestingSession() as db:
+        from app.models import Contribution, FundAccount, FundLedgerEntry, LedgerEntryType
+
+        contribution = db.get(Contribution, uuid_mod.UUID(c["id"]))
+        intent_id = contribution.provider_payment_id
+        account = (
+            db.query(FundAccount)
+            .filter(FundAccount.child_id == uuid_mod.UUID(child_id))
+            .one()
+        )
+        account_id = account.stripe_account_id
+        db.add(  # the winner's ledger write, already durable
+            FundLedgerEntry(
+                account_id=account.id,
+                amount_cents=2500 - 103,
+                entry_type=LedgerEntryType.contribution,
+                source_contribution_id=contribution.id,
+            )
+        )
+        db.commit()
+
+    before = set(tmp_path.glob("*.txt"))
+    payload = intent_event("payment_intent.succeeded", intent_id, account_id, 103)
+    r = client.post(
+        "/webhooks/stripe", content=payload, headers={"Stripe-Signature": sign(payload)}
+    )
+    assert r.status_code == 200 and r.json() == {"received": True}
+
+    assert set(tmp_path.glob("*.txt")) == before  # the loser emailed nobody
+    with TestingSession() as db:
+        from app.models import FundLedgerEntry
+
+        assert db.query(FundLedgerEntry).count() == 1  # ledger stayed single
+
+
 def test_unknown_intent_acknowledged_without_side_effects(client):
     parent = signup(client, "parent@example.com")
     payload = intent_event("payment_intent.succeeded", "pi_not_ours")

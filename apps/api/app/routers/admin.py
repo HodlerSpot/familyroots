@@ -13,7 +13,7 @@ import csv
 import io
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -33,7 +33,6 @@ from ..models import (
     FundAccount,
     FundLedgerEntry,
     MemberStatus,
-    PremiumGiftIntent,
     PremiumGrant,
     Tester,
     User,
@@ -41,6 +40,7 @@ from ..models import (
     utcnow,
 )
 from ..security import create_impersonation_token
+from ..services.maintenance import prune_gift_intents as maintenance_prune_gift_intents
 from ..services.payments import fund_balance_cents, reconcile_contribution, refund_contribution
 from ..services.premium import reconcile_family_premium
 
@@ -711,7 +711,7 @@ def reconcile(contribution_id: uuid.UUID, db: DbSession, admin: AdminUser) -> Mi
     before = c.status.value
     u = db.get(User, c.contributor_user_id)
     ch = db.get(Child, c.child_id)
-    after = reconcile_contribution(db, c)
+    after, settlement = reconcile_contribution(db, c)
     _audit(
         db, admin, "contribution_reconciled", f"contribution:{c.id}",
         {
@@ -722,6 +722,9 @@ def reconcile(contribution_id: uuid.UUID, db: DbSession, admin: AdminUser) -> Mi
         },
     )
     db.commit()
+    if settlement is not None:
+        # Celebration emails only after the ledger write is committed.
+        settlement.send_emails()
     return _mini_contribution(c, u, ch)
 
 
@@ -770,13 +773,9 @@ def void_premium_grant(grant_id: uuid.UUID, db: DbSession, admin: AdminUser) -> 
 def prune_gift_intents(db: DbSession, admin: AdminUser) -> dict:
     """Delete gift-intent staging rows older than 30 days (abandoned checkouts
     leave harmless orphans; settled gifts have already copied the message onto
-    the grant)."""
-    cutoff = utcnow() - timedelta(days=30)
-    pruned = (
-        db.query(PremiumGiftIntent)
-        .filter(PremiumGiftIntent.created_at < cutoff)
-        .delete(synchronize_session=False)
-    )
+    the grant). Same sweep the daily maintenance command runs — this endpoint
+    stays as the manual/on-demand trigger."""
+    pruned = maintenance_prune_gift_intents(db)
     _audit(db, admin, "premium_gift_intents_pruned", None, {"pruned": pruned})
     db.commit()
     return {"pruned": pruned}

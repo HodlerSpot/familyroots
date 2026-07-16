@@ -1,12 +1,15 @@
 import io
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials
 
 from ..config import settings
 from ..deps import (
     CurrentUser,
     DbSession,
+    bearer_scheme,
     get_active_membership,
     get_child_with_access,
     is_supporter,
@@ -38,7 +41,7 @@ from ..schemas import (
     VaultItemOut,
     VaultItemVisibilityUpdate,
 )
-from ..security import decode_access_token
+from ..security import decode_access_token, decode_media_token
 from ..services.email_templates import render_email
 from ..services.entitlements import Capability, require_capability
 from ..services.feed import emit
@@ -206,13 +209,28 @@ def complete_media_upload(media_id: uuid.UUID, db: DbSession, user: CurrentUser)
 
 
 @router.get("/media/{media_id}")
-def download_media(media_id: uuid.UUID, db: DbSession, token: str | None = None):
+def download_media(
+    media_id: uuid.UUID,
+    db: DbSession,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    token: str | None = None,
+):
     """Serves media to <img>/<video> tags, which can't send an Authorization
-    header — so this endpoint (only) accepts the access token as ?token=.
+    header — so a credential must ride in the query string, a known leak
+    surface (proxy logs, browser history, Referer). Trade-off: we keep
+    ?token=, but it now accepts ONLY the short-lived media-scoped token (see
+    security.create_media_token) — a full access JWT in the query string is
+    rejected outright, so URLs never carry a session credential. API clients
+    may instead send a normal Authorization: Bearer <access token> header.
     Local backend streams the file; S3 backend 307-redirects to a presigned URL."""
-    user_id = decode_access_token(token) if token else None
+    if token:
+        user_id = decode_media_token(token)  # media-scoped only; access JWTs fail
+    elif credentials is not None:
+        user_id = decode_access_token(credentials.credentials)
+    else:
+        user_id = None
     user = db.get(User, user_id) if user_id else None
-    if user is None:
+    if user is None or user.disabled:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
 
     media = db.get(MediaObject, media_id)

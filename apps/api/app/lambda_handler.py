@@ -6,6 +6,9 @@ endpoint, so this is how admin actions reach it):
   {"futureroots_command": "migrate"}             -> alembic upgrade head
   {"futureroots_command": "create_database",
    "name": "futureroots_testnet"}                -> CREATE DATABASE if absent
+  {"futureroots_command": "maintenance"}         -> daily data-lifecycle sweep
+                                                    (services/maintenance.py;
+                                                    EventBridge invokes daily)
 """
 
 from pathlib import Path
@@ -73,11 +76,23 @@ def _set_role(email: str, role: str) -> dict:
         return {"status": "ok", "email": user.email, "role": user.role.value}
 
 
+def _run_maintenance() -> dict:
+    """Idempotent daily sweep (retention prunes + abandoned-call cap). Safe to
+    run at any time, any number of times."""
+    from .db import SessionLocal
+    from .services.maintenance import run_maintenance
+
+    with SessionLocal() as db:
+        return {"status": "ok", "counts": run_maintenance(db)}
+
+
 def handler(event, context):
     if isinstance(event, dict):
         cmd = event.get("futureroots_command")
         if cmd == "migrate":
             return _run_migrations()
+        if cmd == "maintenance":
+            return _run_maintenance()
         if cmd == "create_database":
             return _create_database(event.get("name", ""))
         if cmd == "set_role":

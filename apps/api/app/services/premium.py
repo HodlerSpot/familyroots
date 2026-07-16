@@ -55,6 +55,12 @@ PLAN_PRICE_CENTS = {
 
 GIFT_ENDING_SOON_WINDOW = timedelta(days=7)
 
+# "Your family is back on the Free plan" is a lifecycle moment, not history:
+# past this window it would only confuse (and it lets the maintenance sweep
+# prune premium_email_log rows older than a year without any send-once row
+# ever being needed again — nothing can re-fire after 30 days).
+PREMIUM_ENDED_STALE_AFTER = timedelta(days=30)
+
 
 def _aware(dt: datetime) -> datetime:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
@@ -579,7 +585,7 @@ def run_lazy_lifecycle(db: Session, family_id: uuid.UUID) -> None:
                     ),
                 )
             sent = True
-    elif coverage_end <= now:
+    elif now - PREMIUM_ENDED_STALE_AFTER < coverage_end <= now:
         key = f"{family_id}:{coverage_end.isoformat()}"
         if _log_once(db, family_id, "premium_ended", key):
             for parent in _active_parents(db, family_id):

@@ -376,6 +376,64 @@ def test_nudge_emails_parents_only_and_throttles(client, tmp_path):
     assert r.status_code == 200 and r.json() == {"sent": True}
 
 
+def test_nudge_double_tap_race_is_single_send(client, tmp_path, monkeypatch):
+    """Two concurrent FIRST nudges both see no claim row; the loser's INSERT
+    hits the unique (child, member) constraint and quietly returns sent=false
+    with no email. Simulated by making the loser's lookup miss the claim the
+    winner has already committed — exactly its view of the race."""
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    child_id = add_child(client, parent, family_id)
+    gran = make_grandparent(client, parent, family_id)
+
+    # The winner claims the throttle and sends.
+    r = client.post(f"/children/{child_id}/fund/nudge", headers=gran)
+    assert r.status_code == 200 and r.json() == {"sent": True}
+
+    from app.routers import funds as funds_router
+
+    monkeypatch.setattr(funds_router, "_nudge_claim", lambda db, cid, uid: None)
+
+    before = set(tmp_path.glob("*.txt"))
+    r = client.post(f"/children/{child_id}/fund/nudge", headers=gran)
+    assert r.status_code == 200 and r.json() == {"sent": False}
+    assert set(tmp_path.glob("*.txt")) == before  # no duplicate email
+
+    from app.models import FundNudge
+
+    with TestingSession() as db:
+        assert db.query(FundNudge).count() == 1  # single claim row survives
+
+
+def test_renudge_after_window_refreshes_claim_in_place(client):
+    """A re-nudge after the 7-day window refreshes created_at on the SAME row
+    (one row per member+child, ever)."""
+    from app.models import FundNudge, utcnow
+
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    child_id = add_child(client, parent, family_id)
+    gran = make_grandparent(client, parent, family_id)
+
+    assert client.post(f"/children/{child_id}/fund/nudge", headers=gran).json() == {"sent": True}
+    with TestingSession() as db:
+        nudge = db.query(FundNudge).one()
+        nudge.created_at = utcnow() - timedelta(days=8)
+        db.commit()
+        old_id = nudge.id
+
+    assert client.post(f"/children/{child_id}/fund/nudge", headers=gran).json() == {"sent": True}
+    with TestingSession() as db:
+        refreshed = db.query(FundNudge).one()  # still exactly one row
+        assert refreshed.id == old_id
+        created = refreshed.created_at
+        if created.tzinfo is None:
+            from datetime import timezone
+
+            created = created.replace(tzinfo=timezone.utc)
+        assert created > utcnow() - timedelta(minutes=1)
+
+
 def test_parents_cannot_nudge_themselves(client):
     parent = signup(client, "parent@example.com")
     family_id = create_family(client, parent)

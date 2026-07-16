@@ -1,7 +1,7 @@
 """Time-capsule governance: content protection, age→date, life-moment votes,
 and goal-linked release (spec #5–#8)."""
 
-from .conftest import TestingSession, add_child, create_family, signup
+from .conftest import TestingSession, add_child, create_family, media_token, signup
 from .test_capsules import seal_capsule
 from .test_goals import make_grandparent
 from .test_vault import upload_photo
@@ -43,8 +43,8 @@ def test_sealed_capsule_media_download_blocked(client):
 
     seal_capsule(client, gran, child_id, type="video", body=None, media_id=media_id)
 
-    gran_token = gran["Authorization"].removeprefix("Bearer ")
-    parent_token = parent["Authorization"].removeprefix("Bearer ")
+    gran_token = media_token(client, gran)
+    parent_token = media_token(client, parent)
     # The creator can still fetch their own sealed capsule's attachment
     assert client.get(f"/media/{media_id}?token={gran_token}").status_code == 200
     # A parent (or anyone else) cannot, even with the direct media URL

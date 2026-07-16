@@ -1,9 +1,10 @@
 """Supporter visibility rules for the Family Feed.
 
 A supporter (a trusted non-family adult) sees a deliberately narrow slice of
-the family: shared memories and milestones, plus who has joined — never
-contributions, achievements, funds, or capsules. These helpers are the single
-source of truth for that rule so the feed, comments, and reactions all agree.
+the family: shared memories and milestones, plus who has joined or left —
+never contributions, achievements, funds, or capsules. These helpers are the
+single source of truth for that rule so the feed, comments, and reactions all
+agree.
 """
 
 import uuid
@@ -14,6 +15,10 @@ from ..models import FeedEvent, FeedEventType, VaultItem
 
 # Event types that reference a vault item and can be shared with supporters.
 SUPPORTER_VAULT_TYPES = {FeedEventType.memory_added, FeedEventType.milestone}
+
+# Roster events every member may see — who joined, who left. Symmetric on
+# purpose: a supporter who saw someone arrive shouldn't wonder forever.
+SUPPORTER_ROSTER_TYPES = {FeedEventType.member_joined, FeedEventType.member_left}
 
 
 def _event_vault_item_id(event: FeedEvent) -> uuid.UUID | None:
@@ -28,7 +33,7 @@ def _event_vault_item_id(event: FeedEvent) -> uuid.UUID | None:
 
 def event_visible_to_supporter(db: Session, event: FeedEvent) -> bool:
     """Whether one event should appear for a supporter (single-event check)."""
-    if event.type == FeedEventType.member_joined:
+    if event.type in SUPPORTER_ROSTER_TYPES:
         return True
     if event.type in SUPPORTER_VAULT_TYPES:
         vault_item_id = _event_vault_item_id(event)
@@ -63,7 +68,7 @@ def filter_events_for_supporter(db: Session, events: list[FeedEvent]) -> list[Fe
 
     kept: list[FeedEvent] = []
     for e in events:
-        if e.type == FeedEventType.member_joined:
+        if e.type in SUPPORTER_ROSTER_TYPES:
             kept.append(e)
         elif e.type in SUPPORTER_VAULT_TYPES:
             vid = _event_vault_item_id(e)

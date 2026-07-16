@@ -1,10 +1,69 @@
+import json
+import os
+
 from pydantic_settings import BaseSettings
+
+_ENV_PREFIX = "FUTUREROOTS_"
+
+
+def _load_secrets_overlay() -> None:
+    """Overlay sensitive settings from AWS Secrets Manager onto the process env.
+
+    In AWS the Lambda env carries only ``FUTUREROOTS_SECRETS_ARN``; the actual
+    secrets (database URL, JWT secret, Stripe keys, Agora certificate) live in
+    ONE consolidated Secrets Manager secret whose SecretString is a JSON object
+    keyed by env-var name (``{"FUTUREROOTS_JWT_SECRET": "...", ...}``).
+
+    Values are injected as *defaults*: an env var that is already set
+    explicitly always wins, and local dev (no ARN set) is a complete no-op.
+    Runs once at module import — i.e. once per Lambda cold start — and the
+    values live in ``os.environ`` for the life of the process, so warm
+    invocations never refetch.
+    """
+    secret_id = os.environ.get(f"{_ENV_PREFIX}SECRETS_ARN")
+    if not secret_id:
+        return
+    # boto3 is imported lazily: it is a dependency of the Lambda bundle (and of
+    # the s3/ses backends) but not of local dev or the test suite.
+    import boto3
+
+    try:
+        response = boto3.client("secretsmanager").get_secret_value(SecretId=secret_id)
+        values = json.loads(response["SecretString"])
+    except Exception as exc:
+        # Fail fast and loud: booting with placeholder dev secrets in an
+        # environment that expects real ones would be far worse than a crash.
+        raise RuntimeError(
+            f"Could not load application secrets from Secrets Manager ({secret_id!r}): {exc}"
+        ) from exc
+    if not isinstance(values, dict):
+        raise RuntimeError(
+            f"Secret {secret_id!r} must be a JSON object mapping env-var names to values"
+        )
+    # The testnet Lambda shares this secret but points at its own database: the
+    # blob carries FUTUREROOTS_TESTNET_DATABASE_URL, which becomes the DATABASE_URL
+    # default only when the function runs in testnet mode.
+    if os.environ.get(f"{_ENV_PREFIX}TESTNET_MODE", "").strip().lower() in {"1", "true", "yes"}:
+        testnet_url = values.get(f"{_ENV_PREFIX}TESTNET_DATABASE_URL")
+        if testnet_url:
+            values = {**values, f"{_ENV_PREFIX}DATABASE_URL": testnet_url}
+    for key, value in values.items():
+        if key.startswith(_ENV_PREFIX) and isinstance(value, str) and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_secrets_overlay()
 
 
 class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://futureroots:futureroots@localhost:5432/futureroots"
     jwt_secret: str = "dev-only-secret-change-in-production!"
     jwt_ttl_hours: int = 24 * 7
+    # TTL of the media-only token that rides in <img>/<video> query strings.
+    # Long enough that the web client's refresh-on-any-API-call keeps a normal
+    # session seamless; short enough that a URL leaked via proxy logs, browser
+    # history, or a Referer header goes dead within the hour.
+    media_token_ttl_minutes: int = 60
     invite_ttl_days: int = 14
     # Application fee = Stripe's US-card baseline (2.9% + 30¢). The platform
     # nets ~0: it keeps this fee and pays Stripe's actual processing fee out of

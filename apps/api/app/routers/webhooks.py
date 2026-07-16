@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
+from sqlalchemy.exc import IntegrityError
 
 from ..config import settings
 from ..deps import DbSession
@@ -194,8 +195,24 @@ async def stripe_webhook(
                         intent["id"],
                     )
                     return {"received": True}
-                settle_contribution(db, contribution)
-                db.commit()
+                settlement = settle_contribution(db, contribution)
+                try:
+                    db.commit()
+                except IntegrityError:
+                    # A concurrent delivery of this same event settled first:
+                    # its commit won the ledger's unique constraint on
+                    # source_contribution_id. Ours is a replay — roll back and
+                    # ack WITHOUT emailing, keeping the celebration email
+                    # exactly-once per settle.
+                    db.rollback()
+                    logger.info(
+                        "stripe webhook: concurrent replay for contribution %s "
+                        "— already settled, no email sent",
+                        contribution.id,
+                    )
+                    return {"received": True}
+                # Emails leave only after the ledger write is durable.
+                settlement.send_emails()
         else:
             # failed or canceled: a payment that never settled becomes failed
             if contribution.status == ContributionStatus.pending:

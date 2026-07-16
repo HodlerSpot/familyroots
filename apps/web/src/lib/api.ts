@@ -86,6 +86,7 @@ export type FeedEventType =
   | "capsule_created"
   | "capsule_released"
   | "member_joined"
+  | "member_left"
   | "premium_activated"
   | "premium_gifted";
 
@@ -333,9 +334,72 @@ export function getToken(): string | null {
 export function setToken(token: string | null) {
   if (token === null) localStorage.removeItem("futureroots_token");
   else localStorage.setItem("futureroots_token", token);
+  // The cached media token belongs to the previous identity (logout, login,
+  // impersonation switch) — never carry it across; it re-mints lazily.
+  clearMediaToken();
+}
+
+// --- media tokens ---
+// <img>/<video>/<audio> tags can't send an Authorization header, so media URLs
+// must carry a credential in the query string — a leak surface (proxy logs,
+// browser history, Referer headers). Trade-off: we keep ?token=, but instead of
+// the account's session JWT it is a short-lived token the API honors ONLY on
+// GET /media/{id} (it is rejected as a session everywhere else, and session
+// JWTs are rejected there), so a leaked media URL exposes at most an hour of
+// read-only media access — never the account.
+
+const MEDIA_TOKEN_KEY = "futureroots_media_token";
+const MEDIA_TOKEN_EXP_KEY = "futureroots_media_token_exp";
+// Refresh when an API call finds less than this much life left, so any normal
+// activity keeps the token live long before <img> fetches would start to 401.
+const MEDIA_TOKEN_REFRESH_WINDOW_MS = 15 * 60 * 1000;
+
+function getMediaToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(MEDIA_TOKEN_KEY);
+}
+
+function clearMediaToken() {
+  localStorage.removeItem(MEDIA_TOKEN_KEY);
+  localStorage.removeItem(MEDIA_TOKEN_EXP_KEY);
+}
+
+let mediaTokenInflight: Promise<void> | null = null;
+
+/** Keep a usable media token cached without a per-image round trip: called on
+ * every API request, it is a no-op while fresh, refreshes in the background
+ * when nearing expiry, and blocks only when nothing usable is cached
+ * (typically once per login/identity switch). */
+export async function ensureMediaToken(): Promise<void> {
+  if (typeof window === "undefined" || !getToken()) return;
+  const exp = Number(localStorage.getItem(MEDIA_TOKEN_EXP_KEY) ?? 0);
+  const remaining = exp - Date.now();
+  const usable = getMediaToken() !== null && remaining > 0;
+  if (usable && remaining > MEDIA_TOKEN_REFRESH_WINDOW_MS) return;
+  mediaTokenInflight ??= (async () => {
+    try {
+      const res = await request<{ media_token: string; expires_in_seconds: number }>(
+        "/auth/media-token",
+        { method: "POST" }
+      );
+      localStorage.setItem(MEDIA_TOKEN_KEY, res.media_token);
+      localStorage.setItem(
+        MEDIA_TOKEN_EXP_KEY,
+        String(Date.now() + res.expires_in_seconds * 1000)
+      );
+    } catch {
+      // Keep whatever we had; the next API call retries the mint.
+    } finally {
+      mediaTokenInflight = null;
+    }
+  })();
+  if (!usable) await mediaTokenInflight;
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  // Piggyback media-token freshness on all API traffic (see ensureMediaToken),
+  // so pages always render <img>/<video> URLs with a live token.
+  if (path !== "/auth/media-token") await ensureMediaToken();
   const token = getToken();
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -426,6 +490,15 @@ export const api = {
       body: JSON.stringify({ name }),
     }),
   familyDetail: (id: string) => request<FamilyDetail>(`/families/${id}`),
+  /** Step away from a family. The server refuses (409) when the caller is
+   * the last active parent; if the caller owns the family's Premium
+   * subscription, it stops auto-renewal at the period end. */
+  leaveFamily: (familyId: string) =>
+    request<void>(`/families/${familyId}/members/me/leave`, { method: "POST" }),
+  /** Parent-only: remove another member. Nothing they shared is deleted,
+   * and they can be re-invited later. */
+  removeFamilyMember: (familyId: string, userId: string) =>
+    request<void>(`/families/${familyId}/members/${userId}`, { method: "DELETE" }),
 
   addChild: (familyId: string, first_name: string, birthdate: string, parental_consent: boolean) =>
     request<ChildOut>(`/families/${familyId}/children`, {
@@ -865,7 +938,9 @@ export async function downloadCsv(url: string, filename: string) {
   URL.revokeObjectURL(a.href);
 }
 
-/** URL an <img>/<video> tag can load (tags can't send auth headers). */
+/** URL an <img>/<video> tag can load (tags can't send auth headers). The
+ * ?token= credential is the short-lived media-ONLY token — never the session
+ * JWT — kept fresh by ensureMediaToken() on every API call. */
 export function mediaUrl(mediaId: string): string {
-  return `${API_URL}/media/${mediaId}?token=${getToken()}`;
+  return `${API_URL}/media/${mediaId}?token=${getMediaToken() ?? ""}`;
 }

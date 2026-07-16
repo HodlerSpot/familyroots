@@ -64,6 +64,14 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class MediaTokenResponse(BaseModel):
+    """Short-lived, media-only token the client appends to <img>/<video> URLs
+    (?token=...). Valid solely on GET /media/{id} — never a session credential."""
+
+    media_token: str
+    expires_in_seconds: int
+
+
 class UserOut(BaseModel):
     id: uuid.UUID
     email: EmailStr

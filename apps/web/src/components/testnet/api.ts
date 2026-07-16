@@ -1,7 +1,7 @@
 // Testnet harness API client. Only ever imported inside the dynamically
 // loaded testnet shell, so none of this ships in family-product builds.
 
-import { getToken } from "@/lib/api";
+import { ensureMediaToken, getToken, mediaUrl } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -50,13 +50,17 @@ export interface BugReport {
   body: string;
   status: "pending" | "verified" | "rejected";
   media_id: string | null;
-  // API path for the screenshot; append the token to load it (see mediaUrl)
+  // API path for the screenshot; load it via mediaUrl(media_id), which appends
+  // the short-lived media-only token (never the session JWT)
   image_url: string | null;
   created_at: string;
   reviewed_at: string | null;
 }
 
 async function req<T>(path: string, options: RequestInit = {}): Promise<T> {
+  // Testers are backed by real users, so the shared media-token flow applies:
+  // keep the short-lived token fresh for bug-screenshot <img> tags.
+  await ensureMediaToken();
   const token = getToken();
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -121,7 +125,8 @@ export const testnetApi = {
     await req<void>(`/media/${ticket.media_id}/complete`, { method: "POST" });
     return ticket.media_id;
   },
-  mediaUrl: (mediaId: string) => `${API_URL}/media/${mediaId}?token=${getToken()}`,
+  // Shared helper: carries the media-only token, never the session JWT.
+  mediaUrl: (mediaId: string) => mediaUrl(mediaId),
   xStart: () =>
     req<{ authorize_url: string }>("/testnet/auth/x/start", { method: "POST" }),
   xCallback: (code: string, state: string) =>

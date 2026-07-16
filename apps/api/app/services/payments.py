@@ -737,12 +737,16 @@ def refund_contribution(db: Session, contribution: Contribution, amount_cents: i
     return True
 
 
-def reconcile_contribution(db: Session, contribution: Contribution) -> str:
+def reconcile_contribution(
+    db: Session, contribution: Contribution
+) -> tuple[str, "ContributionSettlement | None"]:
     """Resolve a stuck pending contribution against the provider's live status
     (for cases where a webhook was missed or the payment was cancelled). Only
-    acts on pending records. Returns the resulting status string."""
+    acts on pending records. Returns (resulting status string, the pending
+    settlement notifications if this call settled — the caller must commit
+    first, then call settlement.send_emails())."""
     if contribution.status != ContributionStatus.pending:
-        return contribution.status.value
+        return contribution.status.value, None
     provider = get_payment_provider()
     live = provider.payment_status(contribution)
     if live == "succeeded":
@@ -767,21 +771,44 @@ def reconcile_contribution(db: Session, contribution: Contribution) -> str:
             if not ok:
                 # Money went somewhere we don't route today: never ledger it.
                 # Stays pending for a human with the Stripe dashboard open.
-                return contribution.status.value
-        settle_contribution(db, contribution)  # sets status + ledger + feed + emails
+                return contribution.status.value, None
+        settlement = settle_contribution(db, contribution)  # status + ledger + feed
+        return contribution.status.value, settlement
     elif live in ("canceled", "cancelled"):
         contribution.status = ContributionStatus.failed
     # other live states (processing, requires_payment_method, requires_action)
     # are genuinely still open, so we leave the record pending
-    return contribution.status.value
+    return contribution.status.value, None
 
 
-def settle_contribution(db: Session, contribution: Contribution) -> FundLedgerEntry:
-    """THE settlement path: ledger entry + feed celebration + parent emails.
-    Call only after payment success is verified (local confirm or signed
-    Stripe webhook). Idempotent at the DB level via the unique constraint on
-    fund_ledger_entries.source_contribution_id; callers must also check
-    status to avoid duplicate feed events."""
+@dataclass(frozen=True)
+class ContributionSettlement:
+    """A freshly settled contribution plus its NOT-yet-sent celebration
+    emails. The ledger/feed writes sit in the caller's open transaction;
+    call send_emails() only AFTER that transaction commits. A settle that
+    loses a concurrent race never commits, so it never emails — this is what
+    keeps the celebration email exactly-once when Stripe delivers the same
+    payment_intent.succeeded twice at the same instant (the ledger stays
+    single via the unique constraint either way)."""
+
+    entry: FundLedgerEntry
+    emails: tuple[dict, ...]  # fully rendered EmailSender.send(**kwargs) payloads
+
+    def send_emails(self) -> None:
+        sender = get_email_sender()
+        for email in self.emails:
+            sender.send(**email)
+
+
+def settle_contribution(db: Session, contribution: Contribution) -> ContributionSettlement:
+    """THE settlement path: ledger entry + feed celebration, with the parent
+    celebration emails RETURNED (not sent) so callers send them only after
+    commit. Call only after payment success is verified (local confirm or
+    signed Stripe webhook). Idempotent at the DB level via the unique
+    constraint on fund_ledger_entries.source_contribution_id; callers must
+    also check status to avoid duplicate feed events, and must catch the
+    IntegrityError a lost concurrent race raises at commit (replay: ack,
+    send nothing)."""
     contribution.status = ContributionStatus.succeeded
     account = get_or_create_fund_account(db, contribution.child_id, contribution.currency)
     entry = FundLedgerEntry(
@@ -823,14 +850,13 @@ def settle_contribution(db: Session, contribution: Contribution) -> FundLedgerEn
         )
         .all()
     )
-    sender = get_email_sender()
     amount = f"${contribution.amount_cents / 100:,.2f}"
     family_url = f"{settings.web_base_url}/family/{child.family_id}"
-    for parent in parents:
-        sender.send(
-            to=parent.email,
-            subject=f"{contributor.display_name} just added to {child.first_name}'s future",
-            body=(
+    emails = tuple(
+        {
+            "to": parent.email,
+            "subject": f"{contributor.display_name} just added to {child.first_name}'s future",
+            "body": (
                 f"Hi {parent.display_name},\n\n"
                 f"{contributor.display_name} contributed {amount} to {child.first_name}'s "
                 f"future fund"
@@ -842,7 +868,7 @@ def settle_contribution(db: Session, contribution: Contribution) -> FundLedgerEn
                 + f"\nSee it here: {family_url}\n\n"
                 f"With warmth,\nThe FutureRoots team"
             ),
-            html=render_email(
+            "html": render_email(
                 preheader=(
                     f"{contributor.display_name} added {amount} to "
                     f"{child.first_name}'s future fund."
@@ -857,5 +883,7 @@ def settle_contribution(db: Session, contribution: Contribution) -> FundLedgerEn
                 cta_label="See it on your family feed",
                 cta_url=family_url,
             ),
-        )
-    return entry
+        }
+        for parent in parents
+    )
+    return ContributionSettlement(entry=entry, emails=emails)

@@ -42,6 +42,7 @@ function PlanPicker() {
   const [plan, setPlan] = useState<PremiumBillingPlan>("annual");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [immediateAck, setImmediateAck] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -190,7 +191,23 @@ function PlanPicker() {
 
       <ErrorNote>{error}</ErrorNote>
 
-      <Button onClick={checkout} disabled={busy} className="w-full">
+      <label htmlFor="immediate-ack" className="flex items-start gap-2 text-xs text-stone-500">
+        <input
+          id="immediate-ack"
+          type="checkbox"
+          checked={immediateAck}
+          onChange={(e) => setImmediateAck(e.target.checked)}
+          required
+          className="mt-0.5 h-4 w-4 shrink-0 rounded border-stone-300 text-emerald-700 focus:ring-emerald-600"
+        />
+        <span>
+          Premium starts the moment your payment goes through. I agree to it starting right away,
+          and I understand this means I give up the 14-day cancellation right that applies in some
+          countries. Refund questions? Our support team is happy to help.
+        </span>
+      </label>
+
+      <Button onClick={checkout} disabled={busy || !immediateAck} className="w-full">
         {busy ? "One moment…" : "Continue to secure checkout"}
       </Button>
       <p className="text-center text-xs text-stone-400">
