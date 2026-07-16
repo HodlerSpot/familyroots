@@ -1,7 +1,13 @@
-from fastapi import FastAPI
+import logging
+
+import stripe
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 from .routers import (
     admin,
     auth,
@@ -24,6 +30,24 @@ from .routers import (
 )
 
 app = FastAPI(title="FutureRoots API", version="0.1.0")
+
+
+@app.exception_handler(stripe.error.StripeError)
+def _stripe_error_handler(request: Request, exc: stripe.error.StripeError) -> JSONResponse:
+    """A Stripe call failed in a request path (e.g. Connect account creation,
+    Checkout). Domain routers stay Stripe-agnostic, so translate any uncaught
+    Stripe error into a warm, honest 503 here rather than leaking a 500. The
+    full error is logged for operators; users never see Stripe internals.
+    Signature-verification errors are caught in the webhook router and never
+    reach this handler."""
+    logger.error("Uncaught Stripe error on %s: %s", request.url.path, exc)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "We couldn't finish that with our payments partner just "
+            "now. Please try again in a few minutes."
+        },
+    )
 
 _origins = {settings.web_base_url, "http://localhost:3000"}
 _origins.update(o.strip() for o in settings.cors_extra_origins.split(",") if o.strip())

@@ -57,6 +57,30 @@ def test_setup_is_guardian_only(client):
     assert client.post(f"/children/{child_id}/fund/setup", headers=outsider).status_code == 404
 
 
+def test_stripe_error_becomes_friendly_503(client, monkeypatch):
+    """A Stripe failure in a request path (e.g. Connect not fully configured on
+    the platform side) must surface as a warm 503, not a raw 500, and never leak
+    the vendor's name or internals to the user."""
+    import stripe
+
+    from app.services import payments
+
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    child_id = add_child(client, parent, family_id)
+
+    def boom(*args, **kwargs):
+        raise stripe.error.StripeError("Please review the responsibilities of managing losses")
+
+    monkeypatch.setattr(payments._provider, "create_connect_account", boom)
+
+    resp = client.post(f"/children/{child_id}/fund/setup", headers=parent)
+    assert resp.status_code == 503
+    detail = resp.json()["detail"]
+    assert "payments partner" in detail
+    assert "Stripe" not in detail and "losses" not in detail
+
+
 def test_double_setup_creates_exactly_one_account(client):
     from app.models import FundAccount
 
