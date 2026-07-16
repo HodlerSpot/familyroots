@@ -1,9 +1,9 @@
-# push_secrets.ps1 — create/update the consolidated FutureRoots API secret.
+# push_secrets.ps1 - create/update the consolidated FutureRoots API secret.
 #
 # Reads secret values from infra/.env (gitignored) and pushes them as ONE
 # Secrets Manager secret (`futureroots/api`) whose SecretString is a JSON
 # object keyed by env-var name. The CDK stack imports this secret by name and
-# the API loads it at Lambda cold start (apps/api/app/config.py overlay) —
+# the API loads it at Lambda cold start (apps/api/app/config.py overlay) -
 # the values never appear in the CloudFormation template or Lambda env vars.
 #
 # Idempotent: creates the secret if absent, otherwise puts a new version.
@@ -13,7 +13,7 @@
 #
 # The database URL embeds the RDS endpoint, which is read from the deployed
 # stack's DbEndpoint output (override with -DbEndpoint on a fresh account
-# where the stack doesn't exist yet — then re-run after the first deploy).
+# where the stack doesn't exist yet - then re-run after the first deploy).
 
 param(
     [string]$SecretName = "futureroots/api",
@@ -38,7 +38,7 @@ function Get-Required([string]$name) {
 }
 function Get-Optional([string]$name) {
     if (-not $envVars[$name]) {
-        Write-Warning "$name is empty/absent in infra/.env — pushing empty string (feature stays dark)"
+        Write-Warning "$name is empty/absent in infra/.env - pushing empty string (feature stays dark)"
         return ""
     }
     return $envVars[$name]
@@ -49,14 +49,14 @@ if (-not $DbEndpoint) {
     $DbEndpoint = aws cloudformation describe-stacks --stack-name $StackName --region $Region `
         --query "Stacks[0].Outputs[?OutputKey=='DbEndpoint'].OutputValue" --output text
     if ($LASTEXITCODE -ne 0 -or -not $DbEndpoint -or $DbEndpoint -eq "None") {
-        throw "Could not read DbEndpoint output from stack '$StackName' — pass -DbEndpoint explicitly"
+        throw "Could not read DbEndpoint output from stack '$StackName' - pass -DbEndpoint explicitly"
     }
     $DbEndpoint = $DbEndpoint.Trim()
 }
 
 # --- Build the JSON blob (keys = the env-var names the API expects).
 # The URL format matches what the CDK stack used to inline (no URL-encoding of
-# the password — same constraint as before: avoid @ : / # ? in DB_PASSWORD).
+# the password - same constraint as before: avoid @ : / # ? in DB_PASSWORD).
 $dbPassword = Get-Required "DB_PASSWORD"
 $payload = [ordered]@{
     FUTUREROOTS_DATABASE_URL                  = "postgresql+psycopg://futureroots:$dbPassword@${DbEndpoint}:5432/futureroots"
