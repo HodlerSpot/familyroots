@@ -15,7 +15,8 @@ Every child gets a lifetime **FutureRoots Vault**: memories, milestones, family 
 | Family Graph | Signup/login, families, child profiles (recorded parental consent), email invites |
 | Vault, Feed & Memories | Photo/media upload (S3 presigned), private family feed, milestone posts with email notifications |
 | Achievement Economy | Goals, badges, append-only future-fund ledger, one-screen grandparent contribution flow |
-| Payments | Live Stripe (PaymentIntents + signature-verified webhook settlement) |
+| Payments | Live Stripe — future-fund contributions as Connect destination charges, plus Premium subscriptions/gifts, all settled via signature-verified webhooks |
+| Premium membership | Family-level paid plan ($9.99/mo or $99/yr); parent-activated, gift-able by relatives; entitlement-gated video upload and Family Video Call |
 | Time Capsules & Legacy | Sealed capsules with age/date/milestone release; family legacy archive |
 | Accounts | Password complexity + show/hide, forgot/reset, change password |
 | Email | Branded HTML + plain-text, sent from a DKIM/SPF/DMARC-authenticated domain |
@@ -28,11 +29,12 @@ Every child gets a lifetime **FutureRoots Vault**: memories, milestones, family 
 
 ## Repository layout
 
-- `apps/api` — FastAPI + SQLAlchemy + Alembic (PostgreSQL). Domain modules: auth, families, children, vault, feed, goals, contributions, funds, capsules, legacy, notifications, plus the flag-gated `testnet` harness.
+- `apps/api` — FastAPI + SQLAlchemy + Alembic (PostgreSQL). Domain modules: auth, families, children, vault, feed, goals, contributions, funds, capsules, legacy, notifications, premium (subscriptions/gifts + entitlements), plus the flag-gated `testnet` harness.
 - `apps/web` — Next.js 15 + TypeScript + Tailwind. The family app; the testnet wrapper mounts only when `NEXT_PUBLIC_TESTNET` is set.
 - `infra` — AWS CDK (TypeScript) stack for the whole deployment.
 - `docs` — source-of-truth documentation (below).
 - `.claude/agents` — the role-based AI team that builds and maintains the platform.
+- `.claude/skills` — reusable skills for AI contributors (e.g. `stripe-integration`, a full reference to the payments/Connect/subscription interfaces).
 
 ## Documentation
 
@@ -42,6 +44,7 @@ Every child gets a lifetime **FutureRoots Vault**: memories, milestones, family 
 - [Roadmap](docs/roadmap.md) — phased build plan (all phases complete)
 - [Dev setup](docs/dev.md) — run the stack locally
 - [Deployment](docs/deploy.md) — AWS runbook, custom domain, Stripe, email
+- [Premium spec](docs/specs/premium.md) & [architecture](docs/specs/premium-architecture.md) — the paid-membership feature; Stripe interfaces are documented in the `.claude/skills/stripe-integration` skill
 - [Testnet harness](docs/testnet.md) — gamified tester program design
 - [Agent team](docs/agents.md) — the AI role team in `.claude/agents/`
 
