@@ -46,6 +46,59 @@ a child's account activates, an operator may move that child's legacy net sum
 with a manual `stripe.transfers.create(...)` — record the transfer id in an
 admin note; do NOT add a ledger entry (the balance already includes it).
 
+### Premium rollout (one-time dashboard setup, test + live mode)
+
+Backend is deployed dark: with empty price ids, Premium checkout 503s and
+every family stays Free. To light it up:
+
+1. **Products/Prices**: product "FutureRoots Premium" → recurring Prices
+   $9.99/month and $99/year (USD); product "FutureRoots Premium — one-year
+   gift" → one-time Price $99. Put the three price ids in `infra/.env` as
+   `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_ANNUAL`, `STRIPE_PRICE_GIFT_YEAR`,
+   then `cdk deploy` (they flow to `FUTUREROOTS_STRIPE_PRICE_*`; same names in
+   `apps/api/.env` for local stripe-mode testing).
+2. **Webhook events**: on the EXISTING `/webhooks/stripe` endpoint (same
+   signing secret — no new endpoint), add `checkout.session.completed`,
+   `customer.subscription.updated`, `customer.subscription.deleted`,
+   `invoice.paid`, `invoice.payment_failed`, `invoice.upcoming`.
+3. **Billing → Revenue recovery**: Smart Retries ON; after the final retry,
+   **cancel the subscription**. Turn OFF Stripe's own customer emails (failed
+   payment, upcoming renewal) — FutureRoots sends brand-voice equivalents.
+4. **Billing Portal configuration**: payment-method update + invoice history
+   ON; cancellation and plan switching OFF (both are app-controlled).
+5. **⛔ LAUNCH-BLOCKING — renewal reminder lead time (CA Automatic Renewal
+   Law).** The annual renewal reminder fires from Stripe's `invoice.upcoming`
+   event, and its lead time is a Stripe Billing setting (Settings → Billing →
+   Subscriptions and emails → "upcoming renewal" / upcoming-invoice webhook
+   lead time), **default ~7 days**. California's ARL requires the pre-renewal
+   notice for an annual auto-renewing plan to land **15–45 days** before the
+   charge. Set the `invoice.upcoming` lead time to **30 days** (comfortably
+   inside the window) BEFORE enabling live-mode annual subscriptions. This is
+   a config-only control — the app never hardcodes the timing (it just emails
+   whenever the event arrives), so this dashboard setting is the only lever.
+   Do not announce Premium until it is set.
+6. Verify test mode end to end with the Stripe CLI
+   (`stripe listen --forward-to localhost:8000/webhooks/stripe`): subscribe →
+   `premium_activated` feed event; gift → grant; cancel/resume; then a real
+   $9.99 live checkout + cancel before announcing.
+
+SES production access remains the dependency for Premium lifecycle emails at
+scale (sandbox only delivers to verified addresses).
+
+**Hardening backlog (Premium data lifecycle, not launch-blocking):**
+
+- **Gift-intent prune.** `premium_gift_intents` rows for abandoned checkouts
+  are harmless orphans but hold the free-text gift message (which may name a
+  child). The admin sweep `POST /admin/premium/prune-gift-intents` deletes rows
+  older than 30 days; schedule it on an **EventBridge** rule (daily) invoking a
+  small Lambda that calls the endpoint (or a management-command entrypoint), so
+  the prune doesn't depend on an admin remembering to run it.
+- **`premium_email_log` retention.** This table grows unbounded (one row per
+  lifecycle email ever sent) and has **no retention bound yet**. It carries no
+  message content — only `family_id`, `kind`, `dedupe_key`, `sent_at` — so it
+  is low-sensitivity, but a periodic prune of rows older than ~1 year (same
+  EventBridge cadence) is a cleanliness follow-up.
+
 ## Secrets
 
 `infra/.env` (gitignored, never committed): `DB_PASSWORD`, `JWT_SECRET`, `SES_FROM_ADDRESS`, `WEB_BASE_URL`. Rotate by editing and redeploying. Hardening TODO (Phase 5+): move to Secrets Manager + rotation.

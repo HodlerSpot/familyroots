@@ -74,6 +74,31 @@ Prefer plain, kind words over technical states.
   never a "user" or "external party." Invite label that reads well:
   **"Supporter (coach, mentor, friend)"**.
 
+## Billing & Premium copy (2026-07, from the Premium copy deck)
+
+Full deck: `docs/brand/premium-copy.md`. Patterns worth reusing:
+
+- **Prices are static strings, two registers:** UI cards/buttons use
+  "$9.99/month" / "$99/year"; prose and email use "$9.99 a month",
+  "$99 a year", "$99, one time". Never computed, never floats.
+- **Savings claims are exact and modest:** "Save $20.88 (about 2 months
+  free)". Never round the dollars; never overclaim ("2 months free" flat).
+- **Free is a full product, not a demo.** Upsells lead with what stays free
+  ("Photos and voice notes are always free") before what Premium adds.
+  Upsell = invitation; secondary action is always a pressure-free
+  "Maybe later".
+- **Payment failure is a hiccup, not a fault:** "didn't go through this
+  time. This happens: cards expire, banks get cautious." Owner-only; the
+  family is never told.
+- **Every cancel/downgrade message pairs with the safety line:**
+  "everything you've saved stays yours" (add "including every video" where
+  videos are the worry).
+- **Gifts are bounded generosity:** "a year of Premium" is the unit; always
+  "one time", "nothing renews", "no one is charged later". Amounts never
+  appear on the feed.
+- **Renewal reminders state price + date + how to cancel** in plain words,
+  with "there's nothing to do" as the happy path.
+
 ## Email sign-off (use verbatim, every family email)
 
 ```

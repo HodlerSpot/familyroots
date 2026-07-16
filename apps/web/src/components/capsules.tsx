@@ -1,8 +1,18 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { api, ApiError, CapsuleOut, GoalOut, mediaUrl, ReleaseCondition } from "@/lib/api";
+import {
+  api,
+  ApiError,
+  CapsuleOut,
+  FamilyRole,
+  GoalOut,
+  isPremiumRequired,
+  mediaUrl,
+  ReleaseCondition,
+} from "@/lib/api";
 import { Button, Card, ErrorNote, Input, Label, ZoomableImage } from "@/components/ui";
+import { PremiumUpsellCard } from "@/components/premium/PremiumUpsell";
 
 function conditionLabel(c: CapsuleOut): string {
   switch (c.release_condition) {
@@ -23,12 +33,18 @@ export function CapsulesSection({
   capsules,
   goals,
   onChanged,
+  familyId,
+  role,
+  videoAllowed,
 }: {
   childId: string;
   childName: string;
   capsules: CapsuleOut[];
   goals: GoalOut[];
   onChanged: () => void;
+  familyId: string;
+  role: FamilyRole | null;
+  videoAllowed: boolean;
 }) {
   const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState("");
@@ -74,6 +90,9 @@ export function CapsulesSection({
             setShowForm(false);
             onChanged();
           }}
+          familyId={familyId}
+          role={role}
+          videoAllowed={videoAllowed}
         />
       )}
 
@@ -157,11 +176,17 @@ function CapsuleForm({
   childName,
   incompleteGoals,
   onSealed,
+  familyId,
+  role,
+  videoAllowed,
 }: {
   childId: string;
   childName: string;
   incompleteGoals: GoalOut[];
   onSealed: () => void;
+  familyId: string;
+  role: FamilyRole | null;
+  videoAllowed: boolean;
 }) {
   const [body, setBody] = useState("");
   const [condition, setCondition] = useState<ReleaseCondition>("age");
@@ -171,12 +196,24 @@ function CapsuleForm({
   const [goalId, setGoalId] = useState(incompleteGoals[0]?.id ?? "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [videoBlocked, setVideoBlocked] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const hasGoals = incompleteGoals.length > 0;
 
+  function onFileChange() {
+    const file = fileRef.current?.files?.[0];
+    setVideoBlocked(!!file && file.type.startsWith("video/") && !videoAllowed);
+  }
+
+  function dismissUpsell() {
+    if (fileRef.current) fileRef.current.value = "";
+    setVideoBlocked(false);
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (videoBlocked) return;
     setBusy(true);
     setError("");
     try {
@@ -201,7 +238,12 @@ function CapsuleForm({
       });
       onSealed();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong");
+      if (isPremiumRequired(err)) {
+        // Server-side gate backstop: show the warm invitation, never an error.
+        setVideoBlocked(true);
+      } else {
+        setError(err instanceof ApiError ? err.message : "Something went wrong");
+      }
       setBusy(false);
     }
   }
@@ -231,9 +273,18 @@ function CapsuleForm({
             ref={fileRef}
             type="file"
             accept="image/*,audio/*,video/*"
+            onChange={onFileChange}
             className="text-sm"
           />
         </div>
+        {videoBlocked && (
+          <PremiumUpsellCard
+            familyId={familyId}
+            capability="video_upload"
+            role={role}
+            onDismiss={dismissUpsell}
+          />
+        )}
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <Label htmlFor="ccondition">When should it open?</Label>
@@ -320,7 +371,7 @@ function CapsuleForm({
           </div>
         </div>
         <ErrorNote>{error}</ErrorNote>
-        <Button type="submit" disabled={busy} className="w-full">
+        <Button type="submit" disabled={busy || videoBlocked} className="w-full">
           {busy ? "Sealing…" : "Seal it for the future"}
         </Button>
       </form>

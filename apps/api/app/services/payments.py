@@ -18,6 +18,7 @@ Backends:
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Protocol
 
 from sqlalchemy import func
@@ -67,6 +68,34 @@ class ConnectAccountState:
     requirements_due: bool  # Stripe is waiting on more information
 
 
+@dataclass(frozen=True)
+class SubscriptionState:
+    """Point-in-time live subscription state (subscriptions.retrieve)."""
+
+    subscription_id: str
+    customer_id: str
+    status: str                      # raw Stripe status string
+    price_id: str                    # maps to plan via settings
+    current_period_end: datetime
+    cancel_at_period_end: bool
+    metadata: dict[str, str]
+
+
+@dataclass(frozen=True)
+class CheckoutResult:
+    """Live checkout-session state (checkout.sessions.retrieve) for /sync."""
+
+    session_id: str
+    kind: str                        # metadata["kind"]
+    paid: bool                       # payment_status == "paid"
+    subscription_id: str | None
+    payment_intent_id: str | None
+    amount_total: int | None         # integer cents
+    currency: str | None
+    price_id: str | None             # first line item's price (gift verification)
+    metadata: dict[str, str]
+
+
 class PaymentProvider(Protocol):
     settles_via_webhook: bool
 
@@ -114,6 +143,71 @@ class PaymentProvider(Protocol):
         """Live account state, straight from the provider (never from a payload)."""
         ...
 
+    # --- FutureRoots Premium (family subscription + one-time gift) ---
+
+    def get_or_create_customer(
+        self,
+        *,
+        email: str,
+        display_name: str,
+        user_id: str,
+        existing_customer_id: str | None,
+    ) -> str:
+        """Return the user's Stripe customer id, creating one if needed
+        (idempotency key fr-customer-{user_id}). Local: 'cus_local_{user_id}'."""
+        ...
+
+    def create_subscription_checkout(
+        self,
+        *,
+        customer_id: str,
+        price_id: str,
+        metadata: dict[str, str],
+        success_url: str,
+        cancel_url: str,
+        idempotency_scope: str,
+    ) -> tuple[str, str]:
+        """(session_id, redirect_url) for a mode=subscription Checkout."""
+        ...
+
+    def create_gift_checkout(
+        self,
+        *,
+        customer_id: str,
+        price_id: str,
+        metadata: dict[str, str],
+        success_url: str,
+        cancel_url: str,
+    ) -> tuple[str, str]:
+        """(session_id, redirect_url) for a mode=payment Checkout."""
+        ...
+
+    def subscription_state(self, subscription_id: str) -> SubscriptionState | None:
+        """Live retrieve; None if the subscription doesn't exist. Local: None
+        (the local backend mirrors state directly in the DB)."""
+        ...
+
+    def checkout_result(self, session_id: str) -> CheckoutResult | None:
+        """Live session retrieve for the /sync reconcile path."""
+        ...
+
+    def set_cancel_at_period_end(
+        self, subscription_id: str, cancel: bool
+    ) -> SubscriptionState | None:
+        """Flip auto-renew; returns the resulting live state. Local: None (no-op)."""
+        ...
+
+    def cancel_subscription_now(
+        self, subscription_id: str, *, refund_latest_charge: bool
+    ) -> None:
+        """Immediate cancel + refund — ONLY for the accidental double-subscribe
+        guard. Never used by the user-facing cancel flow."""
+        ...
+
+    def create_billing_portal(self, customer_id: str, *, return_url: str) -> str:
+        """Hosted Billing Portal URL. Local: '{return_url}?portal=simulated'."""
+        ...
+
 
 class LocalPaymentProvider:
     """Dev-only simulated card processor. Always succeeds."""
@@ -157,6 +251,63 @@ class LocalPaymentProvider:
             transfers_active=True,
             requirements_due=False,
         )
+
+    # --- Premium: the routers settle synchronously through the same settlement
+    # functions the Stripe webhook calls, so no live state exists to retrieve.
+
+    def get_or_create_customer(
+        self,
+        *,
+        email: str,
+        display_name: str,
+        user_id: str,
+        existing_customer_id: str | None,
+    ) -> str:
+        return existing_customer_id or f"cus_local_{user_id}"
+
+    def create_subscription_checkout(
+        self,
+        *,
+        customer_id: str,
+        price_id: str,
+        metadata: dict[str, str],
+        success_url: str,
+        cancel_url: str,
+        idempotency_scope: str,
+    ) -> tuple[str, str]:
+        session_id = f"cs_local_{uuid.uuid4().hex}"
+        return session_id, success_url.replace("{CHECKOUT_SESSION_ID}", session_id)
+
+    def create_gift_checkout(
+        self,
+        *,
+        customer_id: str,
+        price_id: str,
+        metadata: dict[str, str],
+        success_url: str,
+        cancel_url: str,
+    ) -> tuple[str, str]:
+        session_id = f"cs_local_{uuid.uuid4().hex}"
+        return session_id, success_url.replace("{CHECKOUT_SESSION_ID}", session_id)
+
+    def subscription_state(self, subscription_id: str) -> "SubscriptionState | None":
+        return None  # local mode mirrors state directly in the DB
+
+    def checkout_result(self, session_id: str) -> "CheckoutResult | None":
+        return None  # local checkouts settle synchronously; nothing to reconcile
+
+    def set_cancel_at_period_end(
+        self, subscription_id: str, cancel: bool
+    ) -> "SubscriptionState | None":
+        return None  # the router flips the mirror row directly in local mode
+
+    def cancel_subscription_now(
+        self, subscription_id: str, *, refund_latest_charge: bool
+    ) -> None:
+        return None
+
+    def create_billing_portal(self, customer_id: str, *, return_url: str) -> str:
+        return f"{return_url}?portal=simulated"
 
 
 class StripePaymentProvider:
@@ -292,6 +443,204 @@ class StripePaymentProvider:
             transfers_active=transfers == "active",
             requirements_due=bool(currently_due or past_due),
         )
+
+    # --- Premium: customers, Checkout sessions, subscriptions, Billing Portal ---
+
+    @staticmethod
+    def _obj_field(obj, key: str, default=None):
+        """StripeObject supports [] but not dict.get()."""
+        try:
+            value = obj[key]
+        except (KeyError, TypeError):
+            return default
+        return default if value is None else value
+
+    @staticmethod
+    def _obj_dict(obj) -> dict:
+        """StripeObject (v15+) is not a Mapping — dict(obj) breaks; it exposes
+        to_dict() instead. Plain dicts pass through."""
+        if obj is None:
+            return {}
+        to_dict = getattr(obj, "to_dict", None)
+        if callable(to_dict):
+            return dict(to_dict())
+        if isinstance(obj, dict):
+            return dict(obj)
+        return {}
+
+    def _to_subscription_state(self, sub) -> SubscriptionState:
+        items = self._obj_field(sub, "items", {})
+        data = list(self._obj_field(items, "data", []) or [])
+        first = data[0] if data else {}
+        price = self._obj_field(first, "price", {})
+        price_id = self._obj_field(price, "id", "") or ""
+        # current_period_end lives on the subscription in classic API versions
+        # and on the item in newer ones; accept either.
+        period_end = self._obj_field(sub, "current_period_end") or self._obj_field(
+            first, "current_period_end"
+        )
+        period_end_dt = (
+            datetime.fromtimestamp(int(period_end), tz=timezone.utc)
+            if period_end
+            else datetime.now(timezone.utc)
+        )
+        metadata = self._obj_dict(self._obj_field(sub, "metadata", {}))
+        return SubscriptionState(
+            subscription_id=sub["id"],
+            customer_id=str(self._obj_field(sub, "customer", "") or ""),
+            status=str(self._obj_field(sub, "status", "") or ""),
+            price_id=price_id,
+            current_period_end=period_end_dt,
+            cancel_at_period_end=bool(self._obj_field(sub, "cancel_at_period_end", False)),
+            metadata=metadata,
+        )
+
+    def get_or_create_customer(
+        self,
+        *,
+        email: str,
+        display_name: str,
+        user_id: str,
+        existing_customer_id: str | None,
+    ) -> str:
+        if existing_customer_id:
+            return existing_customer_id
+        customer = self.client.customers.create(
+            params={
+                "email": email,
+                "name": display_name,
+                # Opaque UUID only — never child data, never free text.
+                "metadata": {"futureroots_user_id": user_id},
+            },
+            options={"idempotency_key": f"fr-customer-{user_id}"},
+        )
+        return customer.id
+
+    def create_subscription_checkout(
+        self,
+        *,
+        customer_id: str,
+        price_id: str,
+        metadata: dict[str, str],
+        success_url: str,
+        cancel_url: str,
+        idempotency_scope: str,
+    ) -> tuple[str, str]:
+        session = self.client.checkout.sessions.create(
+            params={
+                "mode": "subscription",
+                "customer": customer_id,
+                "line_items": [{"price": price_id, "quantity": 1}],
+                "client_reference_id": metadata.get("family_id", ""),
+                # Duplicated onto the subscription so every customer.subscription.*
+                # event self-identifies without a session lookup.
+                "metadata": metadata,
+                "subscription_data": {"metadata": metadata},
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+                "allow_promotion_codes": False,
+            },
+            options={"idempotency_key": f"fr-premium-sub-{idempotency_scope}"},
+        )
+        return session.id, session.url
+
+    def create_gift_checkout(
+        self,
+        *,
+        customer_id: str,
+        price_id: str,
+        metadata: dict[str, str],
+        success_url: str,
+        cancel_url: str,
+    ) -> tuple[str, str]:
+        session = self.client.checkout.sessions.create(
+            params={
+                "mode": "payment",
+                "customer": customer_id,
+                "line_items": [{"price": price_id, "quantity": 1}],
+                "metadata": metadata,
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+            }
+        )
+        return session.id, session.url
+
+    def subscription_state(self, subscription_id: str) -> SubscriptionState | None:
+        try:
+            sub = self.client.subscriptions.retrieve(subscription_id)
+        except Exception:
+            return None
+        return self._to_subscription_state(sub)
+
+    def checkout_result(self, session_id: str) -> CheckoutResult | None:
+        try:
+            session = self.client.checkout.sessions.retrieve(
+                session_id, params={"expand": ["line_items"]}
+            )
+        except Exception:
+            return None
+        metadata = self._obj_dict(self._obj_field(session, "metadata", {}))
+        line_items = self._obj_field(session, "line_items", {})
+        data = list(self._obj_field(line_items, "data", []) or [])
+        first = data[0] if data else {}
+        price = self._obj_field(first, "price", {})
+        price_id = self._obj_field(price, "id")
+        subscription = self._obj_field(session, "subscription")
+        payment_intent = self._obj_field(session, "payment_intent")
+        amount_total = self._obj_field(session, "amount_total")
+        return CheckoutResult(
+            session_id=session["id"],
+            kind=str(metadata.get("kind", "")),
+            paid=self._obj_field(session, "payment_status") == "paid",
+            subscription_id=str(subscription) if subscription else None,
+            payment_intent_id=str(payment_intent) if payment_intent else None,
+            amount_total=int(amount_total) if amount_total is not None else None,
+            currency=self._obj_field(session, "currency"),
+            price_id=str(price_id) if price_id else None,
+            metadata=metadata,
+        )
+
+    def set_cancel_at_period_end(
+        self, subscription_id: str, cancel: bool
+    ) -> SubscriptionState | None:
+        try:
+            sub = self.client.subscriptions.update(
+                subscription_id, params={"cancel_at_period_end": cancel}
+            )
+        except Exception:
+            return None
+        return self._to_subscription_state(sub)
+
+    def cancel_subscription_now(
+        self, subscription_id: str, *, refund_latest_charge: bool
+    ) -> None:
+        """Best-effort: used only by the double-subscribe guard. Failures are
+        left for the admin reconcile (the Stripe dashboard shows the duplicate)."""
+        try:
+            sub = self.client.subscriptions.retrieve(
+                subscription_id, params={"expand": ["latest_invoice"]}
+            )
+            self.client.subscriptions.cancel(subscription_id)
+            if refund_latest_charge:
+                invoice = self._obj_field(sub, "latest_invoice", {})
+                payment_intent = self._obj_field(invoice, "payment_intent")
+                if payment_intent:
+                    self.client.refunds.create(
+                        params={"payment_intent": str(payment_intent)}
+                    )
+        except Exception:  # noqa: BLE001 — deliberately best-effort
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "cancel_subscription_now failed for %s — reconcile manually",
+                subscription_id,
+            )
+
+    def create_billing_portal(self, customer_id: str, *, return_url: str) -> str:
+        session = self.client.billing_portal.sessions.create(
+            params={"customer": customer_id, "return_url": return_url}
+        )
+        return session.url
 
 
 def _build_provider() -> PaymentProvider:

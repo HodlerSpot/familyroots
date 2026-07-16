@@ -44,6 +44,7 @@ from ..schemas import (
     PlannedCallSet,
 )
 from ..services.agora.tokens import mint_rtc_token
+from ..services.entitlements import Capability, require_capability
 
 router = APIRouter(prefix="/families/{family_id}/call", tags=["call"])
 
@@ -279,6 +280,17 @@ def _gate(db, family_id: uuid.UUID, user: User) -> None:
     require_not_supporter(membership)
 
 
+def _gate_premium(db, family_id: uuid.UUID, user: User) -> None:
+    """Family Video Call is a Premium capability. Applied to join/token/
+    heartbeat/children/planned-set — but deliberately NOT to call_state,
+    get_planned, clear_planned, or leave_call: reads and a graceful exit must
+    always work, so a family downgraded mid-call can see state and leave
+    cleanly (the gated token refresh ends their media within the token TTL,
+    and heartbeat gating expires their presence)."""
+    _gate(db, family_id, user)
+    require_capability(db, family_id, Capability.family_video_call)
+
+
 # --- endpoints ---
 
 @router.post("/join", response_model=CallJoinOut)
@@ -286,7 +298,7 @@ def join_call(
     family_id: uuid.UUID, db: DbSession, user: CurrentUser, response: Response
 ) -> CallJoinOut:
     """Join the family's single active call, creating it if none is live."""
-    _gate(db, family_id, user)
+    _gate_premium(db, family_id, user)
     call, created = _join_or_create(db, family_id, user)
     participant = _upsert_participant(db, call, user)
     # Token is minted only after authz + participant assignment.
@@ -320,7 +332,7 @@ def call_state(family_id: uuid.UUID, db: DbSession, user: CurrentUser) -> CallSt
 @router.post("/heartbeat", response_model=CallStateOut)
 def heartbeat(family_id: uuid.UUID, db: DbSession, user: CurrentUser) -> CallStateOut:
     """Keep the caller marked present. 409 if they aren't in the call."""
-    _gate(db, family_id, user)
+    _gate_premium(db, family_id, user)
     call = _active_call(db, family_id)
     participant = _present_participant(db, call, user)
     if participant is None:
@@ -366,7 +378,7 @@ def set_children_present(
     family_id: uuid.UUID, payload: ChildrenPresenceSet, db: DbSession, user: CurrentUser
 ) -> CallStateOut:
     """Replace the set of children flagged as present on the active call."""
-    _gate(db, family_id, user)
+    _gate_premium(db, family_id, user)
     call = _active_call(db, family_id)
     if call is not None:
         _reap(db, call)
@@ -401,7 +413,7 @@ def set_children_present(
 def refresh_token(family_id: uuid.UUID, db: DbSession, user: CurrentUser) -> CallTokenOut:
     """Re-mint the caller's token (Agora token-expiry renewal). Requires a
     present participant in an active call."""
-    _gate(db, family_id, user)
+    _gate_premium(db, family_id, user)
     call = _active_call(db, family_id)
     if call is not None:
         _reap(db, call)
@@ -436,7 +448,7 @@ def set_planned(
 ) -> PlannedCallOut:
     """Upsert the family's single next planned call. Any non-supporter member
     may set it."""
-    _gate(db, family_id, user)
+    _gate_premium(db, family_id, user)
     planned = db.query(PlannedCall).filter(PlannedCall.family_id == family_id).first()
     if planned is None:
         planned = PlannedCall(

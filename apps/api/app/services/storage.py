@@ -35,6 +35,11 @@ class MediaStorage(Protocol):
         """Byte size if the object exists in storage, else None."""
         ...
 
+    def read_head(self, media: "MediaObject", n: int) -> bytes:
+        """First n bytes of the stored object (for content sniffing); b'' if
+        the object is missing."""
+        ...
+
     def download(self, media: "MediaObject") -> Response: ...
 
     def delete(self, storage_key: str) -> None: ...
@@ -64,6 +69,13 @@ class LocalDiskStorage:
     def confirm_upload(self, media: "MediaObject") -> int | None:
         path = self._path(media.storage_key)
         return path.stat().st_size if path.exists() else None
+
+    def read_head(self, media: "MediaObject", n: int) -> bytes:
+        path = self._path(media.storage_key)
+        if not path.exists():
+            return b""
+        with path.open("rb") as f:
+            return f.read(n)
 
     def download(self, media: "MediaObject") -> Response:
         path = self._path(media.storage_key)
@@ -106,6 +118,17 @@ class S3MediaStorage:
             return head["ContentLength"]
         except self.client.exceptions.ClientError:
             return None
+
+    def read_head(self, media: "MediaObject", n: int) -> bytes:
+        try:
+            obj = self.client.get_object(
+                Bucket=self.bucket,
+                Key=media.storage_key,
+                Range=f"bytes=0-{max(n - 1, 0)}",
+            )
+            return obj["Body"].read()
+        except self.client.exceptions.ClientError:
+            return b""
 
     def download(self, media: "MediaObject") -> Response:
         url = self.client.generate_presigned_url(

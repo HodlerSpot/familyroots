@@ -19,6 +19,7 @@ from ..models import FeedEventType
 from ..schemas import FamilySummary, InviteAccept, InviteCreate, InviteOut, InvitePreview
 from ..services.email import get_email_sender
 from ..services.email_templates import render_email
+from ..services.entitlements import plans_for_families
 from ..services.feed import emit
 from ..services.notifications import notify_members
 from ..services.text import family_phrase
@@ -205,4 +206,12 @@ def accept_invite(payload: InviteAccept, db: DbSession, user: CurrentUser) -> Fa
         ),
         exclude_user_id=user.id,
     )
-    return FamilySummary(id=invite.family_id, name=invite.family.name, role=invite.role)
+    # Derive the real plan (same helper my_families uses) so a new member
+    # joining a Premium family isn't told "free".
+    is_premium = plans_for_families(db, [invite.family_id]).get(invite.family_id, False)
+    return FamilySummary(
+        id=invite.family_id,
+        name=invite.family.name,
+        role=invite.role,
+        plan="premium" if is_premium else "free",
+    )

@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -92,6 +93,8 @@ class FamilySummary(BaseModel):
     id: uuid.UUID
     name: str
     role: FamilyRole
+    # Derived server-side; the list carries the badge only — no billing detail.
+    plan: Literal["free", "premium"] = "free"
 
 
 class ChildOut(BaseModel):
@@ -110,6 +113,9 @@ class FamilyDetail(BaseModel):
     name: str
     members: list[MemberOut]
     children: list[ChildOut]
+    plan: Literal["free", "premium"] = "free"
+    premium_until: datetime | None = None
+    capabilities: list[str] = []
 
 
 # --- children ---
@@ -373,6 +379,55 @@ class LegacyOut(BaseModel):
     media_content_type: str | None
     created_by_name: str
     created_at: datetime
+
+
+# --- FutureRoots Premium ---
+
+class PremiumCheckoutIn(BaseModel):
+    plan: Literal["monthly", "annual"]
+
+
+class GiftCheckoutIn(BaseModel):
+    message: str | None = Field(default=None, max_length=500)
+
+
+class CheckoutSessionOut(BaseModel):
+    checkout_url: str          # browser navigates here (Stripe-hosted, or the
+                               # success URL directly on the local backend)
+
+
+class PremiumSubscriptionOut(BaseModel):
+    plan: Literal["monthly", "annual"]
+    status: Literal["active", "past_due", "canceled"]
+    current_period_end: datetime
+    cancel_at_period_end: bool
+    owner_name: str
+    is_owner: bool             # viewer == owner (enables the Portal button)
+
+
+class PremiumGrantOut(BaseModel):
+    gifter_name: str
+    starts_at: datetime
+    ends_at: datetime
+    message: str | None
+
+
+class PremiumStatusOut(BaseModel):
+    plan: Literal["free", "premium"]
+    premium_until: datetime | None
+    capabilities: list[str]
+    can_manage: bool                              # viewer is an active parent
+    can_gift: bool                                # viewer is an active non-parent
+    subscription: PremiumSubscriptionOut | None   # PARENTS ONLY (billing trouble is private)
+    grants: list[PremiumGrantOut]                 # non-supporter members; [] for supporters
+
+
+class PremiumPortalOut(BaseModel):
+    portal_url: str
+
+
+class PremiumSyncIn(BaseModel):
+    session_id: str | None = None
 
 
 # --- me: notification preferences & contributions ---

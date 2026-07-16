@@ -5,14 +5,17 @@ from datetime import date, datetime, timezone
 from sqlalchemy import (
     JSON,
     BigInteger,
+    CheckConstraint,
     Date,
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -84,6 +87,19 @@ class FeedEventType(str, enum.Enum):
     capsule_created = "capsule_created"
     capsule_released = "capsule_released"
     member_joined = "member_joined"
+    premium_activated = "premium_activated"
+    premium_gifted = "premium_gifted"
+
+
+class SubscriptionPlan(str, enum.Enum):
+    monthly = "monthly"
+    annual = "annual"
+
+
+class SubscriptionStatus(str, enum.Enum):
+    active = "active"        # Stripe: active | trialing (we sell no trials)
+    past_due = "past_due"    # Stripe: past_due — Smart Retries window = grace period
+    canceled = "canceled"    # Stripe: canceled | unpaid | incomplete_expired
 
 
 class CapsuleType(str, enum.Enum):
@@ -173,6 +189,11 @@ class User(Base):
         Enum(UserRole, native_enum=False, length=20), default=UserRole.user
     )
     disabled: Mapped[bool] = mapped_column(default=False)  # admin can lock an account out
+    # One Stripe Customer per adult user, created lazily on their first checkout
+    # (subscribe OR gift). Server-only; never exposed in any API payload.
+    stripe_customer_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True
+    )
     # Optional headshot shown on camera-off video-call tiles. Points at a
     # user-scoped media object (MediaObject.user_id == this user).
     avatar_media_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -700,6 +721,113 @@ class PlannedCall(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+
+# --- FutureRoots Premium (family-level membership) ---
+# Premium state is ALWAYS derived at read time from family_subscriptions +
+# premium_grants (services/entitlements.py). There is no is_premium column
+# anywhere, by design.
+
+
+class FamilySubscription(Base):
+    """Mirror of the family's recurring Stripe subscription. Written ONLY by
+    verified webhook handlers, the parent-initiated /sync reconcile (which
+    reads live Stripe state), and the local backend's simulated settle —
+    never from client say-so."""
+
+    __tablename__ = "family_subscriptions"
+    __table_args__ = (
+        # At most one non-canceled subscription per family (double-subscribe
+        # backstop). Partial on both Postgres (prod) and SQLite (tests).
+        Index(
+            "uq_family_subscriptions_live",
+            "family_id",
+            unique=True,
+            postgresql_where=text("status != 'canceled'"),
+            sqlite_where=text("status != 'canceled'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    family_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("families.id"), index=True)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    stripe_customer_id: Mapped[str] = mapped_column(String(64))
+    stripe_subscription_id: Mapped[str] = mapped_column(String(64), unique=True)
+    plan: Mapped[SubscriptionPlan] = mapped_column(
+        Enum(SubscriptionPlan, native_enum=False, length=20)
+    )
+    status: Mapped[SubscriptionStatus] = mapped_column(
+        Enum(SubscriptionStatus, native_enum=False, length=20)
+    )
+    current_period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    cancel_at_period_end: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class PremiumGrant(Base):
+    """A prepaid Premium period (gift). Append-only: written ONLY when a
+    verified webhook (or the live-Stripe /sync path) confirms payment.
+    The single permitted mutation is the admin-only void (support refunds) —
+    same deliberate exception as contributions.refunded_cents."""
+
+    __tablename__ = "premium_grants"
+    __table_args__ = (
+        CheckConstraint("ends_at > starts_at", name="ck_premium_grants_period"),
+        CheckConstraint("amount_cents > 0", name="ck_premium_grants_amount"),
+        Index("ix_premium_grants_family_ends", "family_id", "ends_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    family_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("families.id"), index=True)
+    source: Mapped[str] = mapped_column(String(20), default="gift")  # future: "promo", "support"
+    granted_by_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    stripe_checkout_session_id: Mapped[str] = mapped_column(String(255), unique=True)  # idempotency key
+    stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    amount_cents: Mapped[int] = mapped_column()          # integer cents, always
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Admin-only void (manual refund/chargeback support path); voided grants
+    # are ignored by the entitlement derivation but never deleted.
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    voided_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PremiumGiftIntent(Base):
+    """Created when a gifter starts checkout; holds the gift message locally so
+    free text (which may name a child) is NEVER sent to Stripe. Not a money
+    row — abandoned checkouts leave a harmless orphan here (no grant, no feed
+    event, no email). Prunable after 30 days by the admin sweep."""
+
+    __tablename__ = "premium_gift_intents"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    family_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("families.id"), index=True)
+    gifter_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    stripe_checkout_session_id: Mapped[str] = mapped_column(String(255), unique=True)
+    message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PremiumEmailLog(Base):
+    """One row per (kind, dedupe_key) ever sent. INSERT with the unique
+    constraint is the race-safe guard: insert first, send only on success."""
+
+    __tablename__ = "premium_email_log"
+    __table_args__ = (UniqueConstraint("kind", "dedupe_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    family_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("families.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(40))   # payment_failed | renewal_upcoming | premium_ended | gift_ending_soon | duplicate_subscription
+    dedupe_key: Mapped[str] = mapped_column(String(255))
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 # --- Testnet harness (settings.testnet_mode deployments only) ---

@@ -38,6 +38,42 @@ def test_photo_upload_and_vault_item(client):
     assert len(r.json()) == 1
 
 
+def test_declared_image_that_is_actually_video_is_rejected_on_complete(client):
+    """Paywall bypass guard: a free family declares image/png on the ticket
+    (which is not gated) but PUTs an MP4. The completion path sniffs the bytes
+    and rejects — the declared type can't smuggle video past the Premium gate."""
+    headers = signup(client, "parent@example.com")
+    family_id = create_family(client, headers)
+    child_id = add_child(client, headers, family_id)
+
+    r = client.post(
+        f"/children/{child_id}/media",
+        json={"content_type": "image/png"},  # not gated — video ticket would be
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    media_id = r.json()["media_id"]
+    upload_url = r.json()["upload_url"]
+
+    # Minimal ISO-BMFF/MP4 header: box size, 'ftyp', brand 'isom'.
+    mp4_bytes = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00mp41" + b"\x00" * 32
+    r = client.put(upload_url, content=mp4_bytes, headers=headers)
+    assert r.status_code == 204, r.text
+
+    r = client.post(f"/media/{media_id}/complete", headers=headers)
+    assert r.status_code == 415, r.text
+    assert "video" in r.json()["detail"].lower()
+
+
+def test_real_image_completes_normally(client):
+    """The sniff must not false-positive on a genuine image declared as image."""
+    headers = signup(client, "parent@example.com")
+    family_id = create_family(client, headers)
+    child_id = add_child(client, headers, family_id)
+    # upload_photo asserts a clean 204 through PUT + complete.
+    assert upload_photo(client, headers, child_id)
+
+
 def test_media_download_requires_family_membership(client):
     headers = signup(client, "parent@example.com")
     family_id = create_family(client, headers)

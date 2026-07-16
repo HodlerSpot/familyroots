@@ -8,9 +8,18 @@ import pytest
 from app.config import settings
 from app.models import CallStatus
 
-from .conftest import TestingSession, add_child, create_family, signup
+from .conftest import TestingSession, add_child, make_premium, signup
+from .conftest import create_family as _create_family
 from .test_goals import make_grandparent
 from .test_supporter_access import make_supporter
+
+
+def create_family(client, headers: dict, name: str = "The Salignas") -> str:
+    """Video calls are a Premium capability, so call tests run on a Premium
+    family (the free-family 402 path is covered in test_premium.py)."""
+    family_id = _create_family(client, headers, name)
+    make_premium(client, headers, family_id)
+    return family_id
 
 # The vendored Agora builder requires a 32-char hex certificate (same shape as
 # the App ID). Any such string signs a valid HMAC token in tests.

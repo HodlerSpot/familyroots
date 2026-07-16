@@ -13,7 +13,7 @@ import csv
 import io
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -33,6 +33,8 @@ from ..models import (
     FundAccount,
     FundLedgerEntry,
     MemberStatus,
+    PremiumGiftIntent,
+    PremiumGrant,
     Tester,
     User,
     UserRole,
@@ -40,6 +42,7 @@ from ..models import (
 )
 from ..security import create_impersonation_token
 from ..services.payments import fund_balance_cents, reconcile_contribution, refund_contribution
+from ..services.premium import reconcile_family_premium
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -720,6 +723,63 @@ def reconcile(contribution_id: uuid.UUID, db: DbSession, admin: AdminUser) -> Mi
     )
     db.commit()
     return _mini_contribution(c, u, ch)
+
+
+# --- premium (support paths) ---
+
+@router.post("/families/{family_id}/premium/reconcile")
+def reconcile_premium(family_id: uuid.UUID, db: DbSession, admin: AdminUser) -> dict:
+    """Re-sync a family's subscription mirror from live Stripe state (fixes
+    drift from a missed webhook). Precedent: contribution reconcile."""
+    f = db.get(Family, family_id)
+    if f is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Family not found")
+    result = reconcile_family_premium(db, family_id)
+    _audit(db, admin, "premium_reconciled", f"family:{family_id}", {"result": result})
+    db.commit()
+    return {"status": result}
+
+
+@router.post("/premium-grants/{grant_id}/void")
+def void_premium_grant(grant_id: uuid.UUID, db: DbSession, admin: AdminUser) -> dict:
+    """Support path for a refunded/charged-back gift (refund happens in the
+    Stripe dashboard first). The one permitted mutation on the append-only
+    premium_grants table: voided grants are ignored by the entitlement
+    derivation but never deleted. Audit-logged."""
+    grant = db.get(PremiumGrant, grant_id)
+    if grant is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Grant not found")
+    if grant.voided_at is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This grant is already voided")
+    grant.voided_at = utcnow()
+    grant.voided_by_user_id = admin.id
+    # The gift message is free text that may name a child; a voided grant is
+    # refunded/reversed and no longer displayed, so it shouldn't retain PII.
+    # Clearing it is the only mutation permitted here beyond the void stamp —
+    # the append-only discipline otherwise holds.
+    grant.message = None
+    _audit(
+        db, admin, "premium_grant_voided", f"premium_grant:{grant.id}",
+        {"family_id": str(grant.family_id), "amount_cents": grant.amount_cents},
+    )
+    db.commit()
+    return {"id": str(grant.id), "voided_at": grant.voided_at.isoformat()}
+
+
+@router.post("/premium/prune-gift-intents")
+def prune_gift_intents(db: DbSession, admin: AdminUser) -> dict:
+    """Delete gift-intent staging rows older than 30 days (abandoned checkouts
+    leave harmless orphans; settled gifts have already copied the message onto
+    the grant)."""
+    cutoff = utcnow() - timedelta(days=30)
+    pruned = (
+        db.query(PremiumGiftIntent)
+        .filter(PremiumGiftIntent.created_at < cutoff)
+        .delete(synchronize_session=False)
+    )
+    _audit(db, admin, "premium_gift_intents_pruned", None, {"pruned": pruned})
+    db.commit()
+    return {"pruned": pruned}
 
 
 # --- bug reports ---

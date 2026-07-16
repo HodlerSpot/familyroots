@@ -12,6 +12,7 @@ import {
   ReactionSummary,
 } from "@/lib/api";
 import { Button, Card, ErrorNote, Input, ZoomableImage } from "@/components/ui";
+import { familyPhrase } from "@/lib/text";
 
 function timeAgo(iso: string): string {
   const seconds = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -28,7 +29,14 @@ function eventLine(e: FeedEventOut): { icon: string; text: string } {
       return { icon: "🎉", text: `${p.child_name}: ${p.title}` };
     case "memory_added":
       return {
-        icon: p.item_type === "photo" ? "📷" : p.item_type === "message" ? "💬" : "📎",
+        icon:
+          p.item_type === "photo"
+            ? "📷"
+            : p.item_type === "video"
+              ? "🎬"
+              : p.item_type === "message"
+                ? "💬"
+                : "📎",
         text: `${e.actor_name} added a memory for ${p.child_name}: "${p.title}"`,
       };
     case "member_joined":
@@ -49,6 +57,20 @@ function eventLine(e: FeedEventOut): { icon: string; text: string } {
       return {
         icon: "💝",
         text: `${p.contributor_name} added ${formatMoney(Number(p.amount_cents))} to ${p.child_name}'s future fund`,
+      };
+    // Copy from docs/brand/premium-copy.md §4. No amounts on the feed:
+    // "a year of Premium" is the unit of love.
+    case "premium_activated":
+      return {
+        icon: "🌟",
+        text: `${
+          p.family_name ? familyPhrase(String(p.family_name), { capitalize: true }) : "The family"
+        } is now on FutureRoots Premium`,
+      };
+    case "premium_gifted":
+      return {
+        icon: "🎁",
+        text: `${p.gifter_name} gave the family a year of FutureRoots Premium ♥`,
       };
     default:
       return { icon: "✨", text: String(p.title ?? e.type) };
@@ -218,9 +240,10 @@ function MomentCard({ event }: { event: FeedEventOut }) {
         {event.type === "milestone" && event.payload.description && (
           <p className="mt-1 text-sm text-stone-600">{event.payload.description}</p>
         )}
-        {event.type === "contribution" && event.payload.message && (
-          <p className="mt-1 text-sm italic text-stone-600">“{event.payload.message}”</p>
-        )}
+        {(event.type === "contribution" || event.type === "premium_gifted") &&
+          event.payload.message && (
+            <p className="mt-1 text-sm italic text-stone-600">“{event.payload.message}”</p>
+          )}
         {(event.type === "milestone" || event.type === "achievement") && event.child_id && (
           <a
             href={`${location.pathname.replace(/\/$/, "")}/child/${event.child_id}/contribute`}
@@ -229,13 +252,21 @@ function MomentCard({ event }: { event: FeedEventOut }) {
             💝 Celebrate with a gift
           </a>
         )}
-        {event.payload.media_id && (
-          <ZoomableImage
-            src={mediaUrl(String(event.payload.media_id))}
-            alt={String(event.payload.title ?? "family memory")}
-            className="mt-3 max-h-72 rounded-xl object-cover"
-          />
-        )}
+        {event.payload.media_id &&
+          (String(event.payload.media_content_type ?? "").startsWith("video/") ||
+          event.payload.item_type === "video" ? (
+            <video
+              controls
+              src={mediaUrl(String(event.payload.media_id))}
+              className="mt-3 max-h-72 w-full rounded-xl"
+            />
+          ) : (
+            <ZoomableImage
+              src={mediaUrl(String(event.payload.media_id))}
+              alt={String(event.payload.title ?? "family memory")}
+              className="mt-3 max-h-72 rounded-xl object-cover"
+            />
+          ))}
         <p className="mt-1 text-xs text-stone-400">{timeAgo(event.created_at)}</p>
 
         <div className="mt-3 flex flex-wrap items-center gap-3">

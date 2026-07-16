@@ -81,6 +81,18 @@ def add_child(client, headers: dict, family_id: str, first_name: str = "Emma") -
     return r.json()["id"]
 
 
+def make_premium(client, parent_headers: dict, family_id: str, plan: str = "annual") -> None:
+    """Upgrade a family to Premium under the local payment provider, which
+    settles synchronously through the same settlement functions as the
+    Stripe webhook."""
+    r = client.post(
+        f"/families/{family_id}/premium/checkout",
+        json={"plan": plan},
+        headers=parent_headers,
+    )
+    assert r.status_code == 200, r.text
+
+
 def setup_fund(client, guardian_headers: dict, child_id: str) -> None:
     """Activate the child's Future Fund under the local provider: start setup
     (instant local Connect account), then poll status once (local accounts

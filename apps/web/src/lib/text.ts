@@ -10,3 +10,12 @@ export function familyPhrase(name: string, opts?: { capitalize?: boolean }): str
   }
   return phrase;
 }
+
+/** "March 12, 2027" style date for user-facing copy (renewals, gift coverage). */
+export function formatLongDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}

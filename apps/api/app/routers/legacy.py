@@ -12,6 +12,7 @@ from ..deps import (
 from ..models import Family, LegacyItem, MediaObject, MediaStatus
 from ..schemas import LegacyCreate, LegacyOut, MediaCreate, MediaUploadTicket
 from ..services.email_templates import render_email
+from ..services.entitlements import Capability, require_capability
 from ..services.notifications import notify_members
 from ..services.storage import get_storage
 
@@ -43,6 +44,10 @@ def create_family_media(
     /children/{id}/media)."""
     membership = get_active_membership(db, family_id, user)
     require_not_supporter(membership)
+    # Video is a Premium capability here too (defense in depth at every
+    # media-ticket choke point).
+    if payload.content_type.startswith("video/"):
+        require_capability(db, family_id, Capability.video_upload)
     media = MediaObject(
         family_id=family_id,
         storage_key=str(uuid.uuid4()),

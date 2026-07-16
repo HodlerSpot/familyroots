@@ -130,6 +130,80 @@ a `consent_records` row (`contributions`). No child PII ever goes to Stripe:
 the account holder is the parent, and metadata carries only our opaque
 fund-account id.
 
+## Premium (family subscription)
+
+Family-level paid membership (design of record: `docs/specs/premium-architecture.md`).
+`users` gains `stripe_customer_id` (one Stripe Customer per adult user, server-only).
+Four tables: **family_subscriptions** (webhook-mirrored Stripe subscription —
+owner, plan monthly/annual, status active/past_due/canceled, `current_period_end`,
+`cancel_at_period_end`; partial unique index: one non-canceled row per family),
+**premium_grants** (append-only prepaid gift periods: gifter, integer
+`amount_cents` + currency, `starts_at`/`ends_at` stacked so grants never overlap,
+message ≤500 chars, unique checkout-session id; admin-only `voided_at` is the one
+permitted mutation, for support refunds), **premium_gift_intents** (pre-checkout
+staging that keeps the gift message out of Stripe), and **premium_email_log**
+(send-once idempotency for lifecycle emails). Premium status is always
+**derived**: subscription `active` (until period end + slack) or `past_due`
+(Stripe retry window = grace), OR an unexpired unvoided grant. Rows are written
+only by verified Stripe webhooks / live-Stripe reconcile. Gating: capability
+registry in `app/services/entitlements.py` (`video_upload`,
+`family_video_call`) raising structured 402s; nothing already uploaded is ever
+hidden on downgrade. New feed event types: `premium_activated`,
+`premium_gifted` (family-private, like all feed events).
+
+### Premium data retention & erasure
+
+**PII-bearing fields.** Most Premium data is money/state, but these fields tie a
+financial record to a person and are the ones an erasure request must reason
+about:
+
+| Field | Personal data | Notes |
+|---|---|---|
+| `users.stripe_customer_id` | Stripe customer identifier for an adult | Links our user to Stripe's copy of their billing/PII |
+| `family_subscriptions.owner_user_id` | Which adult owns/pays for the plan | FK to `users` |
+| `family_subscriptions.stripe_customer_id` | Billing identity | Denormalized for the portal/webhook path |
+| `premium_grants.granted_by_user_id` | Which adult gifted | FK to `users` |
+| `premium_grants.message` | Free-text gift note | May name a child → cleared to `NULL` on admin void (support refund); never sent to Stripe |
+| `premium_gift_intents.gifter_user_id` | Which adult started a gift checkout | FK to `users` |
+| `premium_gift_intents.message` | Free-text gift note (staging) | May name a child; pruned after 30 days (admin sweep) |
+| `premium_email_log` | `family_id` + email `kind`/`dedupe_key` only | No message content; low sensitivity, currently unbounded (see deploy hardening backlog) |
+
+**Lawful basis.** Premium billing data is processed under **contract
+performance (GDPR Art. 6(1)(b))** — it is necessary to provide and bill the paid
+membership the family signed up for — **not consent**. (Child-data processing
+elsewhere in the product rests on parental consent; that is unchanged. Premium
+adds no child-data processing: Stripe sees only adult customers + opaque UUID
+metadata.)
+
+**Financial-records carve-out.** Payment and invoice records (in Stripe, and the
+minimal mirror we keep) are subject to **legal retention obligations for tax and
+accounting**, so the erasure right does **not** compel their deletion while those
+obligations run — **GDPR Art. 17(3)(b)** (processing necessary for compliance
+with a legal obligation) and Art. 17(3)(e) (establishment/exercise/defence of
+legal claims, e.g. chargebacks). This mirrors how `contributions` / ledger data
+is treated.
+
+**Intended erasure behavior (when account/family deletion endpoints exist —
+they do not today; see `premium-architecture.md` §7.4).** On an erasure request
+or account/family deletion:
+
+- **Anonymize / decouple, do not cascade-delete the financial rows.** Keep
+  `family_subscriptions` and `premium_grants` (they are financial records under
+  the carve-out), but sever the identity link where the record no longer needs
+  it: null/redact `premium_grants.message`, and — once the subject's user row is
+  removed — the `*_user_id` FKs are decoupled (retain the Stripe id needed for
+  reconciliation/refunds, drop it from the erased user's `users.stripe_customer_id`).
+- **Hard-delete the non-financial staging.** `premium_gift_intents` (abandoned)
+  and `premium_email_log` rows for the subject carry no accounting value and can
+  be deleted outright.
+- **Stripe side.** Deleting/anonymizing the Stripe Customer is a separate call
+  through the payment abstraction, subject to the same financial-retention
+  limits (Stripe retains transaction records even after customer deletion).
+
+Until deletion endpoints are built, the operational erasure path is a manual,
+admin-assisted process following the rules above; the void path already nulls
+`premium_grants.message` as a first, automatic step.
+
 ## Family video call
 
 Live, ephemeral, family-only (Agora RTC). Four tables: `family_calls` (one active call per family via a `UNIQUE(active_family_id)` sentinel; stores only started/ended facts, no child data), `call_participants` (a member's seat + server-assigned `agora_uid` + heartbeat `last_seen_at`; presence = not-left and last_seen within the TTL), `call_child_presence` (parent-attested "this child is in the room", set only by an in-call member and hard-deleted when they leave or the call ends), and `planned_calls` (one mutable next-call time per family). No audio/video is ever recorded or stored. RTC tokens are minted server-side (short-lived, publisher-role, one random per-call channel) using the Agora App Certificate, which never leaves the server. Supporters are excluded from every call endpoint.
