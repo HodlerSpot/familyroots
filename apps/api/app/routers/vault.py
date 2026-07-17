@@ -51,6 +51,7 @@ from ..services.notify import (
     family_recipients,
     notify,
 )
+from ..services.future_gifts import future_gifts_seconds_for_child
 from ..services.storage import get_storage
 from .children import child_out
 
@@ -443,7 +444,10 @@ def set_child_avatar(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Media not ready")
     child.avatar_media_id = media.id
     db.commit()
-    return child_out(db, child)
+    # Guardian-only endpoint, so the estimate is always shown (never a supporter).
+    return child_out(
+        db, child, future_gifts_seconds=future_gifts_seconds_for_child(db, child.id)
+    )
 
 
 # --- milestones ---

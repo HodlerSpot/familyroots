@@ -19,14 +19,26 @@ from ..models import (
     MemberStatus,
 )
 from ..schemas import ChildCreate, ChildOut
+from ..services.future_gifts import (
+    future_gifts_seconds_for_child,
+    future_gifts_seconds_for_children,
+)
 from ..testnet.service import award
 
 router = APIRouter(prefix="/families/{family_id}/children", tags=["children"])
 
 
-def child_out(db, child: Child, *, hide_birthdate: bool = False) -> ChildOut:
+def child_out(
+    db,
+    child: Child,
+    *,
+    hide_birthdate: bool = False,
+    future_gifts_seconds: int | None = None,
+) -> ChildOut:
     """Serialize a child, resolving the avatar's content type for the client.
-    Supporters (hide_birthdate=True) never receive the child's date of birth."""
+    Supporters (hide_birthdate=True) never receive the child's date of birth,
+    and callers pass future_gifts_seconds=None for them so the Future Gifts
+    estimate (which aggregates content supporters can't see) never leaks."""
     content_type = None
     if child.avatar_media_id is not None:
         media = db.get(MediaObject, child.avatar_media_id)
@@ -37,6 +49,7 @@ def child_out(db, child: Child, *, hide_birthdate: bool = False) -> ChildOut:
         birthdate=None if hide_birthdate else child.birthdate,
         avatar_media_id=child.avatar_media_id,
         avatar_content_type=content_type,
+        future_gifts_seconds=future_gifts_seconds,
     )
 
 
@@ -90,7 +103,12 @@ def add_child(
 
     award(db, user.id, "add_child")  # testnet points; no-op in the family product
     db.commit()
-    return child_out(db, child)
+    # A brand-new child has no content yet, so this is 0 — but compute it so the
+    # created payload carries the same field the list/detail views return. The
+    # creator is a guardian (not a supporter), so the estimate is always shown.
+    return child_out(
+        db, child, future_gifts_seconds=future_gifts_seconds_for_child(db, child.id)
+    )
 
 
 @router.get("", response_model=list[ChildOut])
@@ -98,4 +116,14 @@ def list_children(family_id: uuid.UUID, db: DbSession, user: CurrentUser) -> lis
     membership = get_active_membership(db, family_id, user)
     hide = is_supporter(membership.role)
     children = db.query(Child).filter(Child.family_id == family_id).all()
-    return [child_out(db, c, hide_birthdate=hide) for c in children]
+    # Precompute Future Gifts once for all children (no N+1); skip entirely for
+    # supporters, who must not see the estimate.
+    gifts = (
+        {}
+        if hide
+        else future_gifts_seconds_for_children(db, [c.id for c in children])
+    )
+    return [
+        child_out(db, c, hide_birthdate=hide, future_gifts_seconds=gifts.get(c.id))
+        for c in children
+    ]

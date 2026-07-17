@@ -19,6 +19,7 @@ import { FamilyCallCard } from "@/components/family-call/FamilyCallCard";
 import { useCallState } from "@/components/family-call/useCallState";
 import { PremiumPill } from "@/components/premium/PremiumPill";
 import { PlanSection } from "@/components/premium/PlanSection";
+import { FutureGifts } from "@/components/future-gifts";
 
 export default function FamilyPage() {
   const router = useRouter();
@@ -169,6 +170,11 @@ export default function FamilyPage() {
                     <ChildAvatar child={c} />
                     <div className="min-w-0">
                       <h3 className="text-lg font-semibold text-stone-900">{c.first_name}</h3>
+                      <FutureGifts
+                        seconds={c.future_gifts_seconds}
+                        childName={c.first_name}
+                        variant="compact"
+                      />
                       {childrenOnCall.has(c.id) && (
                         <span className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-900">
                           <span

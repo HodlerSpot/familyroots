@@ -17,6 +17,7 @@ from ..services.entitlements import (
     premium_until,
 )
 from ..services.feed import emit
+from ..services.future_gifts import future_gifts_seconds_for_children
 from ..services.premium import handle_owner_departure, run_lazy_lifecycle
 from ..testnet.service import award
 from .children import child_out
@@ -180,11 +181,21 @@ def family_detail(family_id: uuid.UUID, db: DbSession, user: CurrentUser) -> Fam
     hide = is_supporter(membership.role)
     family = db.get(Family, family_id)
     active_members = [m for m in family.members if m.status == MemberStatus.active]
+    # Precompute Future Gifts once for all children (no N+1); skip for
+    # supporters, who must not see the estimate (it aggregates hidden content).
+    gifts = (
+        {}
+        if hide
+        else future_gifts_seconds_for_children(db, [c.id for c in family.children])
+    )
     return FamilyDetail(
         id=family.id,
         name=family.name,
         members=active_members,
-        children=[child_out(db, c, hide_birthdate=hide) for c in family.children],
+        children=[
+            child_out(db, c, hide_birthdate=hide, future_gifts_seconds=gifts.get(c.id))
+            for c in family.children
+        ],
         plan="premium" if plans_for_families(db, [family_id])[family_id] else "free",
         premium_until=premium_until(db, family_id),
         capabilities=family_capabilities(db, family_id),

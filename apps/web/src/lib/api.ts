@@ -46,6 +46,11 @@ export interface ChildOut {
   birthdate: string | null;
   avatar_media_id: string | null;
   avatar_content_type: string | null;
+  /** Estimated seconds of meaningful memories preserved for this child.
+   *  A non-negative integer for members with full child access; null for
+   *  supporters (the total aggregates content they can't see). May be
+   *  undefined at runtime on older payloads, so treat defensively. */
+  future_gifts_seconds: number | null;
 }
 
 export interface FamilyDetail {

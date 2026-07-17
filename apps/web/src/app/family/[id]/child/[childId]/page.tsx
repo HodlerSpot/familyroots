@@ -20,6 +20,7 @@ import { Button, Card, ErrorNote, Input, Label, ZoomableImage } from "@/componen
 import { CapsulesSection } from "@/components/capsules";
 import { FamilyFundCard, SupporterFundCard } from "@/components/fund";
 import { PremiumUpsellCard } from "@/components/premium/PremiumUpsell";
+import { FutureGifts } from "@/components/future-gifts";
 
 const TYPE_ICONS: Record<string, string> = {
   photo: "📷",
@@ -36,6 +37,7 @@ export default function ChildVaultPage() {
   const [items, setItems] = useState<VaultItemOut[] | null>(null);
   const [childName, setChildName] = useState("");
   const [avatarMediaId, setAvatarMediaId] = useState<string | null>(null);
+  const [futureGiftsSeconds, setFutureGiftsSeconds] = useState<number | null | undefined>(undefined);
   const [fund, setFund] = useState<FundOut | null>(null);
   const [goals, setGoals] = useState<GoalOut[]>([]);
   const [badges, setBadges] = useState<BadgeOut[]>([]);
@@ -51,6 +53,7 @@ export default function ChildVaultPage() {
       const child = family.children.find((c) => c.id === childId);
       setChildName(child?.first_name ?? "");
       setAvatarMediaId(child?.avatar_media_id ?? null);
+      setFutureGiftsSeconds(child?.future_gifts_seconds);
       setCapabilities(family.capabilities);
       const role = family.members.find((m) => m.user.id === me.id)?.role ?? null;
       setMyRole(role);
@@ -134,6 +137,11 @@ export default function ChildVaultPage() {
             <p className="text-stone-600">
               Every memory added here stays with {childName || "them"} for life.
             </p>
+            <FutureGifts
+              seconds={futureGiftsSeconds}
+              childName={childName}
+              variant="full"
+            />
           </div>
         </div>
       </div>

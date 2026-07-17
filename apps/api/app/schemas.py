@@ -113,6 +113,9 @@ class ChildOut(BaseModel):
     birthdate: date | None = None
     avatar_media_id: uuid.UUID | None = None
     avatar_content_type: str | None = None
+    # Estimated "meaningful time preserved" for this child (Future Gifts).
+    # Null for supporters — it aggregates content they can't see (capsules etc.).
+    future_gifts_seconds: int | None = None
 
     model_config = {"from_attributes": True}
 
