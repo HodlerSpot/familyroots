@@ -47,6 +47,9 @@ def _create_database(name: str) -> dict:
 def _run_migrations() -> dict:
     from alembic import command
     from alembic.config import Config
+    from sqlalchemy import text
+
+    from .db import Base, engine
 
     # Migrations ship as "migrations/" in the zip — the "alembic/" name would
     # collide with the alembic library package at /var/task/alembic
@@ -55,7 +58,21 @@ def _run_migrations() -> dict:
         "script_location", str(Path(__file__).resolve().parents[1] / "migrations")
     )
     command.upgrade(cfg, "head")
-    return {"status": "migrated"}
+
+    # Reconciliation backstop. create_all is idempotent (checkfirst=True): it
+    # creates only tables that are absent and never drops or alters an existing
+    # one. This self-heals a "stamped-but-not-fully-created" revision — e.g. a
+    # table that never landed while alembic_version still reads head, which
+    # leaves `upgrade head` a permanent no-op. Base.metadata is fully populated
+    # because `from .main import app` (module top) imports every model.
+    Base.metadata.create_all(bind=engine, checkfirst=True)
+
+    with engine.connect() as conn:
+        present = {
+            t: conn.execute(text("SELECT to_regclass(:t)"), {"t": t}).scalar() is not None
+            for t in ("notification_preferences", "push_subscriptions", "notifications")
+        }
+    return {"status": "migrated", "tables": present}
 
 
 def _set_role(email: str, role: str) -> dict:
