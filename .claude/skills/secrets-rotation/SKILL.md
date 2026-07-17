@@ -17,8 +17,10 @@ You are coaching the operator through a rotation. Some steps happen in third-par
 | `JWT_SECRET` | `futureroots/api` | generated locally | **Everyone logged out** (hard cut) |
 | `AGORA_SECRET` (app certificate) | `futureroots/api` | Agora Console | Brief video-call join impact |
 | DB master password | **RDS-managed secret** (`rds!db-...`) | Secrets Manager RotateSecret | **None** (app self-heals) |
+| `VAPID_PRIVATE_KEY` (Web Push) | `futureroots/api` | generated locally (`py_vapid`) | **All existing push subscriptions invalidated** — soft degradation, not an outage (bell/inbox/email untouched; users re-enable push on `/settings`) |
 | `TESTNET_ADMIN_TOKEN`, `X_CLIENT_SECRET` | `futureroots/api` | generated locally / X dev portal | Testnet only |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Amplify env (public, not a secret) | rolls together with the secret key pair | Web rebuild needed |
+| `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT` | plain CDK/Lambda env (public, not a secret) | rolls together with `VAPID_PRIVATE_KEY` above | **No web rebuild** — served live via `GET /me/notifications` |
 
 Not secrets (no rotation): Stripe price IDs, Agora App ID, SES from-address, `X_CLIENT_ID`, `WEB_BASE_URL`.
 
@@ -87,6 +89,26 @@ No `.env`, no push script, no cold starts. The password lives in the RDS-managed
 ### 6. Testnet admin token / X client secret (low urgency)
 - `TESTNET_ADMIN_TOKEN`: generate like the JWT secret → `.env` → universal flow. Update wherever the operator stores the operational copy.
 - `X_CLIENT_SECRET`: regenerate in the X developer portal → `.env` → universal flow. Testnet X-linking breaks until both sides match.
+
+### 7. VAPID private key (Web Push — soft degradation, not an outage)
+Unlike the other pairs above, VAPID has **no grace window**: the private and
+public halves are one mathematical keypair, so a rotation always mints a
+brand-new pair together. Every browser that already subscribed did so against
+the OLD public key; sending to it with the NEW private key gets rejected by
+the push provider (typically a 403), and the dispatcher's own dead-subscription
+pruning (`services/notify._deliver_push`) reads that as "subscription is
+gone" and deletes the row on the very next send. Tell the operator: **bell
+notifications, the inbox, and email are completely unaffected** — this only
+touches push, and affected users simply stop receiving it silently until they
+revisit `/settings` and re-subscribe (there is no proactive re-prompt).
+1. Generate a fresh keypair the same way as initial setup (see `docs/deploy.md`
+   "Web Push (VAPID)"), from `apps/api`:
+   ```powershell
+   uv run python -c "from py_vapid import Vapid02; from py_vapid.utils import b64urlencode; from cryptography.hazmat.primitives import serialization; v = Vapid02(); v.generate_keys(); priv = v.private_key.private_numbers().private_value.to_bytes(32, 'big'); pub = v.public_key.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint); print('VAPID_PRIVATE_KEY=' + b64urlencode(priv)); print('VAPID_PUBLIC_KEY=' + b64urlencode(pub))"
+   ```
+2. New private half → `infra/.env` as `VAPID_PRIVATE_KEY` → universal flow (`push_secrets.ps1` → cold starts on both Lambdas).
+3. New public half → `infra/.env` as `VAPID_PUBLIC_KEY` → `cdk deploy` (plain env, not a secret — no cold-start dependency, but it does need the CDK stack redeployed to take effect). **No web rebuild**: the public key is served live via `GET /me/notifications` (`push_public_key`), so the next `/settings` load enrolls against the new key automatically.
+4. Verify: subscribe a fresh browser, trigger any notify()-worthy event (e.g. seal a time capsule), confirm the push arrives; expect a burst of pruned `push_subscriptions` rows over the following day as stale (pre-rotation) subscriptions get cleaned up on their next send attempt — that is expected, not a bug.
 
 ## Full-rotation order (when rotating everything, e.g. suspected exposure)
 

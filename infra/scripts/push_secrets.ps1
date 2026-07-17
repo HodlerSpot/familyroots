@@ -51,6 +51,10 @@ $payload = [ordered]@{
     FUTUREROOTS_STRIPE_WEBHOOK_SECRET         = (Get-Optional "STRIPE_WEBHOOK_SECRET")
     FUTUREROOTS_STRIPE_CONNECT_WEBHOOK_SECRET = (Get-Optional "STRIPE_CONNECT_WEBHOOK_SECRET")
     FUTUREROOTS_AGORA_APP_CERTIFICATE         = (Get-Required "AGORA_SECRET")
+    # Web Push VAPID private key. Empty keeps push dark (subscribe 503s, no
+    # push sent). The matching public key + subject are plain Lambda env vars
+    # in the CDK stack, not secrets.
+    FUTUREROOTS_VAPID_PRIVATE_KEY             = (Get-Optional "VAPID_PRIVATE_KEY")
     # Testnet-harness secrets (inert on the main API Lambda: testnet_mode off).
     FUTUREROOTS_TESTNET_ADMIN_TOKEN           = (Get-Optional "TESTNET_ADMIN_TOKEN")
     FUTUREROOTS_X_CLIENT_SECRET               = (Get-Optional "X_CLIENT_SECRET")

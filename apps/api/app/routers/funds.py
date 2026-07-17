@@ -37,6 +37,7 @@ from ..models import (
 )
 from ..services.email import get_email_sender
 from ..services.email_templates import render_email
+from ..services.notify import notify_fund_activated
 from ..services.payments import (
     get_or_create_fund_account,
     get_payment_provider,
@@ -150,8 +151,12 @@ def fund_setup_status(
             requirements_due=False,
         )
     state = get_payment_provider().connect_account_state(account.stripe_account_id)
-    sync_fund_account_state(account, state)
+    became_active = sync_fund_account_state(account, state)
+    # First time the fund goes live: celebrate on the feed + tell the parents.
+    batch = notify_fund_activated(db, account) if became_active else None
     db.commit()
+    if batch is not None:
+        batch.deliver(db)
     return FundSetupStatusOut(
         account_status=account.account_status,
         payouts_enabled=account.payouts_enabled,

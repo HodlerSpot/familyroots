@@ -18,9 +18,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func
 
+from ..config import settings
 from ..deps import AdminUser, DbSession
 from ..models import (
     AdminAuditLog,
@@ -33,14 +34,24 @@ from ..models import (
     FundAccount,
     FundLedgerEntry,
     MemberStatus,
+    NotificationPreference,
     PremiumGrant,
+    PushSubscription,
     Tester,
     User,
     UserRole,
     utcnow,
 )
 from ..security import create_impersonation_token
+from ..services.email_templates import render_email
 from ..services.maintenance import prune_gift_intents as maintenance_prune_gift_intents
+from ..services.notifications import DEFAULT_PREFS
+from ..services.notify import (
+    EmailPayload,
+    NotificationKind,
+    all_active_user_recipients,
+    notify,
+)
 from ..services.payments import fund_balance_cents, reconcile_contribution, refund_contribution
 from ..services.premium import reconcile_family_premium
 
@@ -723,8 +734,8 @@ def reconcile(contribution_id: uuid.UUID, db: DbSession, admin: AdminUser) -> Mi
     )
     db.commit()
     if settlement is not None:
-        # Celebration emails only after the ledger write is committed.
-        settlement.send_emails()
+        # Celebration notifications only after the ledger write is committed.
+        settlement.deliver(db)
     return _mini_contribution(c, u, ch)
 
 
@@ -779,6 +790,126 @@ def prune_gift_intents(db: DbSession, admin: AdminUser) -> dict:
     _audit(db, admin, "premium_gift_intents_pruned", None, {"pruned": pruned})
     db.commit()
     return {"pruned": pruned}
+
+
+# --- platform-wide broadcast ---
+
+class BroadcastIn(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    body: str = Field(min_length=1, max_length=500)
+    url: str | None = Field(default=None, max_length=500)
+    include_email: bool = False
+    dry_run: bool = False
+
+    @field_validator("url")
+    @classmethod
+    def _url_is_same_site_path(cls, v: str | None) -> str | None:
+        # url is stored on Notification.url and concatenated onto web_base_url
+        # for the email CTA. Require a same-site RELATIVE path so it can't be an
+        # open redirect (https://evil.com, //evil.com, https://site@evil.com) or
+        # a javascript: sink. Must start with a single "/" and no "\".
+        if v is None:
+            return v
+        if not v.startswith("/") or v.startswith("//") or v.startswith("/\\"):
+            raise ValueError(
+                "url must be a site-relative path starting with a single '/'"
+            )
+        return v
+
+
+class BroadcastResult(BaseModel):
+    bell: int   # everyone non-disabled gets a bell row (incl. opted-out)
+    push: int   # people reached by push (push_announcements on + a device)
+    email: int  # people reached by email (0 unless include_email)
+    dry_run: bool
+
+
+def _ann_enabled(pref: NotificationPreference | None, attr: str) -> bool:
+    return getattr(pref, attr) if pref is not None else DEFAULT_PREFS[attr]
+
+
+def _broadcast_counts(db, recipients, include_email: bool) -> tuple[int, int, int]:
+    push_uids = {
+        u.id for u, pref in recipients if _ann_enabled(pref, "push_announcements")
+    }
+    push_count = 0
+    if push_uids:
+        push_count = (
+            db.query(func.count(func.distinct(PushSubscription.user_id)))
+            .filter(PushSubscription.user_id.in_(push_uids))
+            .scalar()
+        ) or 0
+    email_count = (
+        sum(1 for _, pref in recipients if _ann_enabled(pref, "email_announcements"))
+        if include_email
+        else 0
+    )
+    return len(recipients), push_count, email_count
+
+
+@router.post("/broadcast", response_model=BroadcastResult)
+def broadcast(payload: BroadcastIn, db: DbSession, admin: AdminUser) -> BroadcastResult:
+    """Send a platform-wide announcement. Every non-disabled user (supporters
+    included — no family data here) gets a bell row, even those opted out of
+    announcements. Push honors push_announcements; email is sent only when
+    include_email is set AND honors email_announcements. dry_run reports who it
+    would reach without sending anything. Always audit-logged."""
+    recipients = all_active_user_recipients(db)
+    bell_count, push_count, email_count = _broadcast_counts(
+        db, recipients, payload.include_email
+    )
+    _audit(
+        db, admin, "broadcast", None,
+        {
+            "title": payload.title,
+            "include_email": payload.include_email,
+            "dry_run": payload.dry_run,
+            "bell": bell_count, "push": push_count, "email": email_count,
+        },
+    )
+    if payload.dry_run:
+        db.commit()  # record the dry-run check; nothing sent
+        return BroadcastResult(
+            bell=bell_count, push=push_count, email=email_count, dry_run=True,
+        )
+
+    url = payload.url or "/"
+    email_builder = None
+    if payload.include_email:
+        title, body, link = payload.title, payload.body, url
+
+        def email_builder(_recipient) -> EmailPayload:  # noqa: F811
+            return EmailPayload(
+                subject=title,
+                body=(
+                    f"Hello,\n\n{body}\n\n"
+                    f"Open FutureRoots: {settings.web_base_url}{link}\n\n"
+                    f"With warmth,\nThe FutureRoots team"
+                ),
+                html=render_email(
+                    preheader=body[:120],
+                    greeting="Hello,",
+                    paragraphs=[body],
+                    cta_label="Open FutureRoots",
+                    cta_url=f"{settings.web_base_url}{link}",
+                ),
+            )
+
+    batch = notify(
+        db,
+        kind=NotificationKind.announcement,
+        recipients=recipients,
+        title=payload.title,
+        body=payload.body,
+        url=url,
+        family_id=None,
+        email_builder=email_builder,
+    )
+    db.commit()
+    batch.deliver(db)
+    return BroadcastResult(
+        bell=bell_count, push=push_count, email=email_count, dry_run=False,
+    )
 
 
 # --- bug reports ---

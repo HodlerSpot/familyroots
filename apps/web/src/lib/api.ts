@@ -82,6 +82,7 @@ export type FeedEventType =
   | "milestone"
   | "achievement"
   | "contribution"
+  | "fund_activated"
   | "memory_added"
   | "capsule_created"
   | "capsule_released"
@@ -191,11 +192,65 @@ export interface CapsuleOut {
   can_vote: boolean;
 }
 
+/** The kinds of family moments FutureRoots can notify about. Each kind has an
+ * email and a web-push toggle (20 booleans total). */
+export type NotificationKind =
+  | "call_live"
+  | "contribution"
+  | "fund_activated"
+  | "capsule_sealed"
+  | "capsule_released"
+  | "new_member"
+  | "milestone"
+  | "memory"
+  | "legacy"
+  | "announcement";
+
 export interface NotificationPrefs {
   email_new_member: boolean;
   email_milestone: boolean;
   email_memory: boolean;
   email_legacy: boolean;
+  email_call_live: boolean;
+  email_contribution: boolean;
+  email_fund_activated: boolean;
+  email_capsule_sealed: boolean;
+  email_capsule_released: boolean;
+  email_announcements: boolean;
+  push_new_member: boolean;
+  push_milestone: boolean;
+  push_memory: boolean;
+  push_legacy: boolean;
+  push_call_live: boolean;
+  push_contribution: boolean;
+  push_fund_activated: boolean;
+  push_capsule_sealed: boolean;
+  push_capsule_released: boolean;
+  push_announcements: boolean;
+}
+
+/** GET /me/notifications also carries the server's web-push public key.
+ * Empty/absent means push is not configured (feature dark) — hide the
+ * browser-notifications card entirely. */
+export interface NotificationSettings extends NotificationPrefs {
+  push_public_key?: string | null;
+}
+
+/** One row in the in-app notification bell. */
+export interface InboxItemOut {
+  id: string;
+  kind: string;
+  title: string;
+  body: string | null;
+  url: string | null;
+  read_at: string | null;
+  created_at: string;
+}
+
+/** GET /me/inbox returns a page, not a bare array. */
+export interface InboxPage {
+  items: InboxItemOut[];
+  next_cursor: string | null;
 }
 
 export interface MyContribution {
@@ -563,12 +618,36 @@ export const api = {
     request<void>(`/comments/${commentId}`, { method: "DELETE" }),
 
   // Notification preferences (profile)
-  notificationPrefs: () => request<NotificationPrefs>("/me/notifications"),
-  setNotificationPrefs: (prefs: NotificationPrefs) =>
-    request<NotificationPrefs>("/me/notifications", {
+  notificationPrefs: () => request<NotificationSettings>("/me/notifications"),
+  setNotificationPrefs: (prefs: NotificationPrefs) => {
+    // The PUT schema is the flat 20-boolean matrix; never echo back the
+    // read-only push_public_key that GET piggybacks.
+    const { push_public_key: _readOnly, ...body } = prefs as NotificationSettings;
+    void _readOnly;
+    return request<NotificationSettings>("/me/notifications", {
       method: "PUT",
-      body: JSON.stringify(prefs),
+      body: JSON.stringify(body),
+    });
+  },
+
+  // Web push enrollment for THIS browser (503 when push isn't configured)
+  subscribePush: (sub: { endpoint: string; p256dh: string; auth: string; ua_label: string }) =>
+    request<void>("/me/push-subscriptions", {
+      method: "POST",
+      body: JSON.stringify(sub),
     }),
+  unsubscribePush: (endpoint: string) =>
+    request<void>("/me/push-subscriptions/unsubscribe", {
+      method: "POST",
+      body: JSON.stringify({ endpoint }),
+    }),
+
+  // In-app notification bell (inbox)
+  inbox: (limit = 20, cursor?: string) =>
+    request<InboxPage>(`/me/inbox${qs({ limit: String(limit), cursor })}`),
+  inboxUnreadCount: () => request<{ count: number }>("/me/inbox/unread-count"),
+  inboxReadAll: () => request<void>("/me/inbox/read-all", { method: "POST" }),
+  inboxMarkRead: (id: string) => request<void>(`/me/inbox/${id}/read`, { method: "POST" }),
 
   // A member's own contribution history
   myContributions: () => request<MyContribution[]>("/me/contributions"),
@@ -898,7 +977,27 @@ export const adminApi = {
     ),
   audit: (action?: string, since?: string, until?: string) =>
     request<Page<AdminAuditRow>>(`/admin/audit${qs({ action, since, until })}`),
+  /** Platform-wide announcement. dry_run returns reach counts without sending. */
+  broadcast: (payload: {
+    title: string;
+    body: string;
+    url?: string;
+    include_email: boolean;
+    dry_run: boolean;
+  }) => request<AdminBroadcastResult>("/admin/broadcast", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
 };
+
+/** Reach/delivery counts from POST /admin/broadcast. Fields are optional
+ * defensively — treat missing as 0 when rendering. */
+export interface AdminBroadcastResult {
+  dry_run?: boolean;
+  bell?: number;
+  push?: number;
+  email?: number;
+}
 
 // --- impersonation ("view as") session management ---
 

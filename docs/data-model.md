@@ -99,13 +99,20 @@ users ──< family_members >── families ──< children
 
 ### Notifications
 
-**notification_preferences** (per-user on/off switches; no message content or history)
-- `id`, `user_id`, per-event boolean columns (see `NotificationPreference` in `models.py`)
+**notification_preferences** (per-user on/off switches, one row per user, global across all of a user's families; no message content)
+- `id`, `user_id` (unique), 20 boolean columns — `{email,push}_{new_member,milestone,memory,legacy,call_live,contribution,fund_activated,capsule_sealed,capsule_released,announcements}` (see `NotificationPreference` in `models.py`). A missing row falls back to `DEFAULT_PREFS`.
 
-> Note: an earlier draft of this doc described a `notifications` history table
-> (`payload`/`sent_at`/`read_at`). That table was never built — email delivery
-> is fire-and-forget through the SES abstraction, and the only per-send record
-> is `premium_email_log` (dedupe keys, no content). Corrected 2026-07-16.
+**push_subscriptions** — one row per browser/device Web Push registration
+- `id`, `user_id`, `endpoint` (unique — the provider's push URL), `p256dh`, `auth` (client encryption keys), `ua_label` (nullable), `created_at`
+- re-subscribing an existing `endpoint` reassigns it to the current user (shared-device handoff); dead subscriptions (404/410/403 on send) are pruned by the dispatcher; capped per user, oldest evicted
+
+**notifications** — the in-app "bell", one row per recipient per notify()-worthy event
+- `id`, `user_id`, `kind` (one of ten `NotificationKind` values), `title`, `body`, `url` (nullable), `family_id` (nullable), `read_at` (nullable), `created_at`
+- **always written**, regardless of preferences — prefs gate only email/push, never the bell — retained 90 days by the daily maintenance sweep
+
+(Supersedes an earlier note here that this table was never built — it now
+exists as of the expanded notification system; see `docs/architecture.md`'s
+Notifications section and `app/services/notify.py`.)
 
 ## Access rules (enforced in the API layer)
 

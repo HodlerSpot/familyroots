@@ -46,6 +46,13 @@ from ..schemas import (
 from ..services.agora.tokens import mint_rtc_token
 from ..services.entitlements import Capability, require_capability
 from ..services.maintenance import call_is_abandoned
+from ..services.notify import (
+    EmailPayload,
+    NotificationKind,
+    family_recipients,
+    notify,
+)
+from ..services.email_templates import render_email
 
 router = APIRouter(prefix="/families/{family_id}/call", tags=["call"])
 
@@ -301,6 +308,53 @@ def _gate_premium(db, family_id: uuid.UUID, user: User) -> None:
     require_capability(db, family_id, Capability.family_video_call)
 
 
+def _notify_call_started(db, family_id: uuid.UUID, starter: User):
+    """Stage the call_live notification for the family (excl. the starter,
+    supporters excluded). Bell + push always/by-pref; email is opt-in and
+    honest that it may already be over (copy deck §2.2)."""
+    recipients = family_recipients(db, family_id, exclude_user_id=starter.id)
+    family_url = f"/family/{family_id}"
+
+    def email_builder(user: User) -> EmailPayload:
+        return EmailPayload(
+            subject=f"{starter.display_name} started a family call",
+            body=(
+                f"Hi {user.display_name},\n\n"
+                f"{starter.display_name} started a family video call a little while "
+                f"ago. By the time you read this, it may already be over, but if the "
+                f"family's still gathered, there's room for you too.\n\n"
+                f"Either way, it's always lovely when everyone finds a moment to "
+                f"connect.\n\n"
+                f"Join if it's still going: {settings.web_base_url}{family_url}\n\n"
+                f"With warmth,\nThe FutureRoots team"
+            ),
+            html=render_email(
+                preheader="The family gathered on a call. It might still be going.",
+                greeting=f"Hi {user.display_name},",
+                paragraphs=[
+                    f"{starter.display_name} started a family video call a little "
+                    f"while ago. By the time you read this, it may already be over, "
+                    f"but if the family's still gathered, there's room for you too.",
+                    "Either way, it's always lovely when everyone finds a moment to "
+                    "connect.",
+                ],
+                cta_label="Join if it's still going",
+                cta_url=f"{settings.web_base_url}{family_url}",
+            ),
+        )
+
+    return notify(
+        db,
+        kind=NotificationKind.call_live,
+        recipients=recipients,
+        title=f"{starter.display_name} started a family call",
+        body="Tap in now. The family's together and would love to see you.",
+        url=family_url,
+        family_id=family_id,
+        email_builder=email_builder,
+    )
+
+
 # --- endpoints ---
 
 @router.post("/join", response_model=CallJoinOut)
@@ -315,7 +369,12 @@ def join_call(
     token, expires_at = mint_rtc_token(
         call.channel_name, participant.agora_uid, settings.agora_call_token_ttl_seconds
     )
+    # A brand-new call rings the family (bell + push + opt-in email). Calls
+    # deliberately emit NO feed event; this notification is the only signal.
+    batch = _notify_call_started(db, family_id, user) if created else None
     db.commit()
+    if batch is not None:
+        batch.deliver(db)
     response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
     return CallJoinOut(
         app_id=settings.agora_app_id,

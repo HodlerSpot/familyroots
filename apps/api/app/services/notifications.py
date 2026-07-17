@@ -1,56 +1,42 @@
-"""Per-member email fan-out, gated by each recipient's notification switches.
+"""Notification-preference defaults.
 
-A missing NotificationPreference row means the product defaults below (new
-member + milestone on; memory + legacy off). notify_members is the one place
-domain code fans an email out to a family, so the gating stays consistent.
+A missing NotificationPreference row means the product defaults below. This is
+the one source of truth for "what a user who has never touched their settings
+gets"; it mirrors the column defaults on NotificationPreference (which only
+apply on flush) and is consumed by services.notify (gating) and routers.me
+(the settings screen).
+
+The historical per-family email fan-out (notify_members) has been retired: all
+family notifications now flow through services.notify.notify(), which writes an
+always-on bell row plus pref-gated email and web push. See services/notify.py
+for the taxonomy and dispatch rules.
 """
 
-from sqlalchemy.orm import Session
-
-from ..models import FamilyMember, FamilyRole, MemberStatus, NotificationPreference, User
-from .email import get_email_sender
-
-# Defaults for a user who has never touched their preferences. Mirrors the
-# column defaults on NotificationPreference (which only apply on flush).
+# Defaults for a user who has never touched their preferences. 20 switches:
+# ten kinds across Email + Push. Keep in lockstep with the column defaults on
+# models.NotificationPreference.
 DEFAULT_PREFS = {
+    # original four email kinds (values unchanged)
     "email_new_member": True,
     "email_milestone": True,
     "email_memory": False,
     "email_legacy": False,
+    # push mirrors of the original four (mirror the email defaults)
+    "push_new_member": True,
+    "push_milestone": True,
+    "push_memory": False,
+    "push_legacy": False,
+    # six new kinds, both channels
+    "email_call_live": False,
+    "push_call_live": True,
+    "email_contribution": True,
+    "push_contribution": True,
+    "email_fund_activated": True,
+    "push_fund_activated": True,
+    "email_capsule_sealed": False,
+    "push_capsule_sealed": True,
+    "email_capsule_released": True,
+    "push_capsule_released": True,
+    "email_announcements": True,
+    "push_announcements": True,
 }
-
-
-def notify_members(
-    db: Session,
-    family_id,
-    pref_attr: str,
-    *,
-    subject: str,
-    body: str,
-    html: str | None = None,
-    exclude_user_id=None,
-) -> None:
-    """Email every active member of the family who has `pref_attr` enabled.
-
-    Supporters are deliberately never emailed: they are non-family adults with a
-    deliberately narrow, in-app-only view (shared memories/milestones). Every
-    fan-out here carries family content they must not receive out of band.
-    """
-    query = (
-        db.query(User, NotificationPreference)
-        .join(FamilyMember, FamilyMember.user_id == User.id)
-        .outerjoin(NotificationPreference, NotificationPreference.user_id == User.id)
-        .filter(
-            FamilyMember.family_id == family_id,
-            FamilyMember.status == MemberStatus.active,
-            FamilyMember.role != FamilyRole.supporter,
-        )
-    )
-    if exclude_user_id is not None:
-        query = query.filter(User.id != exclude_user_id)
-
-    sender = get_email_sender()
-    for user, pref in query.all():
-        enabled = getattr(pref, pref_attr) if pref is not None else DEFAULT_PREFS[pref_attr]
-        if enabled:
-            sender.send(to=user.email, subject=subject, body=body, html=html)

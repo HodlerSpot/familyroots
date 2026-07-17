@@ -9,6 +9,7 @@ export const metadata: Metadata = {
   title: "FutureRoots: Building Generational Wealth & Memories",
   description:
     "A private space where your family shares memories, celebrates milestones, and builds a future together.",
+  manifest: "/manifest.json",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

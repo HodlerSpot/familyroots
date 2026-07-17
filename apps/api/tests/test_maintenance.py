@@ -114,6 +114,7 @@ def test_maintenance_sweeps_everything_and_is_idempotent(client):
         "gift_intents_pruned": 1,
         "premium_email_log_pruned": 1,
         "fund_nudges_pruned": 1,
+        "notifications_pruned": 0,
         "abandoned_calls_ended": 1,
         "call_participants_pruned": 1,   # the 100-day-old call's history
         "call_child_presence_pruned": 1,
@@ -150,6 +151,7 @@ def test_maintenance_sweeps_everything_and_is_idempotent(client):
             "gift_intents_pruned": 0,
             "premium_email_log_pruned": 0,
             "fund_nudges_pruned": 0,
+            "notifications_pruned": 0,
             "abandoned_calls_ended": 0,
             "call_participants_pruned": 0,
             "call_child_presence_pruned": 0,

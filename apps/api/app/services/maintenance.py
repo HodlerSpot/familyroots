@@ -32,6 +32,7 @@ from ..models import (
     CallStatus,
     FamilyCall,
     FundNudge,
+    Notification,
     PremiumEmailLog,
     PremiumGiftIntent,
     utcnow,
@@ -43,6 +44,9 @@ GIFT_INTENT_RETENTION = timedelta(days=30)
 PREMIUM_EMAIL_LOG_RETENTION = timedelta(days=365)
 FUND_NUDGE_RETENTION = timedelta(days=30)
 CALL_HISTORY_RETENTION = timedelta(days=90)
+# In-app bell notifications are transient — the bell shows recent activity, not
+# an archive. Ninety days is plenty of scrollback.
+NOTIFICATION_RETENTION = timedelta(days=90)
 # An active call whose freshest heartbeat is older than this is abandoned.
 # Presence heartbeats arrive every few seconds (agora_presence_ttl_seconds is
 # 30s), so 15 minutes of silence means every participant is long gone.
@@ -130,6 +134,13 @@ def run_maintenance(db: Session) -> dict[str, int]:
         .delete(synchronize_session=False)
     )
 
+    # In-app bell notifications older than 90 days (transient activity feed).
+    notifications_pruned = (
+        db.query(Notification)
+        .filter(Notification.created_at < now - NOTIFICATION_RETENTION)
+        .delete(synchronize_session=False)
+    )
+
     # End abandoned calls BEFORE the history prune so their retention clock
     # starts at today's ended_at.
     abandoned_calls = end_abandoned_calls(db)
@@ -158,6 +169,7 @@ def run_maintenance(db: Session) -> dict[str, int]:
         "gift_intents_pruned": gift_intents,
         "premium_email_log_pruned": email_log,
         "fund_nudges_pruned": fund_nudges,
+        "notifications_pruned": notifications_pruned,
         "abandoned_calls_ended": abandoned_calls,
         "call_participants_pruned": participants,
         "call_child_presence_pruned": presence,

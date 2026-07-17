@@ -665,22 +665,28 @@ def get_or_create_fund_account(db: Session, child_id: uuid.UUID, currency: str) 
     return account
 
 
-def sync_fund_account_state(fund_account: FundAccount, state: ConnectAccountState) -> None:
+def sync_fund_account_state(fund_account: FundAccount, state: ConnectAccountState) -> bool:
     """Fold a live ConnectAccountState into our cached columns. The cache is
     informational only — money always moves against Stripe's live state.
     Active means gifts can actually reach the child: the transfers capability
-    is live AND payouts are enabled."""
+    is live AND payouts are enabled.
+
+    Returns True on the transition INTO active (from any non-active state), so
+    callers can fire the one-time fund_activated feed event + notification."""
+    became_active = False
     fund_account.charges_enabled = state.charges_enabled
     fund_account.payouts_enabled = state.payouts_enabled
     fund_account.requirements_due = state.requirements_due
     if state.transfers_active and state.payouts_enabled:
         if fund_account.account_status != FundAccountStatus.active:
             fund_account.activated_at = utcnow()
+            became_active = True
         fund_account.account_status = FundAccountStatus.active
     elif not state.details_submitted:
         fund_account.account_status = FundAccountStatus.onboarding
     else:
         fund_account.account_status = FundAccountStatus.restricted
+    return became_active
 
 
 def fund_balance_cents(db: Session, account_id: uuid.UUID) -> int:
@@ -744,7 +750,7 @@ def reconcile_contribution(
     (for cases where a webhook was missed or the payment was cancelled). Only
     acts on pending records. Returns (resulting status string, the pending
     settlement notifications if this call settled — the caller must commit
-    first, then call settlement.send_emails())."""
+    first, then call settlement.deliver(db))."""
     if contribution.status != ContributionStatus.pending:
         return contribution.status.value, None
     provider = get_payment_provider()
@@ -783,32 +789,35 @@ def reconcile_contribution(
 
 @dataclass(frozen=True)
 class ContributionSettlement:
-    """A freshly settled contribution plus its NOT-yet-sent celebration
-    emails. The ledger/feed writes sit in the caller's open transaction;
-    call send_emails() only AFTER that transaction commits. A settle that
-    loses a concurrent race never commits, so it never emails — this is what
-    keeps the celebration email exactly-once when Stripe delivers the same
-    payment_intent.succeeded twice at the same instant (the ledger stays
-    single via the unique constraint either way)."""
+    """A freshly settled contribution plus its NOT-yet-delivered
+    notifications (bell rows already staged in the caller's transaction;
+    email + push still to send). The ledger/feed/bell writes sit in the
+    caller's open transaction; call deliver() only AFTER that transaction
+    commits. A settle that loses a concurrent race never commits, so it
+    delivers nothing — this is what keeps the celebration exactly-once when
+    Stripe delivers the same payment_intent.succeeded twice at the same
+    instant (the ledger and the bell rows both roll back with the loser)."""
 
     entry: FundLedgerEntry
-    emails: tuple[dict, ...]  # fully rendered EmailSender.send(**kwargs) payloads
+    batch: "NotificationBatch"
 
-    def send_emails(self) -> None:
-        sender = get_email_sender()
-        for email in self.emails:
-            sender.send(**email)
+    def deliver(self, db: Session) -> None:
+        self.batch.deliver(db)
 
 
 def settle_contribution(db: Session, contribution: Contribution) -> ContributionSettlement:
-    """THE settlement path: ledger entry + feed celebration, with the parent
-    celebration emails RETURNED (not sent) so callers send them only after
-    commit. Call only after payment success is verified (local confirm or
-    signed Stripe webhook). Idempotent at the DB level via the unique
-    constraint on fund_ledger_entries.source_contribution_id; callers must
-    also check status to avoid duplicate feed events, and must catch the
+    """THE settlement path: ledger entry + feed celebration + notifications,
+    with the notification batch RETURNED (not delivered) so callers deliver it
+    only after commit. Call only after payment success is verified (local
+    confirm or signed Stripe webhook). Idempotent at the DB level via the
+    unique constraint on fund_ledger_entries.source_contribution_id; callers
+    must also check status to avoid duplicate feed events, and must catch the
     IntegrityError a lost concurrent race raises at commit (replay: ack,
-    send nothing)."""
+    deliver nothing)."""
+    # Imported here to avoid a service-layer import cycle (notify imports feed;
+    # payments imports notify only at settle time).
+    from .notify import EmailPayload, NotificationKind, family_recipients, notify
+
     contribution.status = ContributionStatus.succeeded
     account = get_or_create_fund_account(db, contribution.child_id, contribution.currency)
     entry = FundLedgerEntry(
@@ -839,24 +848,21 @@ def settle_contribution(db: Session, contribution: Contribution) -> Contribution
         },
     )
 
-    parents = (
-        db.query(User)
-        .join(FamilyMember, FamilyMember.user_id == User.id)
-        .filter(
-            FamilyMember.family_id == child.family_id,
-            FamilyMember.status == MemberStatus.active,
-            FamilyMember.role.in_([FamilyRole.parent, FamilyRole.guardian]),
-            User.id != contributor.id,
-        )
-        .all()
+    recipients = family_recipients(
+        db,
+        child.family_id,
+        roles=[FamilyRole.parent, FamilyRole.guardian],
+        exclude_user_id=contributor.id,
     )
     amount = f"${contribution.amount_cents / 100:,.2f}"
     family_url = f"{settings.web_base_url}/family/{child.family_id}"
-    emails = tuple(
-        {
-            "to": parent.email,
-            "subject": f"{contributor.display_name} just added to {child.first_name}'s future",
-            "body": (
+
+    def email_builder(parent: User) -> EmailPayload:
+        # Existing contribution-celebration copy, byte-for-byte (per copy deck
+        # §2.4: keep unchanged). Now delivered through the unified batch.
+        return EmailPayload(
+            subject=f"{contributor.display_name} just added to {child.first_name}'s future",
+            body=(
                 f"Hi {parent.display_name},\n\n"
                 f"{contributor.display_name} contributed {amount} to {child.first_name}'s "
                 f"future fund"
@@ -868,7 +874,7 @@ def settle_contribution(db: Session, contribution: Contribution) -> Contribution
                 + f"\nSee it here: {family_url}\n\n"
                 f"With warmth,\nThe FutureRoots team"
             ),
-            "html": render_email(
+            html=render_email(
                 preheader=(
                     f"{contributor.display_name} added {amount} to "
                     f"{child.first_name}'s future fund."
@@ -883,7 +889,18 @@ def settle_contribution(db: Session, contribution: Contribution) -> Contribution
                 cta_label="See it on your family feed",
                 cta_url=family_url,
             ),
-        }
-        for parent in parents
+        )
+
+    # Bell/push carry NO amount (privacy: contributions can surface on a locked
+    # screen — see copy deck). The email keeps the full celebration copy.
+    batch = notify(
+        db,
+        kind=NotificationKind.contribution,
+        recipients=recipients,
+        title=f"{contributor.display_name} just gave to {child.first_name}'s Future Fund",
+        body=f"Every gift adds up to something wonderful for {child.first_name}.",
+        url=f"/family/{child.family_id}/child/{child.id}",
+        family_id=child.family_id,
+        email_builder=email_builder,
     )
-    return ContributionSettlement(entry=entry, emails=emails)
+    return ContributionSettlement(entry=entry, batch=batch)

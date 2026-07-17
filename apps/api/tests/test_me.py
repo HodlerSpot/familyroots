@@ -1,34 +1,44 @@
 """Notification preferences (email discipline) and the caller's own
 contribution history."""
 
+from app.services.notifications import DEFAULT_PREFS
+
 from .conftest import add_child, create_family, setup_fund, signup
 from .test_goals import make_grandparent
+
+
+def prefs(**overrides) -> dict:
+    """A full 20-field preferences payload for PUT /me/notifications, starting
+    from the product defaults."""
+    payload = dict(DEFAULT_PREFS)
+    payload.update(overrides)
+    return payload
 
 
 def test_notification_defaults(client):
     parent = signup(client, "parent@example.com")
     r = client.get("/me/notifications", headers=parent)
     assert r.status_code == 200
-    assert r.json() == {
-        "email_new_member": True,
-        "email_milestone": True,
-        "email_memory": False,
-        "email_legacy": False,
-    }
+    body = r.json()
+    # Defaults + the read-only VAPID public key ("" ⇒ push dark in dev/tests).
+    assert body == {**DEFAULT_PREFS, "push_public_key": ""}
 
 
 def test_notification_prefs_persist(client):
     parent = signup(client, "parent@example.com")
-    prefs = {
-        "email_new_member": False,
-        "email_milestone": False,
-        "email_memory": True,
-        "email_legacy": True,
-    }
-    r = client.put("/me/notifications", json=prefs, headers=parent)
+    payload = prefs(
+        email_new_member=False,
+        email_milestone=False,
+        email_memory=True,
+        email_legacy=True,
+        push_call_live=False,
+        push_announcements=False,
+    )
+    r = client.put("/me/notifications", json=payload, headers=parent)
     assert r.status_code == 200
-    assert r.json() == prefs
-    assert client.get("/me/notifications", headers=parent).json() == prefs
+    expected = {**payload, "push_public_key": ""}
+    assert r.json() == expected
+    assert client.get("/me/notifications", headers=parent).json() == expected
 
 
 def test_milestone_email_respects_opt_out(client, tmp_path, monkeypatch):
@@ -42,16 +52,7 @@ def test_milestone_email_respects_opt_out(client, tmp_path, monkeypatch):
     child_id = add_child(client, parent, family_id, "Emma")
     gran = make_grandparent(client, parent, family_id, name="Gran")
     # Gran opts out of milestone emails
-    client.put(
-        "/me/notifications",
-        json={
-            "email_new_member": True,
-            "email_milestone": False,
-            "email_memory": False,
-            "email_legacy": False,
-        },
-        headers=gran,
-    )
+    client.put("/me/notifications", json=prefs(email_milestone=False), headers=gran)
     for f in outbox.glob("*.txt"):
         f.unlink()
 
@@ -73,16 +74,7 @@ def test_new_memory_email_opt_in(client, tmp_path, monkeypatch):
     child_id = add_child(client, parent, family_id, "Emma")
     gran = make_grandparent(client, parent, family_id, name="Gran")
     # Memory emails are off by default; Gran opts in
-    client.put(
-        "/me/notifications",
-        json={
-            "email_new_member": True,
-            "email_milestone": True,
-            "email_memory": True,
-            "email_legacy": False,
-        },
-        headers=gran,
-    )
+    client.put("/me/notifications", json=prefs(email_memory=True), headers=gran)
     for f in outbox.glob("*.txt"):
         f.unlink()
 

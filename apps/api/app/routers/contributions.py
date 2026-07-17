@@ -111,9 +111,9 @@ def confirm_contribution(
         # the serialized replay gets above.
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "This gift already went through. Thank you!")
-    # Celebration emails go out only after the ledger write is committed —
-    # never inside the transaction (double-send race, see settle_contribution).
-    settlement.send_emails()
+    # Celebration notifications go out only after the ledger write is committed
+    # — never inside the transaction (double-send race, see settle_contribution).
+    settlement.deliver(db)
     return ContributionOut.model_validate(contribution)
 
 

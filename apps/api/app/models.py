@@ -90,6 +90,9 @@ class FeedEventType(str, enum.Enum):
     member_left = "member_left"
     premium_activated = "premium_activated"
     premium_gifted = "premium_gifted"
+    # A child's real Future Fund finished onboarding and can now receive gifts.
+    # Non-native enum (VARCHAR column), so this new value needs no DB migration.
+    fund_activated = "fund_activated"
 
 
 class SubscriptionPlan(str, enum.Enum):
@@ -623,18 +626,90 @@ class Reaction(Base):
 
 
 class NotificationPreference(Base):
-    """Per-user email notification switches. A missing row means defaults
-    (milestone + new-member on, memory + legacy off)."""
+    """Per-user notification switches — one row per user, global across their
+    families. A missing row means services.notifications.DEFAULT_PREFS.
+
+    The full matrix is ten kinds across two channels (Email + Push). Bell
+    (in-app) rows are ALWAYS written and never gated here — these switches
+    govern only the interrupting channels (email + web push). The four
+    original email_* columns keep their names and historical defaults; the
+    push_* mirrors and the six new kinds were added for the expanded system.
+
+    Defaults: new-kind push on; new-kind email on except call_live and
+    capsule_sealed (stale / low-urgency); legacy-kind push mirrors the legacy
+    email defaults (new_member/milestone on, memory/legacy off)."""
 
     __tablename__ = "notification_preferences"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+    # --- original four (names + values unchanged; no data migration) ---
     email_new_member: Mapped[bool] = mapped_column(default=True)
     email_milestone: Mapped[bool] = mapped_column(default=True)
     email_memory: Mapped[bool] = mapped_column(default=False)
     email_legacy: Mapped[bool] = mapped_column(default=False)
+    # --- push mirrors of the original four ---
+    push_new_member: Mapped[bool] = mapped_column(default=True)
+    push_milestone: Mapped[bool] = mapped_column(default=True)
+    push_memory: Mapped[bool] = mapped_column(default=False)
+    push_legacy: Mapped[bool] = mapped_column(default=False)
+    # --- six new kinds, both channels ---
+    email_call_live: Mapped[bool] = mapped_column(default=False)  # email is late; off by default
+    push_call_live: Mapped[bool] = mapped_column(default=True)
+    email_contribution: Mapped[bool] = mapped_column(default=True)
+    push_contribution: Mapped[bool] = mapped_column(default=True)
+    email_fund_activated: Mapped[bool] = mapped_column(default=True)
+    push_fund_activated: Mapped[bool] = mapped_column(default=True)
+    email_capsule_sealed: Mapped[bool] = mapped_column(default=False)  # gentle FYI; off by default
+    push_capsule_sealed: Mapped[bool] = mapped_column(default=True)
+    email_capsule_released: Mapped[bool] = mapped_column(default=True)
+    push_capsule_released: Mapped[bool] = mapped_column(default=True)
+    email_announcements: Mapped[bool] = mapped_column(default=True)
+    push_announcements: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PushSubscription(Base):
+    """A single browser/device's Web Push subscription for a user. The endpoint
+    is the provider push URL (unique across the table); p256dh/auth are the
+    client's encryption keys. On re-subscribe the same endpoint is reassigned
+    to whoever holds it now (shared-device handoff). Dead subscriptions
+    (404/410/403 on send) are pruned by the dispatcher."""
+
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    endpoint: Mapped[str] = mapped_column(String(500), unique=True, index=True)
+    p256dh: Mapped[str] = mapped_column(String(255))
+    auth: Mapped[str] = mapped_column(String(255))
+    ua_label: Mapped[str | None] = mapped_column(String(200), nullable=True)  # "Chrome on Pixel"
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Notification(Base):
+    """An in-app "bell" notification for one user. ALWAYS written when a
+    notify()-worthy action fires (in the same transaction as the domain
+    change), regardless of the user's email/push switches — the bell is the
+    durable record; prefs only govern the interrupting channels. Retained 90
+    days by the daily maintenance sweep."""
+
+    __tablename__ = "notifications"
+    __table_args__ = (Index("ix_notifications_user_created", "user_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(30))  # NotificationKind value
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(String(500))
+    url: Mapped[str | None] = mapped_column(String(500), nullable=True)  # in-app tap target
+    family_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("families.id"), nullable=True
+    )
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
 
 
 class PasswordReset(Base):

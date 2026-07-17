@@ -16,9 +16,14 @@ New-Item -ItemType Directory -Force $stage | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "uv export failed" }
 
 # 2. Install Linux wheels into the stage dir
-# Lambda python3.13 runs on AL2023 (glibc 2.34) -> manylinux_2_28 wheels are fine
+# Lambda python3.13 runs on AL2023 (glibc 2.34) -> manylinux_2_28 wheels are fine.
+# http-ece (a pywebpush dependency) is pure Python and ships sdist-only, so it is
+# built from source (--no-binary): the resulting wheel is platform-independent,
+# so it stays correct when cross-targeting manylinux from Windows. Everything
+# else stays binary-only so no C extension is ever compiled cross-platform.
 & $uv pip install -r build\requirements.txt --target $stage `
-    --python-platform x86_64-manylinux_2_28 --python-version 3.13 --only-binary :all:
+    --python-platform x86_64-manylinux_2_28 --python-version 3.13 `
+    --only-binary :all: --no-binary http-ece
 if ($LASTEXITCODE -ne 0) { throw "uv pip install failed" }
 
 # 3. Application code + migrations ("migrations" in the zip: the "alembic"

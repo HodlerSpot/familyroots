@@ -185,6 +185,13 @@ export class FutureRootsStack extends cdk.Stack {
           process.env.STRIPE_PRICE_GIFT_YEAR ?? "",
         // Public app id (shipped to clients); the certificate is in the secret.
         FUTUREROOTS_AGORA_APP_ID: "c58c8181f4204f07bc1a36d93cae5514",
+        // Web Push (VAPID). Public key + subject are NOT secret — they ship to
+        // browsers (served via GET /me/notifications, so no Amplify rebuild).
+        // The private key lives in the futureroots/api secret blob
+        // (push_secrets.ps1). Empty public key ?? "" keeps push dark by default.
+        FUTUREROOTS_VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY ?? "",
+        FUTUREROOTS_VAPID_SUBJECT:
+          process.env.VAPID_SUBJECT ?? "mailto:hello@futureroots.app",
       },
     });
     apiSecrets.grantRead(apiFn);

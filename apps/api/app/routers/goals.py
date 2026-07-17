@@ -126,10 +126,11 @@ def complete_goal(
         )
         .all()
     )
-    for capsule in linked_capsules:
-        _release(db, capsule, child)
+    release_batches = [_release(db, capsule, child) for capsule in linked_capsules]
 
     db.commit()
+    for batch in release_batches:
+        batch.deliver(db)
     return _goal_out(goal, completion.completed_at)
 
 

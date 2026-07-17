@@ -45,7 +45,12 @@ from ..security import decode_access_token, decode_media_token
 from ..services.email_templates import render_email
 from ..services.entitlements import Capability, require_capability
 from ..services.feed import emit
-from ..services.notifications import notify_members
+from ..services.notify import (
+    EmailPayload,
+    NotificationKind,
+    family_recipients,
+    notify,
+)
 from ..services.storage import get_storage
 from .children import child_out
 
@@ -350,33 +355,44 @@ def add_vault_item(
     )
     db.commit()
 
-    # New-memory notifications are off by default (email_memory) — a gentle
-    # nudge only for family who have opted in.
+    # New-memory notifications: bell + push (default on) + email (off by
+    # default). Byte-identical email copy; supporters and the author excluded.
     family_url = f"{settings.web_base_url}/family/{child.family_id}/child/{child.id}"
-    notify_members(
+
+    def memory_email(_recipient) -> EmailPayload:
+        return EmailPayload(
+            subject=f"A new memory for {child.first_name}",
+            body=(
+                f"Hello,\n\n"
+                f"A new memory was just added to {child.first_name}'s vault:\n\n"
+                f"  {item.title}\n\n"
+                f"See it on the family feed: {family_url}\n\n"
+                f"With warmth,\nThe FutureRoots team"
+            ),
+            html=render_email(
+                preheader=f"A new memory was added to {child.first_name}'s vault.",
+                greeting="Hello,",
+                paragraphs=[
+                    f"A new memory was just added to {child.first_name}'s vault."
+                ],
+                highlight=item.title,
+                cta_label="See it on the family feed",
+                cta_url=family_url,
+            ),
+        )
+
+    batch = notify(
         db,
-        child.family_id,
-        "email_memory",
-        subject=f"A new memory for {child.first_name}",
-        body=(
-            f"Hello,\n\n"
-            f"A new memory was just added to {child.first_name}'s vault:\n\n"
-            f"  {item.title}\n\n"
-            f"See it on the family feed: {family_url}\n\n"
-            f"With warmth,\nThe FutureRoots team"
-        ),
-        html=render_email(
-            preheader=f"A new memory was added to {child.first_name}'s vault.",
-            greeting="Hello,",
-            paragraphs=[
-                f"A new memory was just added to {child.first_name}'s vault."
-            ],
-            highlight=item.title,
-            cta_label="See it on the family feed",
-            cta_url=family_url,
-        ),
-        exclude_user_id=user.id,
+        kind=NotificationKind.memory,
+        recipients=family_recipients(db, child.family_id, exclude_user_id=user.id),
+        title=f"A new memory for {child.first_name}",
+        body=f"Take a look: {item.title} just joined the vault.",
+        url=f"/family/{child.family_id}/child/{child.id}",
+        family_id=child.family_id,
+        email_builder=memory_email,
     )
+    db.commit()
+    batch.deliver(db)
     return _vault_item_out(item)
 
 
@@ -476,39 +492,51 @@ def post_milestone(
     )
     db.commit()
 
-    # Notify every other active family member who wants milestone emails
-    # (on by default — this is the nudge that brings grandparents to the door).
+    # Milestone notifications: bell + push + email (all on by default) — the
+    # nudge that brings grandparents to the door. Byte-identical email copy;
+    # supporters and the author excluded.
     family_url = f"{settings.web_base_url}/family/{child.family_id}"
     contribute_url = f"{family_url}/child/{child.id}/contribute"
     highlight = payload.title + (f"\n{payload.description}" if payload.description else "")
-    notify_members(
+
+    def milestone_email(_recipient) -> EmailPayload:
+        return EmailPayload(
+            subject=f"🎉 {child.first_name}: {payload.title}",
+            body=(
+                f"Hi there,\n\n"
+                f"Wonderful news from your family: {child.first_name} just reached a "
+                f"milestone.\n\n"
+                f"  {payload.title}\n"
+                + (f"  {payload.description}\n" if payload.description else "")
+                + f"\nCelebrate with a gift to {child.first_name}'s future: {contribute_url}\n"
+                f"Share in the moment on the family feed: {family_url}\n\n"
+                f"With warmth,\nThe FutureRoots team"
+            ),
+            html=render_email(
+                preheader=f"{child.first_name} just reached a milestone. Come celebrate!",
+                greeting="Hi there,",
+                paragraphs=[
+                    f"Wonderful news from your family: {child.first_name} just "
+                    f"reached a milestone."
+                ],
+                highlight=highlight,
+                cta_label=f"Celebrate with a gift to {child.first_name}'s future",
+                cta_url=contribute_url,
+                secondary_label="Share in the moment on the family feed",
+                secondary_url=family_url,
+            ),
+        )
+
+    batch = notify(
         db,
-        child.family_id,
-        "email_milestone",
-        subject=f"🎉 {child.first_name}: {payload.title}",
-        body=(
-            f"Hi there,\n\n"
-            f"Wonderful news from your family: {child.first_name} just reached a "
-            f"milestone.\n\n"
-            f"  {payload.title}\n"
-            + (f"  {payload.description}\n" if payload.description else "")
-            + f"\nCelebrate with a gift to {child.first_name}'s future: {contribute_url}\n"
-            f"Share in the moment on the family feed: {family_url}\n\n"
-            f"With warmth,\nThe FutureRoots team"
-        ),
-        html=render_email(
-            preheader=f"{child.first_name} just reached a milestone. Come celebrate!",
-            greeting="Hi there,",
-            paragraphs=[
-                f"Wonderful news from your family: {child.first_name} just "
-                f"reached a milestone."
-            ],
-            highlight=highlight,
-            cta_label=f"Celebrate with a gift to {child.first_name}'s future",
-            cta_url=contribute_url,
-            secondary_label="Share in the moment on the family feed",
-            secondary_url=family_url,
-        ),
-        exclude_user_id=user.id,
+        kind=NotificationKind.milestone,
+        recipients=family_recipients(db, child.family_id, exclude_user_id=user.id),
+        title=f"{child.first_name} just hit a milestone",
+        body=f"{payload.title}. Tap in to celebrate with the family.",
+        url=f"/family/{child.family_id}/child/{child.id}",
+        family_id=child.family_id,
+        email_builder=milestone_email,
     )
+    db.commit()
+    batch.deliver(db)
     return _vault_item_out(item)

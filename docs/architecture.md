@@ -81,7 +81,7 @@ One FastAPI app, organized by domain so modules can be split later if needed:
 - `legacy` — family legacy archive (stories, recipes, documents)
 - `premium` — family membership (Stripe Checkout subscriptions + prepaid gift grants) and the derived entitlements registry that gates capabilities (video upload, family video call)
 - `calls` — Family Video Call (Agora), Premium-gated token minting
-- `notifications` — email dispatch, driven by domain events
+- `notifications` — channel-agnostic dispatch (bell + email + Web Push), driven by domain events; see **Notifications** below
 
 ## Key flows
 
@@ -113,6 +113,62 @@ Capsules store a release condition. A scheduled job (EventBridge cron in prod, s
 - **Secrets load at cold start.** All runtime secrets live in one Secrets Manager secret (`futureroots/api`). The config layer fetches it once per Lambda cold start and overlays the values as env-var *defaults* — explicitly set env vars win, and with no secret ARN configured (local dev) there is no fetch at all, so local mode is untouched. Non-secret config (price ids, backends, base URLs) stays plain env.
 - **Data lifecycle without a cron fleet.** A daily EventBridge rule invokes the API Lambda with a `maintenance` command — one idempotent sweep (staged-gift-intent and email-log prunes, stale fund nudges, abandoned-call end, call-presence retention). Same no-always-on-compute pattern as capsule release; it never touches money records.
 - **Media fetches use scoped tokens, not session JWTs.** `GET /media/{id}` rejects session JWTs in the URL; browsers pass a short-lived media-scoped token (aud `futureroots:media`, 60-min TTL, minted at `POST /auth/media-token`) that is valid *only* on the media route, which still runs full per-media authorization on every fetch. Caps the query-string leak surface (Referer/history/logs) at an hour of read-only media access.
+
+## Notifications
+
+One channel-agnostic dispatcher, `app/services/notify.py`, backs every
+notify()-worthy domain event: family member joins, milestones, memories,
+legacy items, contributions, a child's fund activating, time-capsule
+seal/release, a family video call going live, and platform-wide admin
+broadcasts (ten `NotificationKind`s total — see the taxonomy table in the
+module docstring). A single `notify()` call **always** writes an in-app
+"bell" row per recipient (the `notifications` table), in the same
+transaction as the domain change, and — gated by that recipient's
+preferences — stages an email and/or a Web Push payload. **The bell is
+never gated; only the interrupting channels (email, push) are**, so a user
+who has muted everything still accrues a durable record of what happened.
+
+- **One preference matrix, ten kinds × two channels.** `notification_preferences`
+  is one row per user, global across all of that user's families (no
+  per-family granularity) — 20 booleans (`email_*`/`push_*` per kind). A
+  missing row falls back to `DEFAULT_PREFS`.
+- **Post-commit delivery discipline.** Callers commit the domain transaction
+  first, then call `batch.deliver(db)` — the same pattern established by
+  `ContributionSettlement`. Bell rows roll back with a losing transaction
+  (e.g. a replayed Stripe webhook that loses a unique-constraint race), and
+  `deliver()` only runs after a successful commit, so replays can never
+  double-send an email or a push notification.
+- **Web Push (VAPID).** `push_subscriptions` holds one row per browser/device
+  (keyed on the provider's unique `endpoint` URL; re-subscribing an existing
+  endpoint reassigns it to the current user for shared-device handoff, and
+  dead subscriptions — 404/410/403 on send — are pruned automatically).
+  Delivery is inline and synchronous via `pywebpush`: one POST per
+  subscription with a short timeout (`call_live` uses a 90s TTL / high
+  urgency; everything else a 1-day TTL / normal urgency — the seam to make
+  this asynchronous, if push volume ever grows, is `deliver()`). An empty
+  `vapid_private_key` keeps the whole feature dark: subscribe 503s, the
+  dispatcher sends no push, and the web settings page hides the enrollment
+  card. The public key ships to the browser via `GET /me/notifications`
+  (`push_public_key`), so lighting the feature up never needs an Amplify env
+  var or a web rebuild.
+- **SSRF allowlist on subscription endpoints.** Because the dispatcher POSTs
+  to whatever `endpoint` a client submitted, from inside the VPC-egress
+  Lambda, `app/push_targets.py` restricts accepted endpoints to the known Web
+  Push provider origins (FCM/`googleapis.com`, Mozilla, Windows/Edge, Apple)
+  and rejects IP-literal hosts outright — a registered endpoint can never
+  turn push fan-out into an SSRF primitive against internal hosts or the
+  instance metadata service.
+- **The bell.** The `notifications` table (`kind`, `title`, `body`, `url`,
+  optional `family_id`, `read_at`) is retained 90 days by the daily
+  maintenance sweep. Read via `/me/inbox`: keyset-paginated list,
+  unread-count, read-all, mark-one-read.
+- **Admin broadcast.** `POST /admin/broadcast` reaches every non-disabled
+  user (supporters included — platform content carries no family data); the
+  bell is written even for users opted out of announcements, push/email are
+  gated by `push_announcements`/`email_announcements`, and email is
+  additionally opt-in per send (`include_email`) to protect SES quota and
+  sender reputation. Audit-logged; supports a `dry_run` reach count before a
+  real send.
 
 ## Compliance-driven design decisions
 

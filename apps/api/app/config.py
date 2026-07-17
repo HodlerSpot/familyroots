@@ -231,6 +231,15 @@ class Settings(BaseSettings):
     # re-checks membership + presence and re-mints while they're still allowed.
     agora_call_token_ttl_seconds: int = 300
     agora_presence_ttl_seconds: int = 30
+    # Web Push (VAPID). The private key is a SECRET (in the futureroots/api
+    # blob); the public key is shipped to browsers (served via
+    # GET /me/notifications, so no Amplify env/rebuild is needed) and the
+    # subject is a contact mailto:/URL Push services may use to reach us. When
+    # the private key is empty the whole push feature stays dark: subscribe
+    # 503s, dispatch sends no push, and the settings card hides the enrollment.
+    vapid_private_key: str = ""
+    vapid_public_key: str = ""
+    vapid_subject: str = "mailto:hello@futureroots.app"
 
     model_config = {"env_file": ".env", "env_prefix": "FUTUREROOTS_"}
 

@@ -16,23 +16,27 @@ from ..models import (
     CapsuleReleaseVote,
     CapsuleStatus,
     Child,
-    FamilyMember,
     FamilyRole,
     FeedEventType,
     Goal,
     GoalStatus,
     MediaObject,
     MediaStatus,
-    MemberStatus,
     ReleaseCondition,
     TimeCapsule,
     User,
     utcnow,
 )
 from ..schemas import CapsuleCreate, CapsuleOut
-from ..services.email import get_email_sender
 from ..services.email_templates import render_email
 from ..services.feed import emit
+from ..services.notify import (
+    EmailPayload,
+    NotificationBatch,
+    NotificationKind,
+    family_recipients,
+    notify,
+)
 
 router = APIRouter(tags=["capsules"])
 
@@ -109,8 +113,10 @@ def _capsule_out(
     )
 
 
-def _release(db, capsule: TimeCapsule, child: Child) -> None:
-    """Open a capsule: status flip + feed event + tell the parents."""
+def _release(db, capsule: TimeCapsule, child: Child) -> NotificationBatch:
+    """Open a capsule: status flip + feed event + notify the parents. Returns
+    the notification batch — the caller commits, then calls batch.deliver(db)
+    (release can happen from several paths, each with its own commit)."""
     capsule.status = CapsuleStatus.released
     capsule.released_at = utcnow()
     emit(
@@ -126,28 +132,22 @@ def _release(db, capsule: TimeCapsule, child: Child) -> None:
             "capsule_type": capsule.type.value,
         },
     )
-    parents = (
-        db.query(User)
-        .join(FamilyMember, FamilyMember.user_id == User.id)
-        .filter(
-            FamilyMember.family_id == child.family_id,
-            FamilyMember.status == MemberStatus.active,
-            FamilyMember.role.in_([FamilyRole.parent, FamilyRole.guardian]),
-        )
-        .all()
+    recipients = family_recipients(
+        db, child.family_id, roles=[FamilyRole.parent, FamilyRole.guardian]
     )
-    sender = get_email_sender()
-    url = f"{settings.web_base_url}/family/{child.family_id}/child/{child.id}"
-    for parent in parents:
-        sender.send(
-            to=parent.email,
+    url = f"/family/{child.family_id}/child/{child.id}"
+    email_url = f"{settings.web_base_url}{url}"
+
+    def email_builder(parent: User) -> EmailPayload:
+        # Existing capsule-released copy, byte-for-byte (copy deck §2.4: keep).
+        return EmailPayload(
             subject=f"A time capsule for {child.first_name} just opened",
             body=(
                 f"Hi {parent.display_name},\n\n"
                 f"A moment years in the making: the time capsule "
                 f"{capsule.author.display_name} sealed for {child.first_name} has "
                 f"opened today.\n\n"
-                f"Open it together: {url}\n\n"
+                f"Open it together: {email_url}\n\n"
                 f"With warmth,\nThe FutureRoots team"
             ),
             html=render_email(
@@ -162,9 +162,20 @@ def _release(db, capsule: TimeCapsule, child: Child) -> None:
                     f"has opened today."
                 ],
                 cta_label="Open it together",
-                cta_url=url,
+                cta_url=email_url,
             ),
         )
+
+    return notify(
+        db,
+        kind=NotificationKind.capsule_released,
+        recipients=recipients,
+        title=f"A time capsule for {child.first_name} just opened",
+        body="The moment has finally arrived. Open it together as a family.",
+        url=url,
+        family_id=child.family_id,
+        email_builder=email_builder,
+    )
 
 
 def release_due_capsules(db, child: Child) -> None:
@@ -193,10 +204,11 @@ def release_due_capsules(db, child: Child) -> None:
                 and _age_on(child.birthdate, today) >= capsule.release_age
             ):
                 due.append(capsule)
-    for capsule in due:
-        _release(db, capsule, child)
+    batches = [_release(db, capsule, child) for capsule in due]
     if due:
         db.commit()
+        for batch in batches:
+            batch.deliver(db)
 
 
 @router.post(
@@ -276,7 +288,58 @@ def create_capsule(
             "release_age": capsule.release_age,
         },
     )
+    # Tell the family a capsule was sealed (bell + push always/by-pref; email is
+    # an opt-in FYI). Supporters and the sealer are excluded. The capsule stays
+    # locked to everyone but its creator — the notification reveals nothing.
+    recipients = family_recipients(db, child.family_id, exclude_user_id=user.id)
+    vault_url = f"/family/{child.family_id}/child/{child.id}"
+
+    def email_builder(recipient: User) -> EmailPayload:
+        return EmailPayload(
+            subject=f"{user.display_name} sealed a time capsule for {child.first_name}",
+            body=(
+                f"Hi {recipient.display_name},\n\n"
+                f"{user.display_name} just sealed a time capsule for "
+                f"{child.first_name}. It's tucked away safely until it's time to "
+                f"open.\n\n"
+                f"You won't see what's inside. That's part of the magic, but we "
+                f"thought you'd like to know it's there.\n\n"
+                f"See {child.first_name}'s vault: {settings.web_base_url}{vault_url}\n\n"
+                f"With warmth,\nThe FutureRoots team"
+            ),
+            html=render_email(
+                preheader=(
+                    f"A little something for {child.first_name}'s future, safely "
+                    f"tucked away."
+                ),
+                greeting=f"Hi {recipient.display_name},",
+                paragraphs=[
+                    f"{user.display_name} just sealed a time capsule for "
+                    f"{child.first_name}. It's tucked away safely until it's time "
+                    f"to open.",
+                    "You won't see what's inside. That's part of the magic, but we "
+                    "thought you'd like to know it's there.",
+                ],
+                cta_label=f"See {child.first_name}'s vault",
+                cta_url=f"{settings.web_base_url}{vault_url}",
+            ),
+        )
+
+    batch = notify(
+        db,
+        kind=NotificationKind.capsule_sealed,
+        recipients=recipients,
+        title=f"{user.display_name} sealed a time capsule for {child.first_name}",
+        body=(
+            f"A private message for {child.first_name}'s future, safely tucked "
+            f"away until it's time."
+        ),
+        url=vault_url,
+        family_id=child.family_id,
+        email_builder=email_builder,
+    )
     db.commit()
+    batch.deliver(db)
     return _capsule_out(db, capsule, user.id, membership.role)
 
 
@@ -310,8 +373,9 @@ def release_capsule(capsule_id: uuid.UUID, db: DbSession, user: CurrentUser) -> 
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "Only its creator can open this capsule directly"
         )
-    _release(db, capsule, child)
+    batch = _release(db, capsule, child)
     db.commit()
+    batch.deliver(db)
     return _capsule_out(db, capsule, user.id, membership.role)
 
 
@@ -361,7 +425,8 @@ def vote_release_capsule(
         .scalar()
         or 0
     )
-    if votes >= RELEASE_VOTES_REQUIRED:
-        _release(db, capsule, child)
+    batch = _release(db, capsule, child) if votes >= RELEASE_VOTES_REQUIRED else None
     db.commit()
+    if batch is not None:
+        batch.deliver(db)
     return _capsule_out(db, capsule, user.id, membership.role)

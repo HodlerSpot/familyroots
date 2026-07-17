@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
+from .push_targets import validate_push_endpoint
 from .security import validate_password_complexity
 
 from .models import (
@@ -441,10 +442,81 @@ class PremiumSyncIn(BaseModel):
 # --- me: notification preferences & contributions ---
 
 class NotificationPrefs(BaseModel):
+    """The full per-user switch matrix: ten kinds across Email + Push (20
+    booleans). PUT accepts all 20; push_public_key is read-only (echoed on
+    GET so the browser can subscribe without an Amplify env var) and ignored
+    on input."""
+
+    # original four email kinds
     email_new_member: bool
     email_milestone: bool
     email_memory: bool
     email_legacy: bool
+    # push mirrors of the original four
+    push_new_member: bool
+    push_milestone: bool
+    push_memory: bool
+    push_legacy: bool
+    # six new kinds, both channels
+    email_call_live: bool
+    push_call_live: bool
+    email_contribution: bool
+    push_contribution: bool
+    email_fund_activated: bool
+    push_fund_activated: bool
+    email_capsule_sealed: bool
+    push_capsule_sealed: bool
+    email_capsule_released: bool
+    push_capsule_released: bool
+    email_announcements: bool
+    push_announcements: bool
+    # read-only: the server's VAPID public key ("" ⇒ push feature is dark)
+    push_public_key: str = ""
+
+
+class PushSubscribeIn(BaseModel):
+    """A browser PushSubscription, flattened. The client maps
+    subscription.toJSON(): endpoint + keys.p256dh + keys.auth."""
+
+    endpoint: str = Field(min_length=1, max_length=500)
+    p256dh: str = Field(min_length=1, max_length=255)
+    auth: str = Field(min_length=1, max_length=255)
+    ua_label: str | None = Field(default=None, max_length=200)
+
+    @field_validator("endpoint")
+    @classmethod
+    def _endpoint_is_a_push_service(cls, v: str) -> str:
+        # Shape guard against SSRF: the stored endpoint is later POSTed to from
+        # inside the VPC. Reject anything but a known https push origin.
+        return validate_push_endpoint(v)
+
+
+class PushUnsubscribeIn(BaseModel):
+    endpoint: str = Field(min_length=1, max_length=500)
+
+
+class InboxItemOut(BaseModel):
+    id: uuid.UUID
+    kind: str
+    title: str
+    body: str
+    url: str | None = None
+    family_id: uuid.UUID | None = None
+    read_at: datetime | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class InboxPage(BaseModel):
+    items: list[InboxItemOut]
+    # Opaque keyset cursor ("<iso>|<id>"); pass it back as ?cursor= for the
+    # next page. None means there are no older items.
+    next_cursor: str | None = None
+
+
+class UnreadCountOut(BaseModel):
+    count: int
 
 
 class MyContributionOut(BaseModel):

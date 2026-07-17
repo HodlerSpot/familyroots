@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { api, getToken, mediaUrl, setToken, UserOut } from "@/lib/api";
 import { Logo } from "@/components/logo";
+import { NotificationBell } from "@/components/notification-bell";
 import { QuestBoard, testnetApi } from "@/components/testnet/api";
 import { Avatar } from "@/components/testnet/identicon";
 
@@ -32,7 +33,11 @@ export function SiteHeader() {
           <Logo size="sm" />
         </a>
         {authed ? (
-          <AccountMenu />
+          <div className="flex items-center gap-1">
+            {/* The bell is a family-product concept; testnet has no inbox. */}
+            {!IS_TESTNET && <NotificationBell />}
+            <AccountMenu />
+          </div>
         ) : (
           <span className="hidden text-sm text-stone-500 sm:block">
             Building Generational Wealth &amp; Memories

@@ -61,6 +61,12 @@ function eventLine(e: FeedEventOut): { icon: string; text: string } {
         icon: "💝",
         text: `${p.contributor_name} added ${formatMoney(Number(p.amount_cents))} to ${p.child_name}'s future fund`,
       };
+    // Copy from docs/brand/notifications-copy.md §1 (fund_activated title).
+    case "fund_activated":
+      return {
+        icon: "💰",
+        text: `${p.child_name}'s Future Fund is ready for gifts`,
+      };
     // Copy from docs/brand/premium-copy.md §4. No amounts on the feed:
     // "a year of Premium" is the unit of love.
     case "premium_activated":

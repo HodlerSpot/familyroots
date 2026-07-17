@@ -21,7 +21,12 @@ from ..services.email import get_email_sender
 from ..services.email_templates import render_email
 from ..services.entitlements import plans_for_families
 from ..services.feed import emit
-from ..services.notifications import notify_members
+from ..services.notify import (
+    EmailPayload,
+    NotificationKind,
+    family_recipients,
+    notify,
+)
 from ..services.text import family_phrase
 from ..testnet.service import award
 
@@ -200,33 +205,48 @@ def accept_invite(payload: InviteAccept, db: DbSession, user: CurrentUser) -> Fa
     )
     db.commit()
 
-    # Welcome the new arrival to everyone already here (on by default).
+    # Welcome the new arrival to everyone already here (on by default). Now a
+    # unified notification: bell + push (default on) + the existing email
+    # (byte-identical copy, same pref gating). Supporters excluded, joiner
+    # excluded. The invite was committed above, so this opens a fresh
+    # transaction for the bell rows.
     family = family_phrase(invite.family.name)
     family_url = f"{settings.web_base_url}/family/{invite.family_id}"
-    notify_members(
-        db,
-        invite.family_id,
-        "email_new_member",
-        subject=f"{user.display_name} joined {family} on FutureRoots",
-        body=(
-            f"Hello,\n\n"
-            f"{user.display_name} just joined {family} on FutureRoots. "
-            f"There's a new face to share memories and milestones with.\n\n"
-            f"See who's here: {family_url}\n\n"
-            f"With warmth,\nThe FutureRoots team"
-        ),
-        html=render_email(
-            preheader=f"{user.display_name} just joined {family} on FutureRoots.",
-            greeting="Hello,",
-            paragraphs=[
+
+    def new_member_email(_recipient) -> EmailPayload:
+        return EmailPayload(
+            subject=f"{user.display_name} joined {family} on FutureRoots",
+            body=(
+                f"Hello,\n\n"
                 f"{user.display_name} just joined {family} on FutureRoots. "
-                f"There's a new face to share memories and milestones with."
-            ],
-            cta_label="See who's here",
-            cta_url=family_url,
-        ),
-        exclude_user_id=user.id,
+                f"There's a new face to share memories and milestones with.\n\n"
+                f"See who's here: {family_url}\n\n"
+                f"With warmth,\nThe FutureRoots team"
+            ),
+            html=render_email(
+                preheader=f"{user.display_name} just joined {family} on FutureRoots.",
+                greeting="Hello,",
+                paragraphs=[
+                    f"{user.display_name} just joined {family} on FutureRoots. "
+                    f"There's a new face to share memories and milestones with."
+                ],
+                cta_label="See who's here",
+                cta_url=family_url,
+            ),
+        )
+
+    batch = notify(
+        db,
+        kind=NotificationKind.new_member,
+        recipients=family_recipients(db, invite.family_id, exclude_user_id=user.id),
+        title=f"{user.display_name} joined the family",
+        body="Say hello and give them a warm family welcome.",
+        url=f"/family/{invite.family_id}",
+        family_id=invite.family_id,
+        email_builder=new_member_email,
     )
+    db.commit()
+    batch.deliver(db)
     # Derive the real plan (same helper my_families uses) so a new member
     # joining a Premium family isn't told "free".
     is_premium = plans_for_families(db, [invite.family_id]).get(invite.family_id, False)

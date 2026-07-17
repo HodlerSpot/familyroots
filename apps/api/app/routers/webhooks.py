@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from ..config import settings
 from ..deps import DbSession
 from ..models import Contribution, ContributionStatus, FamilySubscription, FundAccount
+from ..services.notify import notify_fund_activated
 from ..services.payments import (
     SubscriptionState,
     get_payment_provider,
@@ -211,8 +212,8 @@ async def stripe_webhook(
                         contribution.id,
                     )
                     return {"received": True}
-                # Emails leave only after the ledger write is durable.
-                settlement.send_emails()
+                # Notifications leave only after the ledger write is durable.
+                settlement.deliver(db)
         else:
             # failed or canceled: a payment that never settled becomes failed
             if contribution.status == ContributionStatus.pending:
@@ -344,7 +345,10 @@ async def stripe_connect_webhook(
         if fund_account is None:
             return {"received": True}  # not one of ours — ack
         state = get_payment_provider().connect_account_state(account_id)
-        sync_fund_account_state(fund_account, state)
+        became_active = sync_fund_account_state(fund_account, state)
+        batch = notify_fund_activated(db, fund_account) if became_active else None
         db.commit()
+        if batch is not None:
+            batch.deliver(db)
 
     return {"received": True}

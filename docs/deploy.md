@@ -92,6 +92,69 @@ gift-intent prune (>30 days; the admin endpoint
 `premium_email_log` prune (>1 year; safe because no lifecycle email can
 re-fire after 30 days).
 
+## Web Push (VAPID)
+
+Backend is deployed dark by default: with no VAPID keys configured,
+`POST /me/push-subscriptions` 503s, the dispatcher (`app/services/notify.py`)
+sends no push, and the web settings page hides the push-enrollment card —
+the bell, the inbox, and the (now pref-gated) absorbed emails all keep
+working regardless. To light it up:
+
+1. **Generate the keypair** (from `apps/api`; prints both halves as
+   unpadded base64url strings — the raw format `pywebpush` and the browser's
+   `PushManager.subscribe({ applicationServerKey })` expect, not PEM):
+
+   ```powershell
+   uv run python -c "from py_vapid import Vapid02; from py_vapid.utils import b64urlencode; from cryptography.hazmat.primitives import serialization; v = Vapid02(); v.generate_keys(); priv = v.private_key.private_numbers().private_value.to_bytes(32, 'big'); pub = v.public_key.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint); print('VAPID_PRIVATE_KEY=' + b64urlencode(priv)); print('VAPID_PUBLIC_KEY=' + b64urlencode(pub))"
+   ```
+
+2. **Private half is a secret**: paste the `VAPID_PRIVATE_KEY` value into
+   `infra/.env` → `infra\scripts\push_secrets.ps1` reads it into
+   `FUTUREROOTS_VAPID_PRIVATE_KEY` inside the `futureroots/api` Secrets
+   Manager secret (already wired — no script change needed).
+3. **Public half + subject are plain env, not secrets.** Set
+   `VAPID_PUBLIC_KEY` (and, if you want something other than the default,
+   `VAPID_SUBJECT` — a `mailto:` contact address the push services may use to
+   reach the platform) before `cdk deploy`; `infra/lib/futureroots-stack.ts`
+   passes them straight through as `FUTUREROOTS_VAPID_PUBLIC_KEY` /
+   `FUTUREROOTS_VAPID_SUBJECT` Lambda env vars. The public key is served to
+   browsers live via `GET /me/notifications` (`push_public_key`), so it never
+   needs an Amplify env var or a web rebuild.
+4. **Deploy**:
+
+   ```powershell
+   # from infra/
+   powershell -File scripts\push_secrets.ps1
+   npx cdk deploy --require-approval never
+
+   # run the new migration (adds push_subscriptions, notifications, and
+   # 16 new notification_preferences columns) — revision b8f2c1a9d4e7
+   aws lambda invoke --function-name <ApiFunctionName> `
+     --payload '{\"futureroots_command\":\"migrate\"}' `
+     --cli-binary-format raw-in-base64-out out.json
+   ```
+
+5. **Verify**: reload `/settings` and confirm the push-enrollment card
+   appears, subscribe, then trigger any notify()-worthy event (e.g. seal a
+   time capsule) and confirm an OS-level push arrives alongside the bell
+   badge and email, each honoring their toggle.
+
+**Lambda bundle size.** `pywebpush` + `cryptography` add roughly 8 MB to the
+zip — still well inside Lambda's 250 MB unzipped limit. `http-ece` (a
+pywebpush dependency) ships sdist-only, so `apps/api/scripts/package_lambda.ps1`
+builds it from source (`--no-binary http-ece`) while every other dependency
+stays wheel-only, so nothing else is compiled cross-platform when targeting
+manylinux from Windows.
+
+**Security callout — SSRF allowlist.** The push dispatcher POSTs to whatever
+`endpoint` URL a subscription stores, from inside the VPC-egress Lambda.
+`apps/api/app/push_targets.py` restricts accepted endpoints to the known Web
+Push provider origins (`googleapis.com`, `push.services.mozilla.com`,
+`notify.windows.com`, `push.apple.com`) and rejects IP-literal hosts
+outright, so a maliciously registered endpoint can never turn push fan-out
+into an SSRF primitive reaching internal hosts or the instance metadata
+service.
+
 ## Secrets (AWS Secrets Manager)
 
 Runtime secrets no longer live in Lambda env vars — or in the CFN template.
@@ -101,7 +164,8 @@ Two secrets:
    object keyed by env-var name: `FUTUREROOTS_JWT_SECRET`,
    `FUTUREROOTS_STRIPE_SECRET_KEY`, `FUTUREROOTS_STRIPE_WEBHOOK_SECRET`,
    `FUTUREROOTS_STRIPE_CONNECT_WEBHOOK_SECRET`,
-   `FUTUREROOTS_AGORA_APP_CERTIFICATE`, `FUTUREROOTS_TESTNET_ADMIN_TOKEN`,
+   `FUTUREROOTS_AGORA_APP_CERTIFICATE`, `FUTUREROOTS_VAPID_PRIVATE_KEY`,
+   `FUTUREROOTS_TESTNET_ADMIN_TOKEN`,
    `FUTUREROOTS_X_CLIENT_SECRET`. (The old `FUTUREROOTS_DATABASE_URL` /
    `FUTUREROOTS_TESTNET_DATABASE_URL` keys are retired — DB credentials moved
    to the RDS-managed secret below; a stale copy left in the blob is ignored.)
