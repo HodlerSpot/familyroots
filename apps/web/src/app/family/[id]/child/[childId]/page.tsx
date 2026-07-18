@@ -21,6 +21,8 @@ import { CapsulesSection } from "@/components/capsules";
 import { FamilyFundCard, SupporterFundCard } from "@/components/fund";
 import { PremiumUpsellCard } from "@/components/premium/PremiumUpsell";
 import { FutureGifts } from "@/components/future-gifts";
+import { FutureGiftToast } from "@/components/future-gift-toast";
+import { formatDurationLong } from "@/lib/text";
 
 const TYPE_ICONS: Record<string, string> = {
   photo: "📷",
@@ -46,8 +48,13 @@ export default function ChildVaultPage() {
   const [parentFirstName, setParentFirstName] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState<string[] | undefined>(undefined);
   const [error, setError] = useState("");
+  const [giftToastMessage, setGiftToastMessage] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  // `load()` returns the child's fresh Future Gifts score so callers can diff
+  // against the value from just before their action (see
+  // `refreshAndAnnounceGift` below) without relying on state that hasn't
+  // re-rendered yet.
+  const load = useCallback(async (): Promise<number | null | undefined> => {
     try {
       const [family, me] = await Promise.all([api.familyDetail(familyId), api.me()]);
       const child = family.children.find((c) => c.id === childId);
@@ -77,11 +84,31 @@ export default function ChildVaultPage() {
         setBadges(badgesData);
         setCapsules(capsulesData);
       }
+      return child?.future_gifts_seconds;
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) router.replace("/login");
       else setError(err instanceof ApiError ? err.message : "Couldn't load this vault");
+      return undefined;
     }
   }, [childId, familyId, router]);
+
+  // Shared by the memory, milestone, and capsule "add" flows: capture the
+  // score from just before the action, refresh, and if it grew, show a
+  // "you just added..." toast. Money contributions are excluded on purpose:
+  // they settle asynchronously via the Stripe webhook, long after the giver
+  // has left the page, so there's no reliable delta to show here.
+  async function refreshAndAnnounceGift() {
+    const before = futureGiftsSeconds ?? 0;
+    const after = await load();
+    const delta = (after ?? 0) - before;
+    if (delta <= 0) return;
+    const name = childName || "your child";
+    const message =
+      delta < 60
+        ? `🎁 You just added a little more to ${name}'s Future Gift.`
+        : `🎁 You just added about ${formatDurationLong(delta)} to ${name}'s Future Gift.`;
+    setGiftToastMessage(message);
+  }
 
   useEffect(() => {
     if (!getToken()) {
@@ -195,6 +222,7 @@ export default function ChildVaultPage() {
             capsules={capsules}
             goals={goals}
             onChanged={load}
+            onCapsuleAdded={refreshAndAnnounceGift}
             familyId={familyId}
             role={myRole}
             videoAllowed={videoAllowed}
@@ -209,7 +237,7 @@ export default function ChildVaultPage() {
           <div className="grid gap-4 md:grid-cols-2">
             <MilestoneForm
               childId={childId}
-              onPosted={load}
+              onPosted={refreshAndAnnounceGift}
               childName={childName}
               showSupporterOptIn={isParent}
               familyId={familyId}
@@ -218,7 +246,7 @@ export default function ChildVaultPage() {
             />
             <MemoryForm
               childId={childId}
-              onAdded={load}
+              onAdded={refreshAndAnnounceGift}
               childName={childName}
               showSupporterOptIn={isParent}
               familyId={familyId}
@@ -281,6 +309,11 @@ export default function ChildVaultPage() {
           ))}
         </div>
       </section>
+
+      <FutureGiftToast
+        message={giftToastMessage}
+        onDismiss={() => setGiftToastMessage(null)}
+      />
     </div>
   );
 }

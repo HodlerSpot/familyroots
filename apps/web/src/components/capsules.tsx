@@ -33,6 +33,7 @@ export function CapsulesSection({
   capsules,
   goals,
   onChanged,
+  onCapsuleAdded,
   familyId,
   role,
   videoAllowed,
@@ -42,6 +43,11 @@ export function CapsulesSection({
   capsules: CapsuleOut[];
   goals: GoalOut[];
   onChanged: () => void;
+  // Fires once, after a new capsule is sealed (in place of onChanged, which
+  // it already covers by refreshing the page). Lets the page diff the
+  // child's Future Gifts score and show a "you just added..." toast without
+  // re-fetching twice. Falls back to onChanged if not provided.
+  onCapsuleAdded?: () => void;
   familyId: string;
   role: FamilyRole | null;
   videoAllowed: boolean;
@@ -88,7 +94,7 @@ export function CapsulesSection({
           incompleteGoals={incompleteGoals}
           onSealed={() => {
             setShowForm(false);
-            onChanged();
+            (onCapsuleAdded ?? onChanged)();
           }}
           familyId={familyId}
           role={role}
