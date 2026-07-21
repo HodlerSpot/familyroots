@@ -20,6 +20,7 @@ import { useCallState } from "@/components/family-call/useCallState";
 import { PremiumPill } from "@/components/premium/PremiumPill";
 import { PlanSection } from "@/components/premium/PlanSection";
 import { FutureGifts } from "@/components/future-gifts";
+import { MemoryPromptCard } from "@/components/memory-prompt-card";
 
 export default function FamilyPage() {
   const router = useRouter();
@@ -64,8 +65,7 @@ export default function FamilyPage() {
       setMyRole(detail.members.find((m) => m.user.id === me.id)?.role ?? null);
       setFeed(events);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) router.replace("/login");
-      else setError(err instanceof ApiError ? err.message : "Couldn't load this family");
+      setError(err instanceof ApiError ? err.message : "Couldn't load this family");
     }
   }, [id, router]);
 
@@ -142,6 +142,11 @@ export default function FamilyPage() {
           {family.plan && <PremiumPill plan={family.plan} />}
         </div>
       </div>
+
+      {/* A gentle monthly nudge to add a memory for the child of the month. It
+          self-hides for supporters, childless families, and anyone who has
+          already added a memory this month, so it's safe to mount for everyone. */}
+      <MemoryPromptCard familyId={family.id} />
 
       {!isSupporter && (
         <FamilyCallCard
@@ -532,6 +537,9 @@ function InviteForm({ familyId }: { familyId: string }) {
               <option value="parent">Parent</option>
               <option value="guardian">Guardian</option>
               <option value="relative">Relative</option>
+              <option value="aunt">Aunt</option>
+              <option value="uncle">Uncle</option>
+              <option value="cousin">Cousin</option>
               <option value="supporter">Supporter (coach, mentor, friend)</option>
             </select>
           </div>

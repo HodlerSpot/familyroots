@@ -32,12 +32,66 @@ def verify_password(password: str, password_hash: str) -> bool:
     return bcrypt.checkpw(password.encode(), password_hash.encode())
 
 
-def create_access_token(user_id: uuid.UUID) -> str:
+class SessionExpiredError(Exception):
+    """Raised by ``decode_access_token(..., raise_on_expired=True)`` when a
+    token's signature is valid but its session window has passed. Lets
+    ``deps.get_current_user`` answer with a distinguishable ``session_expired``
+    401 (so the web can show a warm timeout note and re-login) rather than the
+    generic invalid-token 401 a garbage credential earns."""
+
+
+def session_ttl_seconds(remember: bool) -> int:
+    """Lifetime, in seconds, of a session token for the given window — the
+    ``expires_in_seconds`` the client uses to schedule its silent refresh."""
+    if remember:
+        return settings.remember_me_ttl_days * 24 * 60 * 60
+    return settings.session_ttl_minutes * 60
+
+
+def create_access_token(user_id: uuid.UUID, *, remember: bool = False) -> str:
+    """Mint a session token. The default (unremembered) window is
+    ``session_ttl_minutes``; ``remember=True`` ("Stay logged in") uses
+    ``remember_me_ttl_days``. The ``rmb`` claim records which window was chosen
+    so ``/auth/refresh`` can renew the SAME window without re-authenticating —
+    and never escalate a short session into a long one."""
+    now = datetime.now(timezone.utc)
+    expires_at = (
+        now + timedelta(days=settings.remember_me_ttl_days)
+        if remember
+        else now + timedelta(minutes=settings.session_ttl_minutes)
+    )
     payload = {
         "sub": str(user_id),
-        "exp": datetime.now(timezone.utc) + timedelta(hours=settings.jwt_ttl_hours),
+        "rmb": remember,
+        "exp": expires_at,
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
+def read_remember_claim(token: str) -> bool:
+    """Read the ``rmb`` window flag from a session token. Called by
+    ``/auth/refresh`` (after ``get_current_user`` has already validated the
+    token) to renew the same window — a missing/false claim means the 30-minute
+    window, so a short token can never be refreshed into a remembered one."""
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    except (jwt.InvalidTokenError, ValueError):
+        return False
+    return bool(payload.get("rmb", False))
+
+
+def token_is_impersonation(token: str) -> bool:
+    """True if this (signature-verified) token carries an ``imp`` claim, i.e. it
+    is an admin impersonation token rather than a first-class session. Used by
+    ``/auth/refresh`` to REFUSE refreshing an impersonation session: those have a
+    deliberate hard time cap and an audit marker, and re-minting via the ordinary
+    session path would both slide them indefinitely and strip the ``imp`` claim.
+    Returns ``False`` for any invalid token (the caller's auth gate handles those)."""
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    except (jwt.InvalidTokenError, ValueError):
+        return False
+    return "imp" in payload
 
 
 def create_impersonation_token(user_id: uuid.UUID, admin_id: uuid.UUID, minutes: int = 30) -> str:
@@ -52,7 +106,15 @@ def create_impersonation_token(user_id: uuid.UUID, admin_id: uuid.UUID, minutes:
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
-def decode_access_token(token: str) -> uuid.UUID | None:
+def decode_access_token(token: str, *, raise_on_expired: bool = False) -> uuid.UUID | None:
+    """Return the session's user id, or ``None`` for any invalid token.
+
+    When ``raise_on_expired`` is set, a token whose signature is valid but whose
+    session has expired raises ``SessionExpiredError`` instead of collapsing to
+    ``None`` — the one case a caller may want to treat distinctly (a warm
+    "session timed out" 401 vs. a generic invalid-credential 401). The default
+    preserves the original None-on-any-failure contract for callers (e.g. the
+    testnet optional-auth path) that don't care about the distinction."""
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
         # Scoped tokens (aud-bearing, e.g. media tokens) are never sessions.
@@ -61,6 +123,12 @@ def decode_access_token(token: str) -> uuid.UUID | None:
         if "aud" in payload:
             return None
         return uuid.UUID(payload["sub"])
+    except jwt.ExpiredSignatureError:
+        # ExpiredSignatureError subclasses InvalidTokenError, so this branch
+        # must precede the generic one below.
+        if raise_on_expired:
+            raise SessionExpiredError from None
+        return None
     except (jwt.InvalidTokenError, KeyError, ValueError):
         return None
 

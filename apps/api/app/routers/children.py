@@ -23,6 +23,7 @@ from ..services.future_gifts import (
     future_gifts_seconds_for_child,
     future_gifts_seconds_for_children,
 )
+from ..services.predictions import ensure_open_round
 from ..testnet.service import award
 
 router = APIRouter(prefix="/families/{family_id}/children", tags=["children"])
@@ -100,6 +101,10 @@ def add_child(
                 relationship_type=member.role,
             )
         )
+
+    # Open the child's first Future Predictions round (under-18 with a
+    # birthdate). Silent — no feed event; discovery is the child-page card.
+    ensure_open_round(db, child)
 
     award(db, user.id, "add_child")  # testnet points; no-op in the family product
     db.commit()

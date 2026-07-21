@@ -1,3 +1,5 @@
+import pytest
+
 from .conftest import add_child, create_family, make_premium, signup
 
 
@@ -51,6 +53,44 @@ def test_full_invite_flow(client):
         edges = db.query(ChildRelationship).filter(
             ChildRelationship.relationship_type == FamilyRole.grandparent
         ).all()
+        assert len(edges) == 1
+
+
+@pytest.mark.parametrize("role", ["aunt", "uncle", "cousin"])
+def test_relative_tier_invite_flow(client, role):
+    """The relative-tier roles (aunt/uncle/cousin) preview, accept, and land a
+    Family Graph edge just like grandparent — mirrors test_full_invite_flow."""
+    from .conftest import TestingSession
+
+    parent = signup(client, "parent@example.com", "Pat")
+    family_id = create_family(client, parent, "The Salignas")
+    add_child(client, parent, family_id, "Emma")
+
+    r = client.post(
+        f"/families/{family_id}/invites",
+        json={"email": "rel@example.com", "role": role},
+        headers=parent,
+    )
+    assert r.status_code == 201
+    token = _get_token(TestingSession)
+
+    r = client.get(f"/invites/{token}")
+    assert r.status_code == 200
+    assert r.json() == {"family_name": "The Salignas", "role": role, "invited_by": "Pat"}
+
+    member = signup(client, "rel@example.com", role.title())
+    r = client.post("/invites/accept", json={"token": token}, headers=member)
+    assert r.status_code == 200
+    assert r.json()["role"] == role
+
+    from app.models import ChildRelationship, FamilyRole
+
+    with TestingSession() as db:
+        edges = (
+            db.query(ChildRelationship)
+            .filter(ChildRelationship.relationship_type == FamilyRole(role))
+            .all()
+        )
         assert len(edges) == 1
 
 

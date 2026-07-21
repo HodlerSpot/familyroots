@@ -26,13 +26,19 @@ compression visibly degrades letter edges — PNG is lossless and crisp).
   opening). New `prediction_rounds` + `predictions` tables own the whole lifecycle; round `status`
   (`open`/`sealed`/`skipped`) is the sole visibility authority. The birthday-sweep + lazy-on-read *pattern* and
   the `capsule_sealed`/`capsule_released` notification *kinds* are reused; no `time_capsules` write anywhere.
-- **One prediction per member per round** (2–120 chars, editable/replaceable until seal; unique
-  `(round_id, author_user_id)`). Authors edit/delete their own; parents/guardians may delete anyone's. Nothing
-  is mutable after seal.
+- **Up to 3 predictions per member per round** (each 2–120 chars, individually editable/deletable until seal).
+  A round is one year, so this is **up to 3 predictions per family member per year**. There is **no** unique
+  `(round_id, author_user_id)` constraint; instead the create endpoint enforces the **max-3-per-`(round, author)`**
+  cap server-side with a count check inside the transaction (a 4th create is rejected 409/422). Authors
+  edit/delete each of their own predictions individually; parents/guardians may delete anyone's. Nothing is
+  mutable after seal. (Concurrency: the count check runs in-transaction; a rare double-submit racing to a 4th row
+  is an accepted minor over-count at this scale — enforce with a `SELECT ... FOR UPDATE` on the author's rows only
+  if a test surfaces it.)
 - **No peek after sealing** — sealed is sealed for everyone (including parents) until 18. Empty rounds are
   `skipped` (no image, no fanfare).
 - **Word weighting, no AI** — lowercase, strip punctuation, drop stopwords + the child's first name; weight =
-  number of distinct predictions containing the word; top 60; deterministic tie-break. One
+  number of distinct predictions containing the word (each of a member's up-to-3 predictions counts as a
+  distinct prediction); top 60; deterministic tie-break. One
   `services/predictions.py` tokenizer feeds both the live-cloud JSON (client-rendered for the open round) and
   the sealed PNG (server-rendered).
 - **Supporters participate** — submit/view the open round via the `create_contribution` precedent
@@ -71,10 +77,11 @@ compression visibly degrades letter edges — PNG is lossless and crisp).
 ## Workstreams (parallelizable; API contract frozen by the architecture doc)
 
 **WS1 — Schema (backend).** `prediction_rounds` (child_id, sequence/year, opens_at, seals_on, status, unique
-`(child_id, seals_on)`) + `predictions` (round_id, author_user_id, body ≤120, created_at, updated_at, unique
-`(round_id, author_user_id)`); ONE Alembic migration off head `b8f2c1a9d4e7`. `FeedEventType` values added (no
-migration). Extract the birthday helpers from `capsules.py` into `services/birthdays.py` and have capsules
-import them (no duplication).
+`(child_id, seals_on)`) + `predictions` (round_id, author_user_id, body ≤120, created_at, updated_at) — **no**
+unique `(round_id, author_user_id)`; add a non-unique index on `(round_id, author_user_id)` for the per-author
+count/lookup; ONE Alembic migration off head `b8f2c1a9d4e7`. `FeedEventType` values added (no migration).
+Extract the birthday helpers from `capsules.py` into `services/birthdays.py` and have capsules import them (no
+duplication).
 
 **WS2 — Predictions service + seal task (backend).** `services/predictions.py`: tokenizer/weighting
 (`cloud_words`), `render_cloud_png`, and `seal_due_prediction_rounds(db)` — idempotent via compare-and-swap
@@ -84,12 +91,17 @@ post-commit `NotificationBatch.deliver`. Wire into `run_maintenance` AND lazily 
 (shared function). Storage `put_object` additions.
 
 **WS3 — API endpoints (backend).** Per the architecture contract: create/edit/delete prediction; get open round
-+ cloud JSON + attributed list; member sealed-rounds summary; released "Book of Predictions" view. Role gates:
-open-round submit/view allow supporters (no `require_not_supporter`); birthdate/seal-date stripped for
-supporters; sealed/released member-only. `access.py` allowlist: supporters see `prediction_added`.
++ cloud JSON + attributed list; member sealed-rounds summary; released "Book of Predictions" view. **The create
+endpoint enforces the ≤3-per-`(round, author)` cap** (count the caller's existing predictions in the open round;
+reject the 4th with 409/422 and a warm "You've added all 3 of your predictions for this year" message); the open
+round + cloud responses expose the caller's own predictions (a small list) so the UI can show remaining slots.
+Role gates: open-round submit/view allow supporters (no `require_not_supporter`); birthdate/seal-date stripped
+for supporters; sealed/released member-only. `access.py` allowlist: supporters see `prediction_added`.
 
 **WS4 — Web (frontend + ux-designer + brand-guardian).** Prediction composer (modeled on the `feed.tsx` comment
-composer); **client-side live word cloud** rendered from the cloud JSON so the open round is always current;
+composer) that shows the caller's existing predictions with per-item edit/delete and a **"remaining" slot
+count (up to 3)**, hiding the add field once 3 are used; **client-side live word cloud** rendered from the cloud
+JSON so the open round is always current;
 sealed-round card near `CapsulesSection`; the Book-of-Predictions release view; placement on the child vault
 page **including the supporter branch**. Copy from brand-guardian; the sealed keepsake PNG shown via `<img>`
 from `download_media`.
@@ -99,7 +111,8 @@ the zip; verify zip size still deploys. No new AWS resources (reuses the daily E
 
 **WS6 — Tests + review.** Sweep idempotency (run twice → no double seal); birthday-today seeding; empty-round
 skip; full supporter matrix (predict + see open cloud; never birthdate/seal-date/sealed/released);
-one-prediction-per-member uniqueness + edit/replace; 18th-birthday finale (all sealed rounds release as the
+**up-to-3-predictions-per-member cap** (3 succeed, the 4th is rejected; each of the 3 independently
+editable/deletable; the cloud aggregates all of them); 18th-birthday finale (all sealed rounds release as the
 Book); **PNG determinism** (same round id → byte-identical image) and that a real `image/png` `MediaObject` is
 produced and served. Then a security + QA review pass — the seal task's exactly-once behavior and the
 supporter/birthdate-leak matrix are the hard-verify items.

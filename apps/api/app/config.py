@@ -174,6 +174,17 @@ _load_secrets_overlay()
 class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://futureroots:futureroots@localhost:5432/futureroots"
     jwt_secret: str = "dev-only-secret-change-in-production!"
+    # Session TTLs. A normal session lasts session_ttl_minutes (the web client
+    # slides this window by silently refreshing on API activity, so active users
+    # never expire mid-task); ticking "Stay logged in" at login instead issues a
+    # remember_me_ttl_days token not subject to the idle timeout. Both are
+    # env-overridable (FUTUREROOTS_SESSION_TTL_MINUTES / _REMEMBER_ME_TTL_DAYS).
+    session_ttl_minutes: int = 30
+    remember_me_ttl_days: int = 30
+    # Legacy: the old fixed session lifetime. No longer used for session
+    # issuance (replaced by session_ttl_minutes / remember_me_ttl_days above);
+    # retained so an existing FUTUREROOTS_JWT_TTL_HOURS override can't break
+    # boot. The impersonation token has always used its own minutes= path.
     jwt_ttl_hours: int = 24 * 7
     # TTL of the media-only token that rides in <img>/<video> query strings.
     # Long enough that the web client's refresh-on-any-API-call keeps a normal

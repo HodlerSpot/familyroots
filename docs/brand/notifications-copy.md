@@ -7,10 +7,10 @@ and `apps/api/app/services/notifications.py` (tone + naming continuity).
 
 Conventions:
 
-- Placeholders use `{curlyBraces}`. Ten notification kinds, using these exact
+- Placeholders use `{curlyBraces}`. Eleven notification kinds, using these exact
   keys throughout (match them in code): `call_live`, `contribution`,
   `fund_activated`, `capsule_sealed`, `capsule_released`, `announcement`,
-  `new_member`, `milestone`, `memory`, `legacy`.
+  `new_member`, `milestone`, `memory`, `legacy`, `memory_request`.
 - **Push and bell rows share one string.** Per the brief, the in-app bell row
   reuses the exact same title/body as the OS push notification, no separate
   "long" copy. Write for the lock screen; the bell gets the same result.
@@ -36,7 +36,7 @@ Conventions:
 
 ---
 
-## 1. Push / bell strings, all 10 kinds
+## 1. Push / bell strings, all 11 kinds
 
 | Kind | Title | Body | Tap opens | Register |
 |---|---|---|---|---|
@@ -50,6 +50,7 @@ Conventions:
 | `milestone` | `{childName} just hit a milestone` | `{milestoneTitle}. Tap in to celebrate with the family.` | Child's vault, milestone open | Pride + invitation |
 | `memory` | `A new memory for {childName}` | `Take a look: {itemTitle} just joined the vault.` | Child's vault | Warm, low-key |
 | `legacy` | `A new story in the family archive` | `{itemTitle} just joined your family's legacy archive.` | Family legacy archive | Warm, low-key |
+| `memory_request` | `Share a memory for {childName}` | `It's {childName}'s month. Add a memory to their vault?` | Child's vault | Gentle reminder + invitation (never pressure) |
 
 Filled examples, with character counts, to confirm they fit:
 
@@ -62,6 +63,7 @@ Filled examples, with character counts, to confirm they fit:
 - `milestone`: "Emma just hit a milestone" (25) / "First piano recital. Tap in to celebrate with the family." (58)
 - `memory`: "A new memory for Emma" (21) / "Take a look: Beach day photos just joined the vault." (52)
 - `legacy`: "A new story in the family archive" (33) / "Grandma's apple pie recipe just joined your family's legacy archive." (69, tight; truncate the recipe title first if a longer one runs over)
+- `memory_request`: "Share a memory for Emma" (23) / "It's Emma's month. Add a memory to their vault?" (47)
 
 The `milestone` and `memory`/`legacy` bodies carry parent-typed free text
 (`{milestoneTitle}` / `{itemTitle}`). Deliberately keep that text out of the
@@ -137,7 +139,26 @@ Paragraphs:
 
 - CTA: `See {childName}'s vault` → `/family/{id}/child/{childId}`
 
-### 2.4 Unchanged (do not rewrite)
+### 2.4 `memory_request` (default: on)
+
+The monthly "add a memory" nudge for the family's rotating child of the month.
+Reminder register: warm and low-pressure, never a chore. Sent by the daily
+maintenance sweep, once per member per calendar month.
+
+| Field | Copy |
+|---|---|
+| Subject | `Share a memory for {childName} this month` |
+| Preheader | `Add a memory for {childName} this month.` |
+| Greeting | `Hi {recipientName},` |
+
+Paragraphs:
+
+1. `This month, {childName} is your family's memory keeper. Is there a moment, a photo, or a few words you'd like to add to {childName}'s vault?`
+2. `Even something small becomes part of the story {childName} will treasure one day.`
+
+- CTA: `Add a memory for {childName}` → `/family/{id}/child/{childId}`
+
+### 2.5 Unchanged (do not rewrite)
 
 - `contribution` confirmation email: keep existing copy.
 - `capsule_released` email: keep existing copy in `apps/api/app/routers/capsules.py`
@@ -153,6 +174,7 @@ Paragraphs:
 | Heading | Kinds |
 |---|---|
 | **Family moments** | `new_member`, `milestone`, `memory`, `legacy` |
+| **Reminders** | `memory_request` |
 | **Money & funds** | `contribution`, `fund_activated` |
 | **Time capsules** | `capsule_sealed`, `capsule_released` |
 | **Calls** | `call_live` |
@@ -166,6 +188,7 @@ Paragraphs:
 | `milestone` | When a child reaches a milestone worth celebrating. |
 | `memory` | When a new photo, video, or memory is added to the vault. |
 | `legacy` | When a new story or piece of wisdom joins your family's archive. |
+| `memory_request` | A gentle monthly nudge to add a new memory for one of your children. |
 | `contribution` | When someone gives to a child's Future Fund. |
 | `fund_activated` | When a child's Future Fund is ready to receive gifts. |
 | `capsule_sealed` | When someone seals a time capsule for a child. |
@@ -239,12 +262,12 @@ app," placed once at the bottom of the whole settings page, not per section.)
 
 ## Naming decisions
 
-- Ten notification kind keys used consistently across push, bell, email, and
+- Eleven notification kind keys used consistently across push, bell, email, and
   settings copy: `call_live`, `contribution`, `fund_activated`,
   `capsule_sealed`, `capsule_released`, `announcement`, `new_member`,
-  `milestone`, `memory`, `legacy`.
-- Settings grouping headings: "Family moments," "Money & funds," "Time
-  capsules," "Calls," "From FutureRoots."
+  `milestone`, `memory`, `legacy`, `memory_request`.
+- Settings grouping headings: "Family moments," "Reminders," "Money & funds,"
+  "Time capsules," "Calls," "From FutureRoots."
 - Bell read-all label: "Mark all as read." Bell empty state: "You're all
   caught up."
 - Push/bell character budgets (50 title / 120 body) are treated as hard

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .db import SessionLocal
 from .models import Child, Family, FamilyMember, FamilyRole, MemberStatus, User, UserRole
-from .security import decode_access_token
+from .security import SessionExpiredError, decode_access_token
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -29,7 +29,14 @@ def get_current_user(
 ) -> User:
     if credentials is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
-    user_id = decode_access_token(credentials.credentials)
+    try:
+        user_id = decode_access_token(credentials.credentials, raise_on_expired=True)
+    except SessionExpiredError:
+        # Distinct from a garbage token: the web client keys on this code to
+        # show a warm "your session timed out" note and bounce to /login.
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, detail={"code": "session_expired"}
+        ) from None
     if user_id is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
     user = db.get(User, user_id)

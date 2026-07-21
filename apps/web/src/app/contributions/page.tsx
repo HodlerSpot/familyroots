@@ -33,8 +33,7 @@ export default function ContributionsPage() {
       .myContributions()
       .then(setItems)
       .catch((err) => {
-        if (err instanceof ApiError && err.status === 401) router.replace("/login?next=/contributions");
-        else setError(err instanceof ApiError ? err.message : "Couldn't load your contributions");
+        setError(err instanceof ApiError ? err.message : "Couldn't load your contributions");
       });
   }, [router]);
 

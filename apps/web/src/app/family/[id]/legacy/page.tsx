@@ -48,8 +48,7 @@ export default function LegacyPage() {
       setMyRole(family.members.find((m) => m.user.id === me.id)?.role ?? null);
       setCapabilities(family.capabilities);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) router.replace("/login");
-      else setError(err instanceof ApiError ? err.message : "Couldn't load the archive");
+      setError(err instanceof ApiError ? err.message : "Couldn't load the archive");
     }
   }, [familyId, router]);
 

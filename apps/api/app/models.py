@@ -30,6 +30,12 @@ class FamilyRole(str, enum.Enum):
     parent = "parent"
     grandparent = "grandparent"
     relative = "relative"
+    # More specific labels for the "relative" tier — permission-identical to
+    # relative (full non-supporter family members). Native enum is off (VARCHAR
+    # column), so adding these values needs no DB migration.
+    aunt = "aunt"
+    uncle = "uncle"
+    cousin = "cousin"
     guardian = "guardian"
     # A trusted non-family adult (coach, mentor, friend, neighbour). Scoped
     # down: no legacy archive, no fund figures, no time capsules, no goals —
@@ -43,6 +49,9 @@ GUARDIAN_ROLES = {
     FamilyRole.parent,
     FamilyRole.grandparent,
     FamilyRole.relative,
+    FamilyRole.aunt,
+    FamilyRole.uncle,
+    FamilyRole.cousin,
     FamilyRole.guardian,
 }
 
@@ -93,6 +102,13 @@ class FeedEventType(str, enum.Enum):
     # A child's real Future Fund finished onboarding and can now receive gifts.
     # Non-native enum (VARCHAR column), so this new value needs no DB migration.
     fund_activated = "fund_activated"
+    # Future Predictions (the yearly family word-cloud game). All three are
+    # VARCHAR values (non-native enum) so they need no DB migration.
+    # "predictions_released" is exactly 20 chars — the VARCHAR(20) ceiling; any
+    # future value must fit 20 or widen the column.
+    prediction_added = "prediction_added"          # first prediction by a member
+    predictions_sealed = "predictions_sealed"      # birthday seal (non-empty)
+    predictions_released = "predictions_released"  # 18th birthday grand opening
 
 
 class SubscriptionPlan(str, enum.Enum):
@@ -127,6 +143,13 @@ class ReactionTargetType(str, enum.Enum):
 class CapsuleStatus(str, enum.Enum):
     sealed = "sealed"
     released = "released"
+
+
+class PredictionRoundStatus(str, enum.Enum):
+    open = "open"          # accepting predictions; the live cloud is visible
+    sealed = "sealed"      # birthday passed, >=1 prediction; hidden until 18
+    skipped = "skipped"    # birthday passed, 0 predictions; invisible forever
+    released = "released"  # 18th birthday: the Book of Predictions is open
 
 
 class LegacyType(str, enum.Enum):
@@ -504,6 +527,30 @@ class FundNudge(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class MemoryPrompt(Base):
+    """The monthly Memory Request throttle/idempotency row: ONE per
+    (user, family, calendar month). Mirrors FundNudge — the unique constraint
+    is the race-safe monthly claim, so the daily sweep can run any number of
+    times and each eligible member is prompted at most once per family per
+    month. child_id records which child was the child-of-the-month when the
+    prompt fired (audit/copy). Rows older than 90 days are swept by the daily
+    maintenance command (storage limitation)."""
+
+    __tablename__ = "memory_prompts"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "family_id", "period", name="uq_memory_prompts_user_family_period"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    family_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("families.id"), index=True)
+    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"))
+    period: Mapped[str] = mapped_column(String(7))  # "YYYY-MM" (UTC calendar month)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class FundLedgerEntry(Base):
     """Append-only. Never UPDATE or DELETE a row; corrections are new
     compensating entries. Written only by record_payment_succeeded (verified
@@ -557,6 +604,85 @@ class TimeCapsule(Base):
     child: Mapped[Child] = relationship()
     author: Mapped[User] = relationship()
     media: Mapped[MediaObject | None] = relationship()
+
+
+class PredictionRound(Base):
+    """One year of the Future Predictions game for a child. Sealed rounds hide
+    EVERYTHING from everyone (parents included) until the 18th birthday — round
+    status is the sole visibility authority. Status transitions are
+    compare-and-swap (UPDATE ... WHERE status='open') so the maintenance sweep
+    and lazy read paths never double-seal."""
+
+    __tablename__ = "prediction_rounds"
+    __table_args__ = (
+        # Exactly-once per birthday: two rounds can never target the same date.
+        UniqueConstraint("child_id", "seals_on", name="uq_prediction_rounds_child_date"),
+        # At most one open round per child (double-open race guard). Both dialect
+        # kwargs so SQLite tests enforce the same partial semantics as Postgres.
+        Index(
+            "uq_prediction_rounds_one_open",
+            "child_id",
+            unique=True,
+            postgresql_where=text("status = 'open'"),
+            sqlite_where=text("status = 'open'"),
+        ),
+        # Sweep scan: open rounds due on/before today.
+        Index(
+            "ix_prediction_rounds_due",
+            "seals_on",
+            postgresql_where=text("status = 'open'"),
+            sqlite_where=text("status = 'open'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # UTC date of the birthday this round seals on. SERVER-ONLY FOR SUPPORTERS:
+    # never serialized to them (it is birthdate-derived).
+    seals_on: Mapped[date] = mapped_column(Date)
+    status: Mapped[PredictionRoundStatus] = mapped_column(
+        Enum(PredictionRoundStatus, native_enum=False, length=20),
+        default=PredictionRoundStatus.open,
+    )
+    sealed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The rendered word-cloud PNG (system-generated media). Set at seal; NULL
+    # while open and forever for skipped rounds.
+    cloud_media_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("media_objects.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    child: Mapped[Child] = relationship()
+    cloud_media: Mapped[MediaObject | None] = relationship()
+
+
+class Prediction(Base):
+    """One prediction by one member (or supporter) for one round. Up to THREE
+    per author per round — there is deliberately NO unique (round_id,
+    author_user_id) constraint; the create endpoint enforces the cap with an
+    in-transaction count. Hard-deleted while the round is open (author
+    self-delete or parent/guardian moderation); frozen once the round leaves
+    'open' — the API refuses every write to a non-open round."""
+
+    __tablename__ = "predictions"
+    __table_args__ = (
+        # Non-unique: the per-author count/lookup for the cap and "my
+        # predictions" list (there is intentionally no uniqueness here).
+        Index("ix_predictions_round_author", "round_id", "author_user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    round_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("prediction_rounds.id"), index=True)
+    author_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    body: Mapped[str] = mapped_column(String(120))  # 2-120 chars after trim, plain text
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    author: Mapped[User] = relationship()
 
 
 class LegacyItem(Base):
@@ -666,6 +792,9 @@ class NotificationPreference(Base):
     push_capsule_released: Mapped[bool] = mapped_column(default=True)
     email_announcements: Mapped[bool] = mapped_column(default=True)
     push_announcements: Mapped[bool] = mapped_column(default=True)
+    # --- monthly memory request (a valued family ritual; both channels on) ---
+    email_memory_request: Mapped[bool] = mapped_column(default=True)
+    push_memory_request: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

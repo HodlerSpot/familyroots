@@ -1,6 +1,14 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-export type FamilyRole = "parent" | "grandparent" | "relative" | "guardian" | "supporter";
+export type FamilyRole =
+  | "parent"
+  | "grandparent"
+  | "relative"
+  | "aunt"
+  | "uncle"
+  | "cousin"
+  | "guardian"
+  | "supporter";
 
 /** Emoji a member can react with on a moment or comment. */
 export const REACTION_EMOJI = ["❤️", "👍", "🎉", "😂", "🥰", "😢"] as const;
@@ -94,7 +102,10 @@ export type FeedEventType =
   | "member_joined"
   | "member_left"
   | "premium_activated"
-  | "premium_gifted";
+  | "premium_gifted"
+  | "prediction_added"
+  | "predictions_sealed"
+  | "predictions_released";
 
 export interface FeedEventOut {
   id: string;
@@ -168,6 +179,18 @@ export interface FundOut {
   }[];
 }
 
+/** The monthly memory-prompt state for a family, computed on read.
+ * `null` from the API means "no prompt" (a supporter, or a family with no
+ * children). `satisfied` is true once the caller has already added a memory
+ * this month, so the in-app card can quietly hide itself. */
+export interface MemoryPromptOut {
+  /** The prompt's calendar month, "YYYY-MM" (UTC) — used to key a per-month
+   * client-side dismiss so the card never nags twice in the same month. */
+  period: string;
+  child: { id: string; first_name: string };
+  satisfied: boolean;
+}
+
 export function formatMoney(cents: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
 }
@@ -198,7 +221,7 @@ export interface CapsuleOut {
 }
 
 /** The kinds of family moments FutureRoots can notify about. Each kind has an
- * email and a web-push toggle (20 booleans total). */
+ * email and a web-push toggle (22 booleans total). */
 export type NotificationKind =
   | "call_live"
   | "contribution"
@@ -209,7 +232,8 @@ export type NotificationKind =
   | "milestone"
   | "memory"
   | "legacy"
-  | "announcement";
+  | "announcement"
+  | "memory_request";
 
 export interface NotificationPrefs {
   email_new_member: boolean;
@@ -222,6 +246,7 @@ export interface NotificationPrefs {
   email_capsule_sealed: boolean;
   email_capsule_released: boolean;
   email_announcements: boolean;
+  email_memory_request: boolean;
   push_new_member: boolean;
   push_milestone: boolean;
   push_memory: boolean;
@@ -232,6 +257,7 @@ export interface NotificationPrefs {
   push_capsule_sealed: boolean;
   push_capsule_released: boolean;
   push_announcements: boolean;
+  push_memory_request: boolean;
 }
 
 /** GET /me/notifications also carries the server's web-push public key.
@@ -366,6 +392,87 @@ export interface PremiumStatus {
   grants: PremiumGrant[];
 }
 
+// --- Future Predictions (the yearly family word-cloud game) ---
+
+/** One word in the live cloud, sized by how many predictions used it. */
+export interface CloudWordOut {
+  word: string;
+  weight: number;
+}
+
+/** One prediction in the open round's attributed list. */
+export interface PredictionOut {
+  id: string;
+  body: string;
+  author_name: string;
+  /** The caller wrote this one (show edit + remove). */
+  is_mine: boolean;
+  /** The caller may remove it (their own, or they are a parent/guardian). */
+  can_delete: boolean;
+  created_at: string;
+}
+
+/** The open round: the live cloud + the attributed list + the caller's slots.
+ * `seals_on` and `year` are BOTH null for supporters (both are birthdate-derived
+ * dates they must never see) — rely on them being null rather than reconstructing
+ * anything. */
+export interface OpenRoundOut {
+  id: string;
+  year: number | null;
+  seals_on: string | null;
+  cloud: CloudWordOut[];
+  predictions: PredictionOut[];
+  /** The caller's own prediction ids in this round (for remaining-slot math). */
+  my_prediction_ids: string[];
+  /** The per-member cap for the round (3). */
+  max_per_member: number;
+}
+
+/** The game surface for one child. `round` is null when the game is complete
+ * (family, once the book is open) or idle (supporter, nothing to show).
+ * `completed` is true only for family once the book has released. */
+export interface PredictionGameOut {
+  child_first_name: string;
+  round: OpenRoundOut | null;
+  completed: boolean;
+}
+
+/** A family-only locked year (no counts, no content, no peek). */
+export interface SealedRoundOut {
+  id: string;
+  year: number;
+  sealed_at: string;
+  /** The 18th birthday the sealed years all open on. */
+  opens_on: string;
+}
+
+/** One prediction inside a released Book chapter. */
+export interface BookPredictionOut {
+  body: string;
+  author_name: string;
+  created_at: string;
+}
+
+/** One released year of the Book of Predictions: the keepsake image + the full
+ * attributed list. */
+export interface BookChapterOut {
+  round_id: string;
+  year: number;
+  age: number;
+  /** The sealed keepsake image (a PNG), served via mediaUrl(). Null if a year
+   * sealed without a rendered image. */
+  cloud_media_id: string | null;
+  media_content_type: string | null;
+  predictions: BookPredictionOut[];
+}
+
+/** The released Book of Predictions (family-only). Empty chapters until the
+ * 18th birthday; skipped years are silently absent. */
+export interface PredictionBookOut {
+  child_first_name: string;
+  chapters: BookChapterOut[];
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -386,16 +493,84 @@ export function isPremiumRequired(err: unknown): err is ApiError & { capability:
   return err instanceof ApiError && err.status === 402 && err.code === "premium_required";
 }
 
-export function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("futureroots_token");
+// The session token lives in EITHER store: localStorage for a "stay logged in"
+// (remembered) session that survives browser restarts, sessionStorage for a
+// default session that a browser/tab close ends — the real shared-computer
+// protection. We also track the token's expiry alongside it so ensureSessionFresh
+// can slide the window before it lapses (mirrors the media-token exp tracking).
+const TOKEN_KEY = "futureroots_token";
+const TOKEN_EXP_KEY = "futureroots_token_exp";
+
+/** Refresh a near-expiry token this long before it lapses, so ordinary activity
+ * keeps a session alive indefinitely: ~10 min for a 30-min default session,
+ * ~1 day for a 30-day remembered session. */
+const SESSION_REFRESH_WINDOW_MS = 10 * 60 * 1000;
+const REMEMBER_REFRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+interface TokenResponse {
+  access_token: string;
+  /** Seconds until the token expires; present on login/signup/refresh. */
+  expires_in_seconds?: number;
 }
 
-export function setToken(token: string | null) {
-  if (token === null) localStorage.removeItem("futureroots_token");
-  else localStorage.setItem("futureroots_token", token);
-  // The cached media token belongs to the previous identity (logout, login,
-  // impersonation switch) — never carry it across; it re-mints lazily.
+/** Read the `exp` (seconds since epoch) from a JWT payload, as ms, or null. */
+function decodeJwtExpMs(token: string): number | null {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    let b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    b64 += "=".repeat((4 - (b64.length % 4)) % 4);
+    const claims = JSON.parse(atob(b64));
+    return typeof claims.exp === "number" ? claims.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  // sessionStorage (default session) wins over localStorage (remembered): a
+  // fresh default login on a shared computer takes precedence.
+  return sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY);
+}
+
+/** True when the active session is a "stay logged in" (localStorage) token,
+ * which is exempt from the idle timeout. */
+export function isRememberedSession(): boolean {
+  if (typeof window === "undefined") return false;
+  if (sessionStorage.getItem(TOKEN_KEY)) return false;
+  return !!localStorage.getItem(TOKEN_KEY);
+}
+
+/** Write the token + its expiry into one store and clear the other, so the
+ * session lives in exactly one place. Does NOT touch the media token — the
+ * silent refresh path reuses this to slide the same identity's window. */
+function writeToken(token: string, remember: boolean) {
+  const primary = remember ? localStorage : sessionStorage;
+  const other = remember ? sessionStorage : localStorage;
+  other.removeItem(TOKEN_KEY);
+  other.removeItem(TOKEN_EXP_KEY);
+  primary.setItem(TOKEN_KEY, token);
+  const exp = decodeJwtExpMs(token);
+  if (exp) primary.setItem(TOKEN_EXP_KEY, String(exp));
+  else primary.removeItem(TOKEN_EXP_KEY);
+}
+
+function clearToken() {
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(TOKEN_EXP_KEY);
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_EXP_KEY);
+}
+
+/** Set (or clear) the session token. `remember` picks localStorage (survives
+ * restarts) vs sessionStorage (default, ends with the browser session).
+ * Clearing wipes both stores. Always clears the cached media token, which
+ * belongs to the previous identity (login, logout, impersonation switch). */
+export function setToken(token: string | null, opts: { remember?: boolean } = {}) {
+  if (typeof window === "undefined") return;
+  if (token === null) clearToken();
+  else writeToken(token, opts.remember ?? false);
   clearMediaToken();
 }
 
@@ -456,10 +631,70 @@ export async function ensureMediaToken(): Promise<void> {
   if (!usable) await mediaTokenInflight;
 }
 
+// Testnet uses wallet auth and its own /login flow, so the family-product
+// session-timeout redirect is suppressed there.
+const IS_TESTNET = process.env.NEXT_PUBLIC_TESTNET === "1";
+
+// Background/auth-flow endpoints whose own 401 must NOT trigger the session
+// redirect: the login/password calls surface their own errors (and run with no
+// token anyway), and the two piggyback calls handle their own failures.
+const NO_SESSION_REDIRECT = new Set([
+  "/auth/login",
+  "/auth/signup",
+  "/auth/forgot-password",
+  "/auth/reset-password",
+  "/auth/refresh",
+  "/auth/media-token",
+]);
+
+let sessionRefreshInflight: Promise<void> | null = null;
+
+/** Slide the session window on API traffic: called on every request, it is a
+ * no-op while the token has comfortable life left, and background-refreshes via
+ * a single in-flight promise once inside the refresh window — so an active user
+ * is never logged out mid-task, while an idle tab's token simply ages out.
+ * Mirrors ensureMediaToken, but never blocks: the current token is still valid. */
+export function ensureSessionFresh(): void {
+  if (typeof window === "undefined" || !getToken()) return;
+  const remembered = isRememberedSession();
+  const store = remembered ? localStorage : sessionStorage;
+  const exp = Number(store.getItem(TOKEN_EXP_KEY) ?? 0);
+  if (!exp) return; // unknown expiry (e.g. a legacy token) — nothing to slide
+  const remaining = exp - Date.now();
+  if (remaining <= 0) return; // already lapsed; the next call's 401 handles it
+  const refreshWindow = remembered ? REMEMBER_REFRESH_WINDOW_MS : SESSION_REFRESH_WINDOW_MS;
+  if (remaining > refreshWindow) return;
+  sessionRefreshInflight ??= (async () => {
+    try {
+      const res = await request<TokenResponse>("/auth/refresh", { method: "POST" });
+      // Re-mint into the SAME store, preserving remembered-ness; keep the media
+      // token (same identity) rather than forcing a needless re-mint.
+      writeToken(res.access_token, remembered);
+    } catch {
+      // Keep the current token; a later call refreshes or 401s into /login.
+    } finally {
+      sessionRefreshInflight = null;
+    }
+  })();
+}
+
+/** A 401 on an authenticated call means the session lapsed or was rejected:
+ * clear it and send the member to a warm re-login, preserving where they were. */
+function handleSessionExpired() {
+  clearToken();
+  clearMediaToken();
+  if (typeof window === "undefined" || window.location.pathname === "/login") return;
+  const next = window.location.pathname + window.location.search;
+  window.location.replace(`/login?next=${encodeURIComponent(next)}&reason=timeout`);
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  // Piggyback media-token freshness on all API traffic (see ensureMediaToken),
-  // so pages always render <img>/<video> URLs with a live token.
-  if (path !== "/auth/media-token") await ensureMediaToken();
+  // Piggyback media-token freshness + session sliding on all API traffic, so
+  // pages always render live media and an active session never expires.
+  if (path !== "/auth/media-token" && path !== "/auth/refresh") {
+    await ensureMediaToken();
+    ensureSessionFresh();
+  }
   const token = getToken();
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -487,6 +722,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       }
     } catch {
       // non-JSON error body; keep statusText
+    }
+    // Centralized session-timeout handling replaces the old per-page 401→/login
+    // checks: any 401 on an authenticated call (session_expired or a rejected
+    // token) clears the session and redirects to a warm re-login.
+    if (
+      res.status === 401 &&
+      !IS_TESTNET &&
+      !NO_SESSION_REDIRECT.has(path) &&
+      getToken()
+    ) {
+      handleSessionExpired();
     }
     throw new ApiError(res.status, detail, code, capability);
   }
@@ -516,11 +762,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, display_name, password }),
     }),
-  login: (email: string, password: string) =>
-    request<{ access_token: string }>("/auth/login", {
+  login: (email: string, password: string, remember = false) =>
+    request<TokenResponse>("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, remember_me: remember }),
     }),
+  /** Re-mint the current session, preserving its remember window. Gated
+   * server-side by a still-valid token, so an expired session can't refresh. */
+  refreshSession: () => request<TokenResponse>("/auth/refresh", { method: "POST" }),
   me: () => request<UserOut>("/auth/me"),
   reportIssue: (title: string, body: string) =>
     request<{ id: string; title: string; status: string }>("/issues", {
@@ -601,6 +850,10 @@ export const api = {
       body: JSON.stringify(milestone),
     }),
   familyFeed: (familyId: string) => request<FeedEventOut[]>(`/families/${familyId}/feed`),
+  /** This month's gentle memory prompt for a family (the rotating child of the
+   * month). Resolves to null for supporters or a family with no children. */
+  getMemoryPrompt: (familyId: string) =>
+    request<MemoryPromptOut | null>(`/families/${familyId}/memory-prompt`),
   setVaultVisibility: (itemId: string, visible: boolean) =>
     request<VaultItemOut>(`/vault-items/${itemId}/visibility`, {
       method: "PATCH",
@@ -625,7 +878,7 @@ export const api = {
   // Notification preferences (profile)
   notificationPrefs: () => request<NotificationSettings>("/me/notifications"),
   setNotificationPrefs: (prefs: NotificationPrefs) => {
-    // The PUT schema is the flat 20-boolean matrix; never echo back the
+    // The PUT schema is the flat 22-boolean matrix; never echo back the
     // read-only push_public_key that GET piggybacks.
     const { push_public_key: _readOnly, ...body } = prefs as NotificationSettings;
     void _readOnly;
@@ -726,6 +979,34 @@ export const api = {
     request<CapsuleOut>(`/capsules/${capsuleId}/release`, { method: "POST" }),
   voteReleaseCapsule: (capsuleId: string) =>
     request<CapsuleOut>(`/capsules/${capsuleId}/vote-release`, { method: "POST" }),
+
+  // --- Future Predictions ---
+  /** The game surface for a child: open round + live cloud + attributed list.
+   * Supporters may call it too (they get a date-free view). */
+  getPredictionGame: (childId: string) =>
+    request<PredictionGameOut>(`/children/${childId}/predictions`),
+  /** Add one prediction to the open round. Up to three per member per year;
+   * the API returns 409 with a warm message on the 4th. */
+  addPrediction: (childId: string, body: string) =>
+    request<PredictionOut>(`/children/${childId}/predictions`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }),
+  /** Edit one of your own predictions while the round is open. */
+  editPrediction: (predictionId: string, body: string) =>
+    request<PredictionOut>(`/predictions/${predictionId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ body }),
+    }),
+  /** Remove a prediction (your own, or any as a parent/guardian). */
+  deletePrediction: (predictionId: string) =>
+    request<void>(`/predictions/${predictionId}`, { method: "DELETE" }),
+  /** Family-only: the strip of sealed years waiting for the 18th birthday. */
+  listSealedPredictionRounds: (childId: string) =>
+    request<SealedRoundOut[]>(`/children/${childId}/predictions/rounds`),
+  /** Family-only: the released Book of Predictions. */
+  getPredictionBook: (childId: string) =>
+    request<PredictionBookOut>(`/children/${childId}/predictions/book`),
 
   listLegacy: (familyId: string) => request<LegacyOut[]>(`/families/${familyId}/legacy`),
   addLegacy: (

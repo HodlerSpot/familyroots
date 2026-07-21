@@ -81,6 +81,23 @@ function eventLine(e: FeedEventOut): { icon: string; text: string } {
         icon: "🎁",
         text: `${p.gifter_name} gave the family a year of FutureRoots Premium ♥`,
       };
+    // Future Predictions. `prediction_added` is the only one supporters see
+    // (and it carries no date); sealed/released are family-only.
+    case "prediction_added":
+      return {
+        icon: "🔮",
+        text: `${e.actor_name} shared a prediction for ${p.child_name}'s future`,
+      };
+    case "predictions_sealed":
+      return {
+        icon: "📜",
+        text: `This year's predictions for ${p.child_name} are sealed away until their 18th birthday`,
+      };
+    case "predictions_released":
+      return {
+        icon: "📖",
+        text: `${p.child_name}'s Book of Predictions is open. Years of family wishes to read together.`,
+      };
     default:
       return { icon: "✨", text: String(p.title ?? e.type) };
   }

@@ -18,6 +18,8 @@ import {
 } from "@/lib/api";
 import { Button, Card, ErrorNote, Input, Label, ZoomableImage } from "@/components/ui";
 import { CapsulesSection } from "@/components/capsules";
+import { PredictionsCard } from "@/components/predictions/predictions-card";
+import { SealedPredictionYears } from "@/components/predictions/sealed-years";
 import { FamilyFundCard, SupporterFundCard } from "@/components/fund";
 import { PremiumUpsellCard } from "@/components/premium/PremiumUpsell";
 import { FutureGifts } from "@/components/future-gifts";
@@ -86,8 +88,7 @@ export default function ChildVaultPage() {
       }
       return child?.future_gifts_seconds;
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) router.replace("/login");
-      else setError(err instanceof ApiError ? err.message : "Couldn't load this vault");
+      setError(err instanceof ApiError ? err.message : "Couldn't load this vault");
       return undefined;
     }
   }, [childId, familyId, router]);
@@ -174,7 +175,14 @@ export default function ChildVaultPage() {
       </div>
 
       {isSupporter ? (
-        <SupporterFundCard familyId={familyId} childId={childId} childName={childName} />
+        <>
+          <SupporterFundCard familyId={familyId} childId={childId} childName={childName} />
+          {/* Supporters may play the open round and watch the live cloud. The API
+              returns seals_on=null and completed=false for them, so this card
+              shows the date-free "seals on their next birthday" banner and never
+              a sealed/released view — no client-side reconstruction needed. */}
+          <PredictionsCard familyId={familyId} childId={childId} childName={childName} />
+        </>
       ) : (
         <>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -208,6 +216,9 @@ export default function ChildVaultPage() {
             </Card>
           </div>
 
+          {/* The yearly ritual deserves the fold: right after the fund/badges. */}
+          <PredictionsCard familyId={familyId} childId={childId} childName={childName} />
+
           <GoalsSection
             childId={childId}
             childName={childName}
@@ -227,6 +238,9 @@ export default function ChildVaultPage() {
             role={myRole}
             videoAllowed={videoAllowed}
           />
+
+          {/* The "locked things for later" neighborhood, next to capsules. */}
+          <SealedPredictionYears childId={childId} childName={childName} />
         </>
       )}
 

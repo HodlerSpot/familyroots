@@ -1,11 +1,13 @@
 import hashlib
 import secrets
 from datetime import timedelta, timezone
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials
 
 from ..config import settings
-from ..deps import CurrentUser, DbSession
+from ..deps import CurrentUser, DbSession, bearer_scheme
 from ..models import PasswordReset, User, utcnow
 from ..schemas import (
     ChangePasswordRequest,
@@ -21,6 +23,9 @@ from ..security import (
     create_access_token,
     create_media_token,
     hash_password,
+    read_remember_claim,
+    session_ttl_seconds,
+    token_is_impersonation,
     verify_password,
 )
 from ..services.email import get_email_sender
@@ -102,7 +107,37 @@ def login(payload: LoginRequest, db: DbSession) -> TokenResponse:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "This account has been disabled")
     user.last_login_at = utcnow()
     db.commit()
-    return TokenResponse(access_token=create_access_token(user.id))
+    remember = payload.remember_me
+    return TokenResponse(
+        access_token=create_access_token(user.id, remember=remember),
+        expires_in_seconds=session_ttl_seconds(remember),
+    )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+def refresh(
+    user: CurrentUser,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+) -> TokenResponse:
+    """Slide the session window: re-mint a fresh token for a caller whose
+    current token is STILL VALID (the CurrentUser gate rejects an expired token
+    with a session_expired 401, so an expired session can never refresh). The
+    new token preserves the caller's existing remember window — a 30-minute
+    token yields another 30-minute token, never a 30-day one."""
+    # CurrentUser guarantees credentials is present and the token non-expired.
+    # Refuse to refresh an admin impersonation token: it has a deliberate hard
+    # time cap and an 'imp' audit marker, and re-minting it via the ordinary
+    # session path would both slide it indefinitely and strip that marker. An
+    # impersonation session simply ends at its cap; the admin re-impersonates.
+    if token_is_impersonation(credentials.credentials):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Impersonation sessions cannot be refreshed"
+        )
+    remember = read_remember_claim(credentials.credentials)
+    return TokenResponse(
+        access_token=create_access_token(user.id, remember=remember),
+        expires_in_seconds=session_ttl_seconds(remember),
+    )
 
 
 @router.get("/me", response_model=UserOut)

@@ -17,6 +17,7 @@ dependencies = [
     "stripe>=11",
     "eth-account>=0.13",
     "pywebpush>=2",
+    "pillow>=10",
 ]
 
 [dependency-groups]

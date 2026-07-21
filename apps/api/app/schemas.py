@@ -40,6 +40,9 @@ class SignupRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    # "Stay logged in": unticked by default (safe on shared computers). True
+    # issues a long remember_me_ttl_days session instead of the 30-min default.
+    remember_me: bool = False
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -63,6 +66,9 @@ class ChangePasswordRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    # Session lifetime; lets the web client schedule its silent refresh (mirrors
+    # MediaTokenResponse.expires_in_seconds). Omitted where not applicable.
+    expires_in_seconds: int | None = None
 
 
 class MediaTokenResponse(BaseModel):
@@ -445,8 +451,8 @@ class PremiumSyncIn(BaseModel):
 # --- me: notification preferences & contributions ---
 
 class NotificationPrefs(BaseModel):
-    """The full per-user switch matrix: ten kinds across Email + Push (20
-    booleans). PUT accepts all 20; push_public_key is read-only (echoed on
+    """The full per-user switch matrix: eleven kinds across Email + Push (22
+    booleans). PUT accepts all 22; push_public_key is read-only (echoed on
     GET so the browser can subscribe without an Amplify env var) and ignored
     on input."""
 
@@ -473,8 +479,29 @@ class NotificationPrefs(BaseModel):
     push_capsule_released: bool
     email_announcements: bool
     push_announcements: bool
+    # monthly memory request
+    email_memory_request: bool
+    push_memory_request: bool
     # read-only: the server's VAPID public key ("" ⇒ push feature is dark)
     push_public_key: str = ""
+
+
+class MemoryPromptChild(BaseModel):
+    """The child-of-the-month named in the card CTA (no sensitive PII)."""
+
+    id: uuid.UUID
+    first_name: str
+
+
+class MemoryPromptOut(BaseModel):
+    """The monthly Memory Request card state, computed on read.
+    ``satisfied`` flips true once the caller has added any memory this month
+    (the card auto-hides). Null is returned for supporters or childless
+    families — see GET /families/{id}/memory-prompt."""
+
+    period: str  # "YYYY-MM"
+    child: MemoryPromptChild
+    satisfied: bool
 
 
 class PushSubscribeIn(BaseModel):
@@ -604,3 +631,74 @@ class PlannedCallSet(BaseModel):
 
 class ChildrenPresenceSet(BaseModel):
     child_ids: list[uuid.UUID] = Field(default_factory=list, max_length=50)
+
+
+# --- future predictions ---
+
+class CloudWordOut(BaseModel):
+    word: str
+    weight: int
+
+
+class PredictionOut(BaseModel):
+    id: uuid.UUID
+    body: str
+    author_name: str
+    is_mine: bool
+    can_delete: bool  # mine, or the viewer is a parent/guardian of the child
+    created_at: datetime
+
+
+class OpenRoundOut(BaseModel):
+    id: uuid.UUID
+    year: int | None                       # seals_on.year; None for supporters (date leak)
+    seals_on: date | None                  # ALWAYS None for supporters
+    cloud: list[CloudWordOut]              # server-tokenized; identical for everyone
+    predictions: list[PredictionOut]       # newest first — the list panel
+    my_prediction_ids: list[uuid.UUID]     # the caller's own, for edit/delete + slots
+    max_per_member: int                    # 3 — the per-round cap
+
+
+class PredictionGameOut(BaseModel):
+    child_first_name: str
+    round: OpenRoundOut | None             # None: game complete (family) / idle (supporter)
+    completed: bool                        # true only for family once released; false for supporters
+
+
+class PredictionCreate(BaseModel):
+    body: str
+
+    @field_validator("body")
+    @classmethod
+    def _trim(cls, value: str) -> str:
+        value = (value or "").strip()
+        if not 2 <= len(value) <= 120:
+            raise ValueError("A prediction is 2 to 120 characters.")
+        return value
+
+
+class SealedRoundOut(BaseModel):
+    id: uuid.UUID
+    year: int
+    sealed_at: datetime
+    opens_on: date                         # the 18th birthday (family-facing; fine)
+
+
+class BookPredictionOut(BaseModel):
+    body: str
+    author_name: str
+    created_at: datetime
+
+
+class BookChapterOut(BaseModel):
+    round_id: uuid.UUID
+    year: int
+    age: int                               # ordinal birthday it sealed on
+    cloud_media_id: uuid.UUID | None
+    media_content_type: str | None         # "image/png"
+    predictions: list[BookPredictionOut]
+
+
+class PredictionBookOut(BaseModel):
+    child_first_name: str
+    chapters: list[BookChapterOut]         # chronological; skipped years silently absent

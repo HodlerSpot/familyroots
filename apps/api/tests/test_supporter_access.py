@@ -1,25 +1,20 @@
 """Section E: the supporter role sees a deliberately narrow slice of a family
 and is locked out of funds, capsules, goals, and the legacy archive."""
 
-from .conftest import TestingSession, add_child, create_family, media_token, setup_fund, signup
+from .conftest import (
+    add_child,
+    create_family,
+    make_member,
+    media_token,
+    setup_fund,
+    signup,
+)
 from .test_capsules import seal_capsule
 from .test_vault import PNG_BYTES, upload_photo
 
 
 def make_supporter(client, parent, family_id, email="coach@example.com", name="Coach"):
-    from app.models import FamilyInvite
-
-    client.post(
-        f"/families/{family_id}/invites",
-        json={"email": email, "role": "supporter"},
-        headers=parent,
-    )
-    with TestingSession() as db:
-        token = db.query(FamilyInvite).filter(FamilyInvite.email == email).first().token
-    supporter = signup(client, email, name)
-    r = client.post("/invites/accept", json={"token": token}, headers=supporter)
-    assert r.status_code == 200, r.text
-    return supporter
+    return make_member(client, parent, family_id, "supporter", email, name)
 
 
 def _share(client, parent, item_id):
@@ -87,6 +82,27 @@ def test_supporter_blocked_from_family_only_surfaces(client):
         f"/families/{family_id}/invites",
         json={"email": "someone@example.com", "role": "relative"},
         headers=supporter,
+    ).status_code == 403
+
+
+def test_supporter_cannot_vote_to_release_capsule(client):
+    """Regression guard alongside the new relative-tier roles: a supporter is
+    outside GUARDIAN_ROLES and can never vote a capsule open."""
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    child_id = add_child(client, parent, family_id)
+    capsule_id = seal_capsule(
+        client,
+        parent,
+        child_id,
+        release_condition="milestone",
+        release_age=None,
+        release_milestone="Graduation day",
+    ).json()["id"]
+
+    supporter = make_supporter(client, parent, family_id)
+    assert client.post(
+        f"/capsules/{capsule_id}/vote-release", headers=supporter
     ).status_code == 403
 
 

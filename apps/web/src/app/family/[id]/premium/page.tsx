@@ -53,8 +53,7 @@ function PlanPicker() {
       setFamilyName(detail.name);
       setStatus(premium);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) router.replace("/login");
-      else setError(err instanceof ApiError ? err.message : "Couldn't load this page");
+      setError(err instanceof ApiError ? err.message : "Couldn't load this page");
     }
   }, [familyId, router]);
 

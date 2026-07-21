@@ -1,21 +1,8 @@
-from .conftest import TestingSession, add_child, create_family, signup
+from .conftest import TestingSession, add_child, create_family, make_member, signup
 
 
 def make_grandparent(client, parent, family_id, email="gran@example.com", name="Gran"):
-    from app.models import FamilyInvite
-
-    client.post(
-        f"/families/{family_id}/invites",
-        json={"email": email, "role": "grandparent"},
-        headers=parent,
-    )
-    with TestingSession() as db:
-        token = (
-            db.query(FamilyInvite).filter(FamilyInvite.email == email).first().token
-        )
-    gran = signup(client, email, name)
-    client.post("/invites/accept", json={"token": token}, headers=gran)
-    return gran
+    return make_member(client, parent, family_id, "grandparent", email, name)
 
 
 def create_goal(client, headers, child_id, reward_type="badge", **kwargs):

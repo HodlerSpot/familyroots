@@ -114,10 +114,19 @@ def test_maintenance_sweeps_everything_and_is_idempotent(client):
         "gift_intents_pruned": 1,
         "premium_email_log_pruned": 1,
         "fund_nudges_pruned": 1,
+        "memory_prompts_pruned": 0,
+        # Family A has children and one non-supporter member (the parent) who
+        # hasn't added a memory this month → one prompt; family B has no child.
+        "memory_prompts_sent": 1,
         "notifications_pruned": 0,
         "abandoned_calls_ended": 1,
         "call_participants_pruned": 1,   # the 100-day-old call's history
         "call_child_presence_pruned": 1,
+        # The children's first prediction rounds seal on their 2027 birthdays,
+        # not today, so nothing seals/releases in this sweep.
+        "prediction_rounds_sealed": 0,
+        "prediction_rounds_skipped": 0,
+        "prediction_rounds_released": 0,
     }
 
     with TestingSession() as db:
@@ -151,10 +160,15 @@ def test_maintenance_sweeps_everything_and_is_idempotent(client):
             "gift_intents_pruned": 0,
             "premium_email_log_pruned": 0,
             "fund_nudges_pruned": 0,
+            "memory_prompts_pruned": 0,
+            "memory_prompts_sent": 0,  # the parent was already prompted
             "notifications_pruned": 0,
             "abandoned_calls_ended": 0,
             "call_participants_pruned": 0,
             "call_child_presence_pruned": 0,
+            "prediction_rounds_sealed": 0,
+            "prediction_rounds_skipped": 0,
+            "prediction_rounds_released": 0,
         }
 
 

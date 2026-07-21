@@ -31,12 +31,8 @@ export default function FundSetupIntroPage() {
       setChildName(family.children.find((c) => c.id === childId)?.first_name ?? "");
       setReady(true);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
-        router.replace(`/login?next=${encodeURIComponent(location.pathname)}`);
-      } else {
-        setError("We couldn't load this page. Please try again from the vault");
-        setReady(true);
-      }
+      setError("We couldn't load this page. Please try again from the vault");
+      setReady(true);
     }
   }, [familyId, childId, router, vaultPath]);
 

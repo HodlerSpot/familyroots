@@ -23,6 +23,7 @@ from .routers import (
     issues,
     legacy,
     me,
+    predictions,
     premium,
     social,
     vault,
@@ -70,6 +71,7 @@ app.include_router(goals.router)
 app.include_router(contributions.router)
 app.include_router(funds.router)
 app.include_router(capsules.router)
+app.include_router(predictions.router)
 app.include_router(legacy.router)
 app.include_router(social.router)
 app.include_router(premium.router)

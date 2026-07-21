@@ -26,6 +26,8 @@ from ..models import (
     MediaObject,
     MediaStatus,
     MemberStatus,
+    PredictionRound,
+    PredictionRoundStatus,
     TimeCapsule,
     User,
     VaultItem,
@@ -254,6 +256,21 @@ def download_media(
         .first()
     )
     if sealed_capsule is not None and sealed_capsule.created_by != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
+
+    # A SEALED prediction round's cloud image is for NOBODY's eyes — the system
+    # sealed it, so (unlike capsules) there is no creator exception. Released
+    # rounds fall through to the normal child-scoped rules below (family members
+    # may fetch; supporters 404 via the child-media supporter branch).
+    sealed_round = (
+        db.query(PredictionRound)
+        .filter(
+            PredictionRound.cloud_media_id == media.id,
+            PredictionRound.status == PredictionRoundStatus.sealed,
+        )
+        .first()
+    )
+    if sealed_round is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
 
     if media.child_id is not None:

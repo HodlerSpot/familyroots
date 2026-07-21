@@ -27,6 +27,7 @@ Taxonomy — audience / channels / feed event per kind:
 | new_member       | active members, excl. joiner; no sup  | member_joined   |
 | milestone        | active members, excl. actor; no sup   | milestone       |
 | memory           | active members, excl. actor; no sup   | memory_added    |
+| memory_request   | active members; no sup (per sweep)    | none (by design)|
 | legacy           | active members, excl. actor; no sup   | none (existing) |
 
 "no sup" = supporters excluded (non-family adults who must never receive family
@@ -85,6 +86,7 @@ class NotificationKind(str, enum.Enum):
     new_member = "new_member"
     milestone = "milestone"
     memory = "memory"
+    memory_request = "memory_request"
     legacy = "legacy"
 
 
@@ -100,6 +102,7 @@ PREF_ATTRS: dict[NotificationKind, tuple[str, str]] = {
     NotificationKind.new_member: ("email_new_member", "push_new_member"),
     NotificationKind.milestone: ("email_milestone", "push_milestone"),
     NotificationKind.memory: ("email_memory", "push_memory"),
+    NotificationKind.memory_request: ("email_memory_request", "push_memory_request"),
     NotificationKind.legacy: ("email_legacy", "push_legacy"),
 }
 

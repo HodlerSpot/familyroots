@@ -32,17 +32,23 @@ from ..models import (
     CallStatus,
     FamilyCall,
     FundNudge,
+    MemoryPrompt,
     Notification,
     PremiumEmailLog,
     PremiumGiftIntent,
     utcnow,
 )
+from .memory_prompts import run_memory_prompts
+from .predictions import seal_due_prediction_rounds
 
 logger = logging.getLogger(__name__)
 
 GIFT_INTENT_RETENTION = timedelta(days=30)
 PREMIUM_EMAIL_LOG_RETENTION = timedelta(days=365)
 FUND_NUDGE_RETENTION = timedelta(days=30)
+# The memory-prompt throttle only needs the current month; 90 days is a safe
+# retention floor that keeps recent history for audit without accumulating.
+MEMORY_PROMPT_RETENTION = timedelta(days=90)
 CALL_HISTORY_RETENTION = timedelta(days=90)
 # In-app bell notifications are transient — the bell shows recent activity, not
 # an archive. Ninety days is plenty of scrollback.
@@ -118,6 +124,14 @@ def run_maintenance(db: Session) -> dict[str, int]:
     """The daily sweep. One session, one commit, a one-line count summary."""
     now = utcnow()
 
+    # Future Predictions: seal every round due on/before today (opens next
+    # rounds, releases at 18). Its own commit + post-commit notification
+    # delivery, run before the prunes so batches follow the post-commit rule.
+    prediction_counts, prediction_batches = seal_due_prediction_rounds(db)
+    db.commit()
+    for batch in prediction_batches:
+        batch.deliver(db)
+
     gift_intents = prune_gift_intents(db)
 
     email_log = (
@@ -131,6 +145,14 @@ def run_maintenance(db: Session) -> dict[str, int]:
     fund_nudges = (
         db.query(FundNudge)
         .filter(FundNudge.created_at < now - FUND_NUDGE_RETENTION)
+        .delete(synchronize_session=False)
+    )
+
+    # Memory-request throttle rows older than 90 days (the once-per-month claim
+    # only needs the current month; mirror the fund_nudges prune).
+    memory_prompts_pruned = (
+        db.query(MemoryPrompt)
+        .filter(MemoryPrompt.created_at < now - MEMORY_PROMPT_RETENTION)
         .delete(synchronize_session=False)
     )
 
@@ -165,16 +187,25 @@ def run_maintenance(db: Session) -> dict[str, int]:
         .delete(synchronize_session=False)
     )
 
+    db.commit()
+
+    # Monthly Memory Request: system-initiated notify with its own commit +
+    # post-commit delivery (the FundNudge idiom), run after the prunes commit.
+    # Idempotent — at most one prompt per member per family per month.
+    memory_prompts_sent = run_memory_prompts(db)
+
     counts = {
         "gift_intents_pruned": gift_intents,
         "premium_email_log_pruned": email_log,
         "fund_nudges_pruned": fund_nudges,
+        "memory_prompts_pruned": memory_prompts_pruned,
+        "memory_prompts_sent": memory_prompts_sent,
         "notifications_pruned": notifications_pruned,
         "abandoned_calls_ended": abandoned_calls,
         "call_participants_pruned": participants,
         "call_child_presence_pruned": presence,
+        **prediction_counts,
     }
-    db.commit()
     logger.info(
         "maintenance: %s",
         " ".join(f"{k}={v}" for k, v in counts.items()),

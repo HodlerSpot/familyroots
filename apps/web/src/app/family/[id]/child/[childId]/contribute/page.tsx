@@ -38,11 +38,7 @@ export default function ContributePage() {
       setChildName(family.children.find((c) => c.id === childId)?.first_name ?? "");
       setFundStatus(status.account_status);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
-        router.replace(`/login?next=${encodeURIComponent(location.pathname)}`);
-      } else {
-        setError("We couldn't load this page. Please try the link again");
-      }
+      setError("We couldn't load this page. Please try the link again");
     }
   }, [familyId, childId, router]);
 

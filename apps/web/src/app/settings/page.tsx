@@ -39,6 +39,16 @@ const GROUPS: {
     ],
   },
   {
+    heading: "Reminders",
+    rows: [
+      {
+        emailKey: "email_memory_request",
+        pushKey: "push_memory_request",
+        description: "A gentle monthly nudge to add a new memory for one of your children.",
+      },
+    ],
+  },
+  {
     heading: "Money & funds",
     rows: [
       {
@@ -206,8 +216,7 @@ export default function SettingsPage() {
         void resolvePushState(p);
       })
       .catch((err) => {
-        if (err instanceof ApiError && err.status === 401) router.replace("/login?next=/settings");
-        else setError(err instanceof ApiError ? err.message : "Couldn't load your settings");
+        setError(err instanceof ApiError ? err.message : "Couldn't load your settings");
       });
     return () => {
       if (savedTimer.current) clearTimeout(savedTimer.current);

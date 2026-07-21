@@ -1,5 +1,4 @@
 import uuid
-from datetime import date
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func
@@ -28,6 +27,8 @@ from ..models import (
     utcnow,
 )
 from ..schemas import CapsuleCreate, CapsuleOut
+from ..services.birthdays import age_on as _age_on
+from ..services.birthdays import birthday_at_age as _birthday_at_age
 from ..services.email_templates import render_email
 from ..services.feed import emit
 from ..services.notify import (
@@ -41,18 +42,6 @@ from ..services.notify import (
 router = APIRouter(tags=["capsules"])
 
 RELEASE_VOTES_REQUIRED = 2
-
-
-def _age_on(birthdate: date, on: date) -> int:
-    return on.year - birthdate.year - ((on.month, on.day) < (birthdate.month, birthdate.day))
-
-
-def _birthday_at_age(birthdate: date, age: int) -> date:
-    """The date the child turns `age`. Feb-29 births fall back to Mar 1."""
-    try:
-        return birthdate.replace(year=birthdate.year + age)
-    except ValueError:
-        return date(birthdate.year + age, 3, 1)
 
 
 def _capsule_out(

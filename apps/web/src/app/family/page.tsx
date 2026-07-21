@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, FamilySummary, getToken, setToken } from "@/lib/api";
+import { api, ApiError, FamilySummary, getToken } from "@/lib/api";
 import { Button, Card, ErrorNote, Input, Label } from "@/components/ui";
 import { PremiumPill } from "@/components/premium/PremiumPill";
 
@@ -16,15 +16,12 @@ export default function FamilyDashboard() {
   const load = useCallback(async () => {
     try {
       setFamilies(await api.myFamilies());
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
-        setToken(null);
-        router.replace("/login");
-      } else {
-        setError("We couldn't load your families. Is the API running?");
-      }
+    } catch {
+      // A lapsed session is handled centrally (redirect to a warm re-login);
+      // anything else is a load failure worth surfacing.
+      setError("We couldn't load your families. Is the API running?");
     }
-  }, [router]);
+  }, []);
 
   useEffect(() => {
     if (!getToken()) {

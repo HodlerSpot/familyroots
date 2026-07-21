@@ -9,8 +9,14 @@ from ..deps import (
     is_supporter,
     require_parent_role,
 )
-from ..models import Family, FamilyMember, FamilyRole, FeedEventType, MemberStatus
-from ..schemas import FamilyCreate, FamilyDetail, FamilySummary
+from ..models import Family, FamilyMember, FamilyRole, FeedEventType, MemberStatus, utcnow
+from ..schemas import (
+    FamilyCreate,
+    FamilyDetail,
+    FamilySummary,
+    MemoryPromptChild,
+    MemoryPromptOut,
+)
 from ..services.entitlements import (
     family_capabilities,
     plans_for_families,
@@ -18,6 +24,12 @@ from ..services.entitlements import (
 )
 from ..services.feed import emit
 from ..services.future_gifts import future_gifts_seconds_for_children
+from ..services.memory_prompts import (
+    active_children,
+    child_of_the_month,
+    has_added_memory_this_month,
+    period_for,
+)
 from ..services.premium import handle_owner_departure, run_lazy_lifecycle
 from ..testnet.service import award
 from .children import child_out
@@ -199,4 +211,27 @@ def family_detail(family_id: uuid.UUID, db: DbSession, user: CurrentUser) -> Fam
         plan="premium" if plans_for_families(db, [family_id])[family_id] else "free",
         premium_until=premium_until(db, family_id),
         capabilities=family_capabilities(db, family_id),
+    )
+
+
+@router.get("/{family_id}/memory-prompt", response_model=MemoryPromptOut | None)
+def memory_prompt(
+    family_id: uuid.UUID, db: DbSession, user: CurrentUser
+) -> MemoryPromptOut | None:
+    """The monthly Memory Request card, computed on read (no table). Names the
+    family's rotating child-of-the-month and whether the caller has already
+    added a memory this month (the card auto-hides once satisfied). Returns
+    null for supporters (they cannot add memories) and childless families —
+    the same deterministic rule the daily sweep uses, so card and bell agree."""
+    membership = get_active_membership(db, family_id, user)
+    if is_supporter(membership.role):
+        return None
+    now = utcnow()
+    child = child_of_the_month(active_children(db, family_id), now)
+    if child is None:
+        return None
+    return MemoryPromptOut(
+        period=period_for(now),
+        child=MemoryPromptChild(id=child.id, first_name=child.first_name),
+        satisfied=has_added_memory_this_month(db, family_id, user.id, now),
     )

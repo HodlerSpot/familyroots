@@ -20,6 +20,12 @@ SUPPORTER_VAULT_TYPES = {FeedEventType.memory_added, FeedEventType.milestone}
 # purpose: a supporter who saw someone arrive shouldn't wonder forever.
 SUPPORTER_ROSTER_TYPES = {FeedEventType.member_joined, FeedEventType.member_left}
 
+# Plain event types every member INCLUDING supporters may see (no vault-item
+# indirection): open-round prediction activity only, which exposes exactly the
+# surface supporters already have (actor name + child first name). Seal/release
+# events stay family-only — supporters never see round state changes.
+SUPPORTER_PLAIN_TYPES = {FeedEventType.prediction_added}
+
 
 def _event_vault_item_id(event: FeedEvent) -> uuid.UUID | None:
     raw = event.payload.get("vault_item_id") if event.payload else None
@@ -33,7 +39,7 @@ def _event_vault_item_id(event: FeedEvent) -> uuid.UUID | None:
 
 def event_visible_to_supporter(db: Session, event: FeedEvent) -> bool:
     """Whether one event should appear for a supporter (single-event check)."""
-    if event.type in SUPPORTER_ROSTER_TYPES:
+    if event.type in SUPPORTER_ROSTER_TYPES or event.type in SUPPORTER_PLAIN_TYPES:
         return True
     if event.type in SUPPORTER_VAULT_TYPES:
         vault_item_id = _event_vault_item_id(event)
@@ -68,7 +74,7 @@ def filter_events_for_supporter(db: Session, events: list[FeedEvent]) -> list[Fe
 
     kept: list[FeedEvent] = []
     for e in events:
-        if e.type in SUPPORTER_ROSTER_TYPES:
+        if e.type in SUPPORTER_ROSTER_TYPES or e.type in SUPPORTER_PLAIN_TYPES:
             kept.append(e)
         elif e.type in SUPPORTER_VAULT_TYPES:
             vid = _event_vault_item_id(e)

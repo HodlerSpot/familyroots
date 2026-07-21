@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { api, getToken, mediaUrl, setToken, UserOut } from "@/lib/api";
+import { startIdleWatch } from "@/lib/idle";
 import { Logo } from "@/components/logo";
 import { NotificationBell } from "@/components/notification-bell";
 import { QuestBoard, testnetApi } from "@/components/testnet/api";
@@ -21,6 +22,13 @@ export function SiteHeader() {
 
   useEffect(() => {
     setAuthed(!!getToken());
+  }, [pathname]);
+
+  // Idle logout for default (non-remembered) sessions. Re-armed on navigation;
+  // a no-op in testnet and for remembered sessions.
+  useEffect(() => {
+    if (IS_TESTNET) return;
+    return startIdleWatch();
   }, [pathname]);
 
   // The landing page opens with the full hero lockup — no header needed there

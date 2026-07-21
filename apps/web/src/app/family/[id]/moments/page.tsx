@@ -22,8 +22,7 @@ export default function MomentsPage() {
       setFeed(events);
       setFamilyName(family.name);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) router.replace("/login");
-      else setError(err instanceof ApiError ? err.message : "Couldn't load family moments");
+      setError(err instanceof ApiError ? err.message : "Couldn't load family moments");
     }
   }, [id, router]);
 

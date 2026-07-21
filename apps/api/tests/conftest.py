@@ -89,6 +89,33 @@ def add_child(client, headers: dict, family_id: str, first_name: str = "Emma") -
     return r.json()["id"]
 
 
+def make_member(
+    client,
+    parent: dict,
+    family_id: str,
+    role: str,
+    email: str,
+    name: str = "Member",
+) -> dict:
+    """Run the full invite -> signup -> accept flow for any FamilyRole and
+    return the new member's auth headers. Generalizes the per-role helpers
+    (make_grandparent / make_supporter)."""
+    from app.models import FamilyInvite
+
+    r = client.post(
+        f"/families/{family_id}/invites",
+        json={"email": email, "role": role},
+        headers=parent,
+    )
+    assert r.status_code == 201, r.text
+    with TestingSession() as db:
+        token = db.query(FamilyInvite).filter(FamilyInvite.email == email).first().token
+    member = signup(client, email, name)
+    r = client.post("/invites/accept", json={"token": token}, headers=member)
+    assert r.status_code == 200, r.text
+    return member
+
+
 def make_premium(client, parent_headers: dict, family_id: str, plan: str = "annual") -> None:
     """Upgrade a family to Premium under the local payment provider, which
     settles synchronously through the same settlement functions as the

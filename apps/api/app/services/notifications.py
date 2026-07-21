@@ -12,9 +12,9 @@ always-on bell row plus pref-gated email and web push. See services/notify.py
 for the taxonomy and dispatch rules.
 """
 
-# Defaults for a user who has never touched their preferences. 20 switches:
-# ten kinds across Email + Push. Keep in lockstep with the column defaults on
-# models.NotificationPreference.
+# Defaults for a user who has never touched their preferences. 22 switches:
+# eleven kinds across Email + Push. Keep in lockstep with the column defaults
+# on models.NotificationPreference.
 DEFAULT_PREFS = {
     # original four email kinds (values unchanged)
     "email_new_member": True,
@@ -39,4 +39,7 @@ DEFAULT_PREFS = {
     "push_capsule_released": True,
     "email_announcements": True,
     "push_announcements": True,
+    # monthly memory request (a valued family ritual; both channels on)
+    "email_memory_request": True,
+    "push_memory_request": True,
 }
