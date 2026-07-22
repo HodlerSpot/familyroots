@@ -312,6 +312,11 @@ Open:
   `docs/specs/compliance-erasure-dsar-plan.md`. Counsel items
   (money-transmission posture, legacy balance escheatment, retention period for
   money records, Stripe/Connect deauthorize) are its blocking WS0
+- API rate-limiting / lockout: none today (login, password step-up, DSAR export
+  all lack throttling). The destructive erasure endpoints use a password
+  step-up, so a stolen session could brute-force the password against it — same
+  exposure as `/login`. Deferred by founder decision 2026-07-21; add a
+  platform-wide throttle (per-user/IP failure lockout) before scaling
 - EU/UK withdrawal-right consent line on checkout is live (immediate-performance
   acknowledgment, unchecked by default) — **pending counsel review**
 

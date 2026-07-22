@@ -29,9 +29,10 @@ WS0).
 
 Stripe: Customer delete/anonymize + subscription cancel run ONLY when the live
 Stripe backend is active (`settles_via_webhook`), so the whole walk no-ops
-cleanly in local/test mode. Connect Express deauthorize is counsel-gated
-(runbook §5) and deliberately NOT called — the account is retained and the
-deferral is recorded in the receipt.
+cleanly in local/test mode. Connect Express deauthorize is NOT called by policy
+(founder decision): a child's account is legally the parent's, so we leave it
+connected and the parent manages their own account and any balance. The account
+is retained and the decision is recorded in the receipt.
 
 Every call returns an `ErasureReceipt` the caller logs as the §6 erasure-log
 entry. Idempotent (a re-run of an already-erased subject is a no-op) and
@@ -356,12 +357,14 @@ def erase_child(
         _schedule_media_delete(db, media_id, receipt, effects)
 
     # Fund account (§3.B/§3.D): RETAIN as the anchor for the append-only ledger;
-    # sever the child link. Connect deauthorize is counsel-gated (runbook §5).
+    # sever the child link. Connect account is LEFT CONNECTED by policy (founder
+    # decision): it is the parent's own account, so we never auto-deauthorize it.
     for account in db.query(FundAccount).filter(FundAccount.child_id == child_id).all():
         if account.stripe_account_id:
             receipt.stripe_actions.append(
                 f"connect_account_retained:{account.stripe_account_id} "
-                "(deauthorize deferred — counsel §5)"
+                "(left connected by policy — parent manages their own account "
+                "and any balance)"
             )
         account.child_id = None
         receipt.anonymized_rows("fund_accounts", 1)

@@ -1,22 +1,20 @@
 <!--
-  DRAFT — NOT LEGAL ADVICE. Drafted by an engineering assistant from the
-  product's actual behavior as of 2026-07-21. MUST be reviewed and finalized by
-  qualified legal counsel before publication. Bracketed [PLACEHOLDERS] require
-  confirmation (legal entity, governing law/venue, contact addresses).
+  Finalized 2026-07-21 with values provided by FutureRoots Technology Ltd.
+  Reflects the product's actual behavior. A final review by qualified legal
+  counsel is recommended before publication — in particular the liability cap,
+  auto-renewal disclosures, and gift/money-transmission positioning.
 -->
 
 # FutureRoots Terms of Service
 
-**Status: DRAFT — pending legal review. Do not publish as-is.**
-
-_Last updated: [DATE] · Effective: [DATE]_
+_Last updated: 2026-07-21 · Effective: 2026-07-21_
 
 Welcome to FutureRoots, a private family platform for preserving memories,
 passing on wisdom, and building a child's future together. These Terms are a
-legal agreement between you and **[LEGAL ENTITY NAME]** ("FutureRoots", "we",
-"us"). By creating an account or using FutureRoots, you agree to these Terms and
-to our [Privacy Policy](./privacy-policy.md). If you do not agree, please do not
-use FutureRoots.
+legal agreement between you and **FutureRoots Technology Ltd.** ("FutureRoots",
+"we", "us"). By creating an account or using FutureRoots, you agree to these
+Terms and to our [Privacy Policy](./privacy-policy.md). If you do not agree,
+please do not use FutureRoots.
 
 ## 1. Who may use FutureRoots
 
@@ -36,7 +34,7 @@ use FutureRoots.
 - You can choose a longer "stay logged in" session on a device you trust; on a
   shared device, sign out or leave the box unticked (sessions time out on their
   own after a period of inactivity).
-- Tell us promptly at **[support@futureroots.app]** if you suspect unauthorized
+- Tell us promptly at **support@futureroots.app** if you suspect unauthorized
   use.
 
 ## 3. Family roles and access
@@ -82,6 +80,9 @@ and to use what you can see only for your family's own purposes.
   Contributions are processed by **Stripe** and routed to a **connected account
   for the child that is controlled by the child's parent or guardian** —
   FutureRoots does not hold or control child balances.
+- FutureRoots is a **platform and technology provider — not a money transmitter
+  or merchant of record.** Stripe processes payments; for the Future Fund, the
+  parent's own connected account holds the funds.
 - Contributions are **gifts**. They are **not deposits, investments, or
   securities**, and FutureRoots does **not** provide investment, tax, or
   financial advice. FutureRoots is **not a bank, broker, or crypto product**;
@@ -98,11 +99,13 @@ may still be sent.
 
 ## 8. Deleting your data and closing your account
 
-You may ask us to export or delete your family's data (see the Privacy Policy,
-§9). Some records — notably financial records — may be retained where we have a
-legal obligation, with the identity link severed where possible. Closing your
-account or leaving a family does not by itself erase content you added; use the
-erasure request process if you want your data removed.
+You can **download a copy of your data** or **delete your account** yourself from
+**Settings → "Your data"** (deleting your account requires re-entering your
+password), or contact **privacy@futureroots.app** for a family- or child-scoped
+request. Some records — notably financial records — may be retained where we have
+a legal obligation, with the identity link severed where possible. Leaving a
+family does not by itself erase content you added; use the delete/erasure flow if
+you want your data removed.
 
 ## 9. Service availability and changes
 
@@ -120,13 +123,12 @@ that content will never be lost — keep your own copies of anything irreplaceab
 
 ## 11. Limitation of liability
 
-To the fullest extent permitted by law, FutureRoots and **[LEGAL ENTITY NAME]**
-will not be liable for indirect, incidental, special, consequential, or punitive
-damages, or for lost profits, data, or goodwill. Our total liability for any
-claim relating to the service will not exceed the greater of **[amount, e.g. the
-amounts you paid us in the 12 months before the claim]** or **[minimum, e.g.
-CAD/USD 100]**. Some jurisdictions do not allow these limits, so they may not
-fully apply to you.
+To the fullest extent permitted by law, FutureRoots and **FutureRoots Technology
+Ltd.** will not be liable for indirect, incidental, special, consequential, or
+punitive damages, or for lost profits, data, or goodwill. Our total liability for
+any claim relating to the service will not exceed the greater of **the amounts
+you paid us in the 12 months before the claim** or **CAD 100**. Some
+jurisdictions do not allow these limits, so they may not fully apply to you.
 
 ## 12. Indemnity
 
@@ -143,12 +145,11 @@ limits, indemnity, governing law) survive termination.
 
 ## 14. Governing law and disputes
 
-These Terms are governed by the laws of **[GOVERNING JURISDICTION — e.g. the
-Province of [Manitoba], Canada]**, without regard to conflict-of-laws rules.
-Disputes will be resolved in the courts of **[VENUE]**, unless applicable
-consumer-protection law gives you the right to bring a claim elsewhere.
-**[Consider an arbitration/class-action-waiver clause only on counsel's
-advice — enforceability varies by jurisdiction.]**
+These Terms are governed by the laws of the **Province of Manitoba, Canada**,
+without regard to conflict-of-laws rules. Disputes will be resolved in the
+**courts of Manitoba, Canada**, unless applicable consumer-protection law gives
+you the right to bring a claim elsewhere. (FutureRoots does not require binding
+arbitration.)
 
 ## 15. Changes to these Terms
 
@@ -158,12 +159,6 @@ the updated Terms.
 
 ## 16. Contact
 
-**[LEGAL ENTITY NAME]**
-Support: **[support@futureroots.app]** · Postal: **[REGISTERED ADDRESS]**
-
----
-
-_This draft reflects FutureRoots' behavior as implemented on 2026-07-21. It is
-not legal advice and must be reviewed by qualified counsel — in particular the
-governing-law/venue, liability cap, auto-renewal disclosures, gift/financial
-positioning, and any arbitration clause — before publication._
+**FutureRoots Technology Ltd.**
+Support: **support@futureroots.app**
+Winnipeg, Manitoba, Canada

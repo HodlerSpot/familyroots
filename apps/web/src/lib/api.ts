@@ -473,6 +473,28 @@ export interface PredictionBookOut {
   chapters: BookChapterOut[];
 }
 
+/** The GDPR data-export bundle (POST /me/data-export). It is a large nested
+ * object assembled server-side (see apps/api/app/services/export.py); we type the
+ * top level for the download flow and leave each section permissive, since the
+ * client only serializes it to a file rather than reading into it. Media is
+ * listed by reference (media_id + content_type) under `media`; the bytes are
+ * fetched from the media endpoint in the app. */
+export interface DataExportBundle {
+  generated_at: string | null;
+  scope: string;
+  subject: Record<string, unknown>;
+  profile: Record<string, unknown>;
+  /** Every media file, listed by media_id + content_type (not the bytes). */
+  media: unknown[];
+  media_retrieval: string;
+  /** All other sections (families, contributions, authored content, etc.). */
+  [section: string]: unknown;
+}
+
+/** The erasure receipt (DELETE /me) — a structured log line the server returns
+ * after the account is erased. Permissive: the client does not read into it. */
+export type ErasureReceipt = Record<string, unknown>;
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -909,6 +931,19 @@ export const api = {
 
   // A member's own contribution history
   myContributions: () => request<MyContribution[]>("/me/contributions"),
+
+  // --- Your data (GDPR self-serve) ---
+  /** Download the caller's own data as a machine-readable JSON bundle
+   * (GDPR Art. 15/20). Media is referenced by media_id, not embedded. */
+  exportMyData: () => request<DataExportBundle>("/me/data-export", { method: "POST" }),
+  /** Permanently erase the caller's own account. Requires a fresh password
+   * step-up (sent in the DELETE body); returns the erasure receipt. Financial
+   * records are retained by law with the caller's identity severed. */
+  deleteMyAccount: (password: string) =>
+    request<ErasureReceipt>("/me", {
+      method: "DELETE",
+      body: JSON.stringify({ password }),
+    }),
 
   listGoals: (childId: string) => request<GoalOut[]>(`/children/${childId}/goals`),
   createGoal: (

@@ -33,7 +33,19 @@ automation checklist). This plan does not restate those; it references them and 
   claims a deletion cascade + admin erasure runbook + image re-render that do not exist in code** — a spec
   that overstates the product's actual erasure posture must be corrected regardless of when the code lands.
 
-## Locked decisions (proposed — confirm before building)
+## WS0 — RESOLVED (founder sign-off, 2026-07-21)
+
+The blocking counsel items are decided: **(1) financial-record retention = 7 years**, then purge severed rows
+(built as a maintenance sweep); **(2) Connect on erasure = leave connected, don't auto-touch** — the parent
+manages/closes their own account and any balance (the `deauthorize_connect_account` stub stays un-wired);
+**(3) sealed predictions in a child DSAR = included, clearly separated (text + authors only; keepsake image
+stays sealed)**; **(4) standalone consent revocation = deferred** (erasure-time revocation stands);
+**(5) money-transmission posture = platform/technology provider, not a money transmitter or merchant of
+record** (Stripe processes; parent's connected account holds Future Fund money) — reflected in the finalized
+`docs/legal/{terms-of-service,privacy-policy}.md`; **(6) step-up rate-limiting = deferred** (tracked as a
+platform-wide item alongside `/login`). Standing-dispute handling stays the manual runbook §1 process.
+
+## Locked decisions (confirmed 2026-07-21)
 
 - **Anonymize-not-delete for financial rows** (`contributions`, `fund_ledger_entries`,
   `family_subscriptions`, `premium_grants`) — retained under GDPR Art. 17(3)(b)/(e), identity link severed

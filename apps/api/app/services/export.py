@@ -257,6 +257,37 @@ def _child_bundle(db: Session, child: Child, requester_id: uuid.UUID) -> dict:
             }
         )
 
+    # Art. 15 breadth: the sealed, not-yet-released predictions are the child's
+    # personal data too, so they belong in a DSAR — but they are the surprise the
+    # feature exists to preserve. We include the TEXT + AUTHORS (separated behind
+    # a spoiler warning) but NEVER the sealed keepsake image: cloud_media_id is
+    # omitted here and the sealed round's media stays out of _child_media_manifest,
+    # so the download_media sealed-round guard is not weakened.
+    sealed_unreleased_predictions = {
+        "spoiler": (
+            "These predictions are sealed until the child turns 18 — viewing "
+            "them reveals the surprise."
+        ),
+        "rounds": [
+            {
+                "round_id": _id(r.id),
+                "year": r.seals_on.year,
+                "predictions": [
+                    {
+                        "body": p.body,
+                        "author_name": _display_name(db, p.author_user_id),
+                        "created_at": _dt(p.created_at),
+                    }
+                    for p in db.query(Prediction)
+                    .filter(Prediction.round_id == r.id)
+                    .all()
+                ],
+            }
+            for r in rounds
+            if r.status == PredictionRoundStatus.sealed
+        ],
+    }
+
     contributions = (
         db.query(Contribution).filter(Contribution.child_id == child.id).all()
     )
@@ -320,6 +351,7 @@ def _child_bundle(db: Session, child: Child, requester_id: uuid.UUID) -> dict:
                 if r.status == PredictionRoundStatus.sealed
             ),
         },
+        "sealed_unreleased_predictions": sealed_unreleased_predictions,
         "contributions": [
             _contribution_row(db, c, include_child=False) for c in contributions
         ],

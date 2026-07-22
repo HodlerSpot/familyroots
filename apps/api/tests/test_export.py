@@ -2,9 +2,52 @@
 standing enforcement, and — the load-bearing property — NO cross-family leak."""
 
 import uuid
+from datetime import date
 
-from .conftest import add_child, create_family, make_member, setup_fund, signup
+from app.models import (
+    MediaObject,
+    MediaStatus,
+    Prediction,
+    PredictionRound,
+    PredictionRoundStatus,
+    User,
+    utcnow,
+)
+from app.services.storage import get_storage
+
+from .conftest import TestingSession, add_child, create_family, make_member, setup_fund, signup
 from .test_erasure import _add_media_vault, _contribute
+
+
+def _seed_sealed_round_with_predictions(child_id, author_id, *, body, year=2029):
+    """Seed a SEALED (not-yet-released) round with one prediction and its keepsake
+    PNG — the state a DSAR must surface as TEXT (behind a spoiler) but never as the
+    image. Returns the keepsake media id."""
+    key = f"keepsake-{uuid.uuid4().hex}"
+    get_storage().put_object(key, b"\x89PNGkeepsake", "image/png")
+    with TestingSession() as db:
+        media = MediaObject(
+            child_id=child_id,
+            storage_key=key,
+            content_type="image/png",
+            byte_size=11,
+            uploaded_by=author_id,
+            status=MediaStatus.uploaded,
+        )
+        db.add(media)
+        db.flush()
+        rnd = PredictionRound(
+            child_id=child_id,
+            seals_on=date(year, 5, 1),
+            status=PredictionRoundStatus.sealed,
+            cloud_media_id=media.id,
+            sealed_at=utcnow(),
+        )
+        db.add(rnd)
+        db.flush()
+        db.add(Prediction(round_id=rnd.id, author_user_id=author_id, body=body))
+        db.commit()
+        return media.id
 
 
 def _seed_child_content(client, parent, cid):
@@ -64,6 +107,79 @@ def test_child_export_completeness(client):
     assert len(child["consent_records"]) >= 1
     assert child["fund"]["balance_cents"] > 0
     assert len(child["media"]) >= 1
+
+
+def test_child_export_includes_sealed_predictions_separated_without_image(client):
+    """Sealed, not-yet-released predictions are the child's personal data, so a
+    DSAR includes their TEXT + AUTHORS behind a spoiler warning — but NEVER the
+    sealed keepsake image (media id absent; download_media guard untouched)."""
+    parent = signup(client, "sp2@ex.com", "Grandpa Joe")
+    fid = create_family(client, parent)
+    cid = add_child(client, parent, fid)
+    _seed_child_content(client, parent, cid)  # an OPEN round + released nothing yet
+
+    with TestingSession() as db:
+        author_id = db.query(User).filter(User.email == "sp2@ex.com").one().id
+    media_id = _seed_sealed_round_with_predictions(
+        uuid.UUID(cid), author_id, body="a brave firefighter", year=2029
+    )
+
+    r = client.post(f"/families/{fid}/children/{cid}/data-export", headers=parent)
+    assert r.status_code == 200, r.text
+    child = r.json()["child"]
+
+    # Sealed predictions present as text + author, behind a spoiler warning.
+    section = child["sealed_unreleased_predictions"]
+    assert "sealed until the child turns 18" in section["spoiler"]
+    bodies = [p["body"] for rnd in section["rounds"] for p in rnd["predictions"]]
+    authors = [p["author_name"] for rnd in section["rounds"] for p in rnd["predictions"]]
+    assert "a brave firefighter" in bodies
+    assert "Grandpa Joe" in authors
+    assert any(rnd["year"] == 2029 for rnd in section["rounds"])
+
+    # The sealed keepsake image is ABSENT everywhere in the bundle.
+    import json as _json
+
+    blob = _json.dumps(child)
+    assert str(media_id) not in blob, "sealed keepsake media id leaked"
+    assert all(m["media_id"] != str(media_id) for m in child["media"])
+    # The separated section never carries an image/cloud_media_id reference.
+    for rnd in section["rounds"]:
+        assert "cloud_media_id" not in rnd
+        assert "media_id" not in rnd
+
+    # Released content unchanged: the Book + sealed-year index are still present,
+    # and the sealed round's year appears in the existing sealed-year index too.
+    assert "book" in child["predictions"]
+    assert 2029 in child["predictions"]["sealed_years"]
+
+
+def test_child_export_sealed_predictions_no_cross_family_leak(client):
+    """One family's sealed predictions never surface in another family's child
+    export — the section is scoped to the subject child like everything else."""
+    parent_a = signup(client, "spa@ex.com", "Parent A")
+    fid_a = create_family(client, parent_a, name="Alpha Family")
+    cid_a = add_child(client, parent_a, fid_a, first_name="Aria")
+    with TestingSession() as db:
+        author_a = db.query(User).filter(User.email == "spa@ex.com").one().id
+    _seed_sealed_round_with_predictions(uuid.UUID(cid_a), author_a, body="a kind vet")
+
+    parent_b = signup(client, "spb@ex.com", "Aunt Beth")
+    fid_b = create_family(client, parent_b, name="Bravo Family")
+    cid_b = add_child(client, parent_b, fid_b, first_name="Bruno")
+    with TestingSession() as db:
+        author_b = db.query(User).filter(User.email == "spb@ex.com").one().id
+    _seed_sealed_round_with_predictions(
+        uuid.UUID(cid_b), author_b, body="SECRET astronaut"
+    )
+
+    r = client.post(f"/families/{fid_a}/children/{cid_a}/data-export", headers=parent_a)
+    assert r.status_code == 200, r.text
+    import json as _json
+
+    blob = _json.dumps(r.json())
+    assert "SECRET astronaut" not in blob
+    assert "Aunt Beth" not in blob
 
 
 def test_export_no_cross_family_leak(client):

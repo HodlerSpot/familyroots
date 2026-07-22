@@ -2,9 +2,11 @@
 {"futureroots_command": "maintenance"}, scheduled via EventBridge).
 
 Everything here is idempotent and safe to run at any time, any number of
-times. It only ever touches low-sensitivity operational rows — never money
-records: contributions and fund_ledger_entries are financial records and are
-NEVER pruned here.
+times. It mostly touches low-sensitivity operational rows. The ONE money-record
+step is the financial-record retention purge below: it hard-deletes only
+FULLY-SEVERED money rows (every subject FK already null, from a prior erasure)
+that are past the counsel-set 7-year retention window — a record still tied to a
+living user/child is NEVER purged. No money field is ever edited.
 
 What runs, in one DB session / one commit:
 - premium_gift_intents older than 30 days (abandoned-checkout staging rows
@@ -17,7 +19,10 @@ What runs, in one DB session / one commit:
   CALL_ABANDONED_AFTER is ended (nobody polled it, so the lazy read-time reap
   never saw it);
 - call_participants / call_child_presence rows of calls that ended more than
-  90 days ago ("who was on, when" history — retention bound).
+  90 days ago ("who was on, when" history — retention bound);
+- fully-severed financial rows (contributions, family_subscriptions,
+  premium_grants, fund_ledger_entries whose account is severed) older than the
+  7-year retention window (§3.D financial carve-out disposal).
 """
 
 import logging
@@ -30,12 +35,17 @@ from ..models import (
     CallChildPresence,
     CallParticipant,
     CallStatus,
+    Contribution,
     FamilyCall,
+    FamilySubscription,
+    FundAccount,
+    FundLedgerEntry,
     FundNudge,
     MemoryPrompt,
     Notification,
     PremiumEmailLog,
     PremiumGiftIntent,
+    PremiumGrant,
     utcnow,
 )
 from .memory_prompts import run_memory_prompts
@@ -57,6 +67,12 @@ NOTIFICATION_RETENTION = timedelta(days=90)
 # Presence heartbeats arrive every few seconds (agora_presence_ttl_seconds is
 # 30s), so 15 minutes of silence means every participant is long gone.
 CALL_ABANDONED_AFTER = timedelta(minutes=15)
+# Financial records are retained (never cascade-deleted) on erasure under GDPR
+# Art. 17(3)(b)/(e) with only the identity link severed (§3.D). This is the
+# counsel-set duration (WS0) after which that legal basis lapses and a
+# fully-severed money row may finally be disposed of — 7 years (US tax /
+# CRA / EU member-state accounting retention floor).
+FINANCIAL_RECORD_RETENTION_DAYS = 7 * 365
 
 
 def _aware(dt: datetime) -> datetime:
@@ -163,6 +179,64 @@ def run_maintenance(db: Session) -> dict[str, int]:
         .delete(synchronize_session=False)
     )
 
+    # Financial-record 7-year retention purge (§3.D disposal, counsel WS0).
+    # HARD-DELETE only FULLY-SEVERED money rows past the window — rows where every
+    # subject FK is already null (severed at a prior erasure), so a record still
+    # tied to a living user/child is NEVER purged and no money field is edited.
+    # Ordered ledger-entries -> contributions so a ledger entry's
+    # source_contribution_id FK (bare NO ACTION) can never dangle when its
+    # contribution is deleted. The ledger purge deletes severed-account entries
+    # that are past the window OR that point at a contribution being purged this
+    # run -- the latter closes a timestamp-skew gap: a contribution and its
+    # ledger entry are created seconds/hours apart (checkout vs. webhook), so on
+    # the one run where the cutoff falls between them the contribution would
+    # qualify while its still-referencing ledger entry did not.
+    fin_cutoff = now - timedelta(days=FINANCIAL_RECORD_RETENTION_DAYS)
+    severed_accounts = select(FundAccount.id).where(FundAccount.child_id.is_(None))
+    purged_contribution_ids = select(Contribution.id).where(
+        Contribution.contributor_user_id.is_(None),
+        Contribution.child_id.is_(None),
+        Contribution.created_at < fin_cutoff,
+    )
+    fund_ledger_entries_purged = (
+        db.query(FundLedgerEntry)
+        .filter(
+            FundLedgerEntry.account_id.in_(severed_accounts),
+            or_(
+                FundLedgerEntry.created_at < fin_cutoff,
+                FundLedgerEntry.source_contribution_id.in_(purged_contribution_ids),
+            ),
+        )
+        .delete(synchronize_session=False)
+    )
+    contributions_purged = (
+        db.query(Contribution)
+        .filter(
+            Contribution.contributor_user_id.is_(None),
+            Contribution.child_id.is_(None),
+            Contribution.created_at < fin_cutoff,
+        )
+        .delete(synchronize_session=False)
+    )
+    family_subscriptions_purged = (
+        db.query(FamilySubscription)
+        .filter(
+            FamilySubscription.family_id.is_(None),
+            FamilySubscription.owner_user_id.is_(None),
+            FamilySubscription.created_at < fin_cutoff,
+        )
+        .delete(synchronize_session=False)
+    )
+    premium_grants_purged = (
+        db.query(PremiumGrant)
+        .filter(
+            PremiumGrant.family_id.is_(None),
+            PremiumGrant.granted_by_user_id.is_(None),
+            PremiumGrant.created_at < fin_cutoff,
+        )
+        .delete(synchronize_session=False)
+    )
+
     # End abandoned calls BEFORE the history prune so their retention clock
     # starts at today's ended_at.
     abandoned_calls = end_abandoned_calls(db)
@@ -201,6 +275,10 @@ def run_maintenance(db: Session) -> dict[str, int]:
         "memory_prompts_pruned": memory_prompts_pruned,
         "memory_prompts_sent": memory_prompts_sent,
         "notifications_pruned": notifications_pruned,
+        "contributions_purged": contributions_purged,
+        "family_subscriptions_purged": family_subscriptions_purged,
+        "premium_grants_purged": premium_grants_purged,
+        "fund_ledger_entries_purged": fund_ledger_entries_purged,
         "abandoned_calls_ended": abandoned_calls,
         "call_participants_pruned": participants,
         "call_child_presence_pruned": presence,

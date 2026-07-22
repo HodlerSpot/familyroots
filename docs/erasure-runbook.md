@@ -15,6 +15,15 @@ profile, since children never hold credentials here), PIPEDA Principle
 **not legal advice**; items marked **COUNSEL** must go through actual counsel
 before the operator acts.
 
+> **Decisions resolved (founder, 2026-07-21).** Several COUNSEL items below are
+> now decided and encoded in code: **financial-record retention = 7 years**
+> (then the maintenance sweep purges fully-severed rows — see §3.D); **Stripe
+> Connect on erasure = leave connected, don't auto-deauthorize** (the parent
+> manages/closes their own account and any balance — see §5). The automated
+> erasure/export code (`services/erasure.py`, `services/export.py`,
+> `routers/erasure.py`) now implements the §7 backlog. See
+> `docs/specs/compliance-erasure-dsar-plan.md` (WS0 RESOLVED) for the full set.
+
 ---
 
 ## 0. Ground truth from the codebase (read this before touching data)

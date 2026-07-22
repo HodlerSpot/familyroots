@@ -1,16 +1,14 @@
 <!--
-  DRAFT — NOT LEGAL ADVICE. This document was drafted by an engineering
-  assistant from the product's actual data practices as of 2026-07-21. It MUST
-  be reviewed and finalized by qualified legal counsel before being published
-  or relied upon. Bracketed [PLACEHOLDERS] require confirmation by the founder
-  or counsel (legal entity, jurisdiction, contact addresses, retention periods).
+  Finalized 2026-07-21 with values provided by FutureRoots Technology Ltd.
+  Reflects the product's actual data practices. A final review by qualified
+  legal counsel is recommended before publication — in particular the COPPA
+  verifiable-parental-consent mechanism, the international-transfer safeguard,
+  and the money-transmission positioning line.
 -->
 
 # FutureRoots Privacy Policy
 
-**Status: DRAFT — pending legal review. Do not publish as-is.**
-
-_Last updated: [DATE] · Effective: [DATE]_
+_Last updated: 2026-07-21 · Effective: 2026-07-21_
 
 FutureRoots ("FutureRoots", "we", "us") is a private family platform for
 preserving memories, sharing wisdom, and building a child's future together. We
@@ -18,8 +16,8 @@ take the privacy of your family — and especially your children — seriously.
 This policy explains what we collect, why, how we protect it, and the choices
 and rights you have.
 
-Operated by **[LEGAL ENTITY NAME]**, **[REGISTERED ADDRESS]**. Questions or
-requests: **[privacy@futureroots.app]**.
+Operated by **FutureRoots Technology Ltd.**, Winnipeg, Manitoba, Canada.
+Questions or requests: **privacy@futureroots.app**.
 
 ## 1. A note about children
 
@@ -34,7 +32,7 @@ United States **COPPA**, the EU/UK **GDPR** (including protections for
 children's data), and Canada's **PIPEDA**.
 
 If you believe a child's information is in FutureRoots without proper parental
-authority, contact us at **[privacy@futureroots.app]** and we will investigate
+authority, contact us at **privacy@futureroots.app** and we will investigate
 and, where appropriate, erase it.
 
 ## 2. Information we collect
@@ -92,7 +90,7 @@ cross-context behavioral advertising.
     **US-East-1**; see §8 on international transfers).
   - **Stripe** — payment processing, subscriptions, and Future Fund
     contributions (Stripe is the custodian of card data; we never receive it).
-  - **[EMAIL PROVIDER — Amazon SES]** — transactional email delivery.
+  - **Amazon SES** — transactional email delivery.
   - **Web-push providers** (the push service your browser/OS uses, e.g. Google,
     Mozilla, Microsoft, Apple) — only to deliver notifications you enabled.
 - **Legal and safety disclosures** — where required by law, or to protect the
@@ -104,13 +102,18 @@ Payments are processed by **Stripe**. We store only the identifiers needed to
 operate billing (e.g. a Stripe customer reference, subscription and transaction
 status, amounts, currency, and timestamps) — never your card number.
 
+FutureRoots is a platform and technology provider — **not a money transmitter or
+merchant of record.** Stripe processes payments, and for the Future Fund the
+parent's own Stripe-connected account holds the funds; FutureRoots does not hold
+or control family or child balances.
+
 - **FutureRoots Premium** is an optional family subscription. Annual plans
   auto-renew; we send a pre-renewal reminder and honor applicable
   auto-renewal-notice laws.
 - **Future Fund contributions** are gifts routed by Stripe to a child's own
   connected account, which is controlled by the child's parent/guardian.
-  FutureRoots does not hold child balances. Contributions are gifts, **not
-  investments or securities**, and FutureRoots does not provide financial advice.
+  Contributions are gifts, **not investments or securities**, and FutureRoots
+  does not provide financial advice.
 
 Because these are financial records, we retain them under a legal obligation
 (§7) even after other data is erased, with the identity link severed where the
@@ -133,17 +136,18 @@ Where an integrity anchor is stored, it is a non-identifying cryptographic proof
   preserved until the child's 18th birthday, when they are released to the
   family. You can ask us to delete them sooner (§9).
 - **Financial records** are retained to meet tax and accounting obligations for
-  **[RETENTION PERIOD — e.g. 6–7 years, to be confirmed with counsel]**, then
-  purged.
+  **7 years**, after which they are purged. During that period the identity link
+  is severed once the record no longer needs it.
 - **Throttle/operational logs** (e.g. reminder-sent records) are pruned
   automatically (typically within 90 days).
 
 ## 8. Where your information is stored
 
-FutureRoots is hosted on AWS in the **United States (US-East-1)**. If you are in
-the EU/UK/Canada, your information is transferred to and processed in the United
-States. We rely on appropriate safeguards for such transfers **[mechanism to be
-confirmed with counsel — e.g. Standard Contractual Clauses]**.
+FutureRoots is operated from Canada and hosted on AWS in the **United States
+(US-East-1)**. If you are in the EU/UK (or elsewhere outside the United States),
+your information is transferred to and processed in the United States. We rely on
+appropriate safeguards for such transfers, such as **Standard Contractual
+Clauses**, as applicable.
 
 ## 9. Your rights and choices
 
@@ -154,19 +158,19 @@ Because children do not hold accounts, a child's parent or guardian exercises
 these rights on the child's behalf.
 
 - **Notification choices:** manage email and push toggles anytime in Settings.
-- **Access / portability / erasure requests:** contact **[privacy@futureroots.app]**.
-  We follow an internal procedure to erase or export your family's data across
-  our systems and our processors (including deleting stored media and asking
-  Stripe to delete or anonymize your customer record, subject to Stripe's own
-  legal retention of transaction records).
+- **Download your data / delete your account:** you can do both yourself from
+  **Settings → "Your data"** (deleting your account requires re-entering your
+  password), or contact **privacy@futureroots.app** for help or for a
+  family- or child-scoped request.
+- **What happens on erasure:** we erase or export your data across our systems
+  and our processors — including deleting stored media and asking Stripe to
+  delete or anonymize your customer record, subject to Stripe's own legal
+  retention of transaction records.
 - **Timing:** we respond without undue delay and within the periods required by
   law (generally **within 30 days**; we will tell you if we need longer for a
   complex request).
 - Some data may be retained where we have a legal obligation or need it to
   establish or defend legal claims (§5, §7); we will explain what and why.
-
-_Note: automated self-serve deletion/export tools are being built; today some
-requests are fulfilled by our team on request via **[privacy@futureroots.app]**._
 
 ## 10. Security
 
@@ -183,15 +187,6 @@ date above always reflects the current version.
 
 ## 12. Contact us
 
-**[LEGAL ENTITY NAME]**
-Privacy: **[privacy@futureroots.app]** · General: **[support@futureroots.app]**
-Postal: **[REGISTERED ADDRESS]**
-EU/UK representative / Data Protection Officer, if applicable: **[TO BE CONFIRMED]**
-
----
-
-_This draft reflects FutureRoots' data practices as implemented on 2026-07-21.
-It is not legal advice and must be reviewed by qualified counsel — in particular
-the bracketed placeholders, the COPPA verifiable-parental-consent mechanism, the
-international-transfer safeguard, and financial-record retention periods — before
-publication._
+**FutureRoots Technology Ltd.**
+Privacy: **privacy@futureroots.app** · General: **support@futureroots.app**
+Winnipeg, Manitoba, Canada
