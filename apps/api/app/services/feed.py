@@ -23,6 +23,15 @@ _TESTNET_ACTIONS = {
     FeedEventType.capsule_created: "capsule_created",
     FeedEventType.capsule_released: "capsule_released",
     FeedEventType.member_joined: "invite_accepted",
+    # Prod features that shipped after the harness landed (fund/predictions/
+    # premium emit their own feed events; the actor is the tester who acted:
+    # the fund's setter, the prediction's author, the round's child creator,
+    # and the subscription's owner respectively).
+    FeedEventType.fund_activated: "fund_activated",
+    FeedEventType.prediction_added: "prediction_added",
+    FeedEventType.predictions_sealed: "predictions_sealed",
+    FeedEventType.predictions_released: "predictions_released",
+    FeedEventType.premium_activated: "premium_activated",
 }
 
 

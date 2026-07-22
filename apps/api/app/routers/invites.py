@@ -32,6 +32,16 @@ from ..testnet.service import award
 
 router = APIRouter(tags=["invites"])
 
+# Testnet role -> quest action. Grandparent is the north-star first step (150);
+# aunt/uncle/cousin score as the distinct invite_extended so extended-family
+# coverage shows on the board; every other role is the generic invite_family.
+_INVITE_ACTIONS = {
+    "grandparent": "invite_grandparent",
+    "aunt": "invite_extended",
+    "uncle": "invite_extended",
+    "cousin": "invite_extended",
+}
+
 
 @router.post(
     "/families/{family_id}/invites",
@@ -70,7 +80,7 @@ def create_invite(
     db.add(invite)
     # Testnet points (no-op in the family product); the grandparent invite is
     # the north-star journey's first step, so it scores highest.
-    award(db, user.id, "invite_grandparent" if payload.role.value == "grandparent" else "invite_family")
+    award(db, user.id, _INVITE_ACTIONS.get(payload.role.value, "invite_family"))
     db.commit()
 
     family = family_phrase(invite.family.name)

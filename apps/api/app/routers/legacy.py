@@ -20,6 +20,7 @@ from ..services.notify import (
     notify,
 )
 from ..services.storage import get_storage
+from ..testnet.service import award
 
 router = APIRouter(tags=["legacy"])
 
@@ -95,6 +96,7 @@ def add_legacy_item(
         created_by=user.id,
     )
     db.add(item)
+    award(db, user.id, "legacy_added")  # testnet points; no-op in the family product
     db.commit()
 
     # Legacy notifications: email off by default (email_legacy); bell always,

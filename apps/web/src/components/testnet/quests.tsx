@@ -153,6 +153,11 @@ export function QuestsButton() {
                   </a>
                 </div>
 
+                <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  Tip: to earn the contribution quest, a parent sets up a child&apos;s Future Fund
+                  first (the &ldquo;Open a future fund&rdquo; quest) — then any family member can send a gift.
+                </p>
+
                 {!board.display_name && (
                   <form onSubmit={saveName} className="mt-4 flex gap-2">
                     <input

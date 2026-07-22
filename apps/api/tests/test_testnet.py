@@ -17,7 +17,7 @@ from app.config import settings
 from app.main import app
 from app.testnet.router import router as _testnet_routes  # name must not start with "test"
 
-from .conftest import add_child, create_family, setup_fund, signup
+from .conftest import add_child, create_family, make_premium, setup_fund, signup
 
 # The default (family-product) app never mounts /testnet. Mount it once here
 # so the harness can be exercised; the require_testnet dependency still 404s
@@ -275,12 +275,15 @@ def test_north_star_journey_scores_heaviest(testnet_on, client):
     r = client.post(f"/contributions/{contribution_id}/confirm", headers=grandma)
     assert r.status_code == 200  # grandma +200 (contribution)
 
-    assert total_points(client, parent) == 25 + 75 + 60 + 150  # 310
+    # Parent also earns fund_activated (+90) for setting up the fund, the new
+    # prerequisite for any gift; the grandparent's accept + contribute journey
+    # is still the single richest chain (325 of their 350).
+    assert total_points(client, parent) == 25 + 75 + 60 + 90 + 150  # 400
     assert total_points(client, grandma) == 25 + 125 + 200  # 350
 
     board = client.get("/testnet/leaderboard", headers=grandma).json()
-    assert [e["points"] for e in board["entries"]] == [350, 310]
-    assert board["entries"][0]["is_me"] is True
+    assert [e["points"] for e in board["entries"]] == [400, 350]
+    assert board["entries"][1]["is_me"] is True  # grandma's own row is flagged
 
 
 def test_capsule_quests_award_the_creator(testnet_on, client):
@@ -690,4 +693,131 @@ def test_x_callback_api_failure_is_friendly(testnet_on, client, monkeypatch):
     assert r.status_code == 502
     # No partial link, no award
     assert quest(client, headers, "connect_x")["times_completed"] == 0
+
+
+# --- parity update (2026-07-22): fund, predictions, premium, legacy, calls, and
+# extended-family invites. Each awards once for the real product action, respects
+# its daily cap, and stays walled off when testnet mode is off. ---
+
+
+def test_fund_activation_awards_the_setter(testnet_on, client):
+    _, headers = wallet_login(client)
+    family_id = create_family(client, headers)
+    child_id = add_child(client, headers, family_id)
+    setup_fund(client, headers, child_id)  # local Connect onboards instantly
+    assert quest(client, headers, "fund_activated")["points_earned"] == 90
+
+
+def test_prediction_added_awards_once_per_round(testnet_on, client):
+    _, headers = wallet_login(client)
+    family_id = create_family(client, headers)
+    child_id = add_child(client, headers, family_id)  # under 18 -> a round is open
+    for body in ("She'll captain a spaceship", "She'll write a novel"):
+        r = client.post(
+            f"/children/{child_id}/predictions", json={"body": body}, headers=headers
+        )
+        assert r.status_code == 201, r.text
+    # Only the FIRST prediction in a round emits the feed event, so the second
+    # add in the same round must not re-award.
+    q = quest(client, headers, "prediction_added")
+    assert q["times_completed"] == 1
+    assert q["points_earned"] == 40
+
+
+def test_legacy_added_awards_and_respects_daily_cap(testnet_on, client):
+    _, headers = wallet_login(client)
+    family_id = create_family(client, headers)
+    for i in range(9):  # cap is 8/day: the ninth add scores nothing
+        r = client.post(
+            f"/families/{family_id}/legacy",
+            json={"type": "story", "title": f"Story {i}", "body": "Once upon a time."},
+            headers=headers,
+        )
+        assert r.status_code == 201, r.text
+    q = quest(client, headers, "legacy_added")
+    assert q["daily_cap"] == 8
+    assert q["completed_today"] == 8
+    assert q["points_earned"] == 8 * 30
+
+
+def test_premium_activation_awards(testnet_on, client):
+    _, headers = wallet_login(client)
+    family_id = create_family(client, headers)
+    make_premium(client, headers, family_id)  # local backend settles synchronously
+    assert quest(client, headers, "premium_activated")["points_earned"] == 60
+
+
+def test_extended_family_invite_scores_distinctly(testnet_on, client):
+    _, headers = wallet_login(client)
+    family_id = create_family(client, headers)
+    for role in ("aunt", "uncle", "cousin"):
+        r = client.post(
+            f"/families/{family_id}/invites",
+            json={"email": f"{role}@example.com", "role": role},
+            headers=headers,
+        )
+        assert r.status_code == 201, r.text
+    q = quest(client, headers, "invite_extended")
+    assert q["times_completed"] == 3
+    assert q["points_earned"] == 3 * 60
+    # the grandparent and generic-family buckets stayed empty
+    assert quest(client, headers, "invite_grandparent")["times_completed"] == 0
+    assert quest(client, headers, "invite_family")["times_completed"] == 0
+
+
+def test_call_joined_needs_a_second_participant(testnet_on, client, monkeypatch):
+    monkeypatch.setattr(
+        settings, "agora_app_certificate", "0123456789abcdef0123456789abcdef"
+    )
+    _, host = wallet_login(client)
+    _, guest = wallet_login(client)
+    guest_email = client.get("/auth/me", headers=guest).json()["email"]
+
+    family_id = create_family(client, host)
+    make_premium(client, host, family_id)  # video call is a Premium capability
+    r = client.post(
+        f"/families/{family_id}/invites",
+        json={"email": guest_email, "role": "grandparent"},
+        headers=host,
+    )
+    assert r.status_code == 201, r.text
+
+    from app.models import FamilyInvite
+
+    from .conftest import TestingSession
+
+    with TestingSession() as db:
+        token = (
+            db.query(FamilyInvite).filter(FamilyInvite.email == guest_email).first().token
+        )
+    assert client.post("/invites/accept", json={"token": token}, headers=guest).status_code == 200
+
+    # Host joins alone: only one person present, so no multi-actor award.
+    assert client.post(f"/families/{family_id}/call/join", headers=host).status_code == 201
+    assert quest(client, host, "call_joined")["times_completed"] == 0
+
+    # Guest joins while the host is present: two are together now -> guest scores.
+    assert client.post(f"/families/{family_id}/call/join", headers=guest).status_code == 200
+    assert quest(client, guest, "call_joined")["points_earned"] == 70
+
+
+def test_new_hooks_do_not_award_off_testnet(client, monkeypatch):
+    """The parity hooks (legacy, fund) are walled exactly like the originals:
+    real product actions by a tester score nothing when the flag is off."""
+    monkeypatch.setattr(settings, "testnet_mode", True)
+    _, headers = wallet_login(client)
+    family_id = create_family(client, headers)
+    child_id = add_child(client, headers, family_id)
+    baseline = total_points(client, headers)
+
+    monkeypatch.setattr(settings, "testnet_mode", False)
+    client.post(
+        f"/families/{family_id}/legacy",
+        json={"type": "story", "title": "Off-testnet", "body": "No points here."},
+        headers=headers,
+    )
+    setup_fund(client, headers, child_id)  # runs fine, awards nothing
+
+    monkeypatch.setattr(settings, "testnet_mode", True)
+    assert total_points(client, headers) == baseline
 

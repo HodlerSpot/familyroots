@@ -26,7 +26,8 @@ indistinguishable from routes that were never built. Nothing in the production
 API surface should even hint that a points system exists.
 
 The touch on the product codebase is deliberately tiny: one import plus one
-`award(...)` line in four routers, and a seven-entry event-to-action map inside
+`award(...)` line in a handful of routers (families, children, goals, invites,
+legacy, and the video-call join), and a twelve-entry event-to-action map inside
 `services/feed.py::emit()`. Everything else lives in `app/testnet/` and
 `apps/web/src/components/testnet/`.
 
@@ -89,16 +90,39 @@ contribution — is worth 525 points in one sitting. Repeatable low-effort actio
 | `create_family` | Plant your family tree | Create a family space | 75 | 2 |
 | `add_child` | Start a child's vault | Add a child profile (with consent) | 60 | 3 |
 | `invite_grandparent` | Invite a grandparent | Send an invitation with the grandparent role | 150 | 5 |
-| `invite_family` | Welcome more family | Send an invitation with any other role | 60 | 5 |
+| `invite_family` | Welcome more family | Send an invitation with relative/guardian/supporter role | 60 | 5 |
+| `invite_extended` | Bring in the extended family | Send an invitation with the aunt, uncle, or cousin role | 60 | 5 |
 | `invite_accepted` | Join a family | Accept another tester's invitation | 125 | 3 |
 | `milestone` | Share a milestone | Post a milestone to a child's vault | 50 | 5 |
+| `fund_activated` | Open a future fund | Set up a child's Future Fund so it's ready for gifts | 90 | 3 |
 | `contribution` | Grow a future fund | Complete a contribution end to end | 200 | 5 |
 | `memory_added` | Tuck away a memory | Add a photo, message, or memory to a vault | 30 | 10 |
 | `create_goal` | Set a goal | Create a goal for a child | 40 | 5 |
 | `achievement` | Celebrate an achievement | A parent marks a goal complete | 50 | 5 |
+| `prediction_added` | Make a prediction | Add a prediction to a child's Book of Predictions | 40 | 5 |
+| `predictions_sealed` | Seal a year of predictions | A birthday seals a round you helped fill | 60 | 3 |
+| `predictions_released` | Open the Book of Predictions | A child's 18th birthday opens the predictions you sealed | 75 | 3 |
 | `capsule_created` | Seal a time capsule | Seal a letter or recording for the future | 60 | 3 |
 | `capsule_released` | Open a time capsule | A capsule you sealed is released | 75 | 3 |
+| `legacy_added` | Add to the family archive | Add a story, recipe, or document to the legacy archive | 30 | 8 |
+| `call_joined` | Gather on a family call | Join a family video call while someone else is there too | 70 | 3 |
+| `premium_activated` | Unlock Premium | Start a family Premium membership | 60 | 2 |
 | `bug_verified` | Squash a real bug | Report a bug our team confirms is real | 250 | 5 |
+
+The catalog kept parity with the product through the 2026-07-12 harness build,
+then drifted as prod shipped video calls, real Stripe-Connect Future Funds,
+Premium, Future Predictions, the Memory Request, and the extended family roles.
+The 2026-07-22 update reconnected it: `fund_activated`, `prediction_added`,
+`predictions_sealed`, `predictions_released`, and `premium_activated` ride their
+existing feed events (added to `services/feed.py::emit()`); `legacy_added` and
+`call_joined` (gated on >=2 present participants — a genuine multi-actor test)
+are explicit `award()` hooks in their routers; and `invite_extended` splits the
+aunt/uncle/cousin roles out of the generic family invite. The **Memory Request**
+deliberately has no quest: responding to the monthly prompt is just the normal
+add-a-memory path, so it already earns `memory_added`. Premium **gifting** and
+the compliance erasure/DSAR flows stay reachable but unscored on purpose (a
+points harness should never incentivize account deletion, and gifting is a
+payment-rail concern with little coverage value).
 
 `bug_verified` is the single richest action (250) because a confirmed bug is the
 most valuable testing outcome we can buy. It is deliberately **not** self-claimable:
@@ -189,10 +213,15 @@ Wiring:
 - `services/feed.py::emit()` maps feed events to actions — milestone,
   memory_added, achievement, contribution, capsule_created, capsule_released
   (emitted with the capsule's creator as actor, so the sealer earns the release),
-  and member_joined → `invite_accepted`.
+  member_joined → `invite_accepted`, fund_activated (actor = the fund's setter),
+  prediction_added (actor = the prediction's author), predictions_sealed and
+  predictions_released (actor = the round's child creator), and premium_activated
+  (actor = the subscription owner).
 - Explicit one-line awards for actions that have no feed event: `create_family`,
-  `add_child`, `create_goal`, and `create_invite` (grandparent role scores as
-  `invite_grandparent`, everything else as `invite_family`).
+  `add_child`, `create_goal`, `create_invite` (grandparent → `invite_grandparent`,
+  aunt/uncle/cousin → `invite_extended`, everything else → `invite_family`),
+  `legacy_added` (a legacy-archive item is created), and `call_joined` (joining a
+  family video call, awarded only when >=2 participants are present together).
 - `connect_wallet`, `set_display_name`, and `connect_x` are awarded inside the
   testnet router (`connect_x` fires only after a verified X token exchange).
 - `bug_verified` is awarded **only** by the admin bug-verification endpoint, never
@@ -274,8 +303,11 @@ points-for-glory testnet with no monetary rewards.
 | `POST /testnet/profile` | bearer | Set tester display name (max 40 chars) |
 | `POST /testnet/auth/x/start` | bearer | Begin X connect (PKCE); 503 when X isn't configured |
 | `POST /testnet/auth/x/callback` | bearer | Finish X connect, link profile, award `connect_x` |
+| `POST /testnet/auth/x/disconnect` | bearer | Unlink X (clears handle/avatar); keeps the earned `connect_x` points |
+| `POST /testnet/bugs/media` | bearer | Start a bug-screenshot upload (shared media pipeline; images only) |
 | `POST /testnet/bugs` | bearer | File a bug report (pending, awards nothing; capped at 20 open) |
 | `GET /testnet/bugs` | bearer | The caller's own bug reports with status, newest first |
+| `GET /testnet/bugs/pending` | `X-Admin-Token` | Admin review queue: every pending report with who filed it |
 | `POST /testnet/bugs/{id}/verify` | `X-Admin-Token` | Human review; `verified` awards `bug_verified`, `rejected` does not |
 
 Data model (`app/models.py`): `Tester` (wallet 1:1 user, plus optional

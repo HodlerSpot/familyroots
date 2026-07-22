@@ -53,6 +53,7 @@ from ..services.notify import (
     notify,
 )
 from ..services.email_templates import render_email
+from ..testnet.service import award
 
 router = APIRouter(prefix="/families/{family_id}/call", tags=["call"])
 
@@ -372,6 +373,17 @@ def join_call(
     # A brand-new call rings the family (bell + push + opt-in email). Calls
     # deliberately emit NO feed event; this notification is the only signal.
     batch = _notify_call_started(db, family_id, user) if created else None
+    # Testnet points (no-op in the family product): a call is only a genuine
+    # multi-actor test once at least two people are present together, so the
+    # award fires only when this join brings the live count to >= 2.
+    cutoff = _presence_cutoff()
+    present_count = sum(
+        1
+        for p in db.query(CallParticipant).filter(CallParticipant.call_id == call.id).all()
+        if _is_present(p, cutoff)
+    )
+    if present_count >= 2:
+        award(db, user.id, "call_joined")
     db.commit()
     if batch is not None:
         batch.deliver(db)
