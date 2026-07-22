@@ -1,43 +1,71 @@
-// Create-account screen: name, email, and a password vetted against the same
-// complexity rules the API enforces (shown as a live checklist). On success the
-// shared api.signup(...) returns a session token, which the auth context stores
-// as an always-remembered native session and the AuthGate routes into the app.
-// Copy + validation mirror apps/web/src/app/signup/page.tsx.
+// Forgot-password screen: email in, then the same warm "check your email"
+// confirmation the web shows. The API never reveals whether an account exists,
+// so the confirmation is phrased "if an account exists" to avoid leaking that.
+// Mirrors apps/web/src/app/forgot-password/page.tsx.
 import React, { useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "react-native";
-import { Link } from "expo-router";
+import { Link, useRouter } from "expo-router";
 import { Button, HelperText, Text, TextInput } from "react-native-paper";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ApiError } from "@futureroots/api-client";
-import { useAuth } from "@/auth-context";
-import { PasswordChecklist, passwordMeetsRules } from "@/password-rules";
+import { api } from "@/api";
 
-export default function SignupScreen() {
-  const { signUp } = useAuth();
-  const [name, setName] = useState("");
+export default function ForgotPasswordScreen() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const rulesMet = passwordMeetsRules(password);
-  const canSubmit =
-    name.trim().length > 0 && email.trim().length > 0 && rulesMet && !busy;
+  const canSubmit = email.trim().length > 0 && !busy;
 
   async function onSubmit() {
     if (!canSubmit) return;
     setError(null);
     setBusy(true);
     try {
-      await signUp(name.trim(), email.trim(), password);
-      // Success: AuthGate redirects into (app).
+      await api.forgotPassword(email.trim());
+      setSent(true);
     } catch (e) {
       setError(
         e instanceof ApiError ? e.message : "Something went wrong. Please try again."
       );
+    } finally {
       setBusy(false);
     }
+  }
+
+  if (sent) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.confirm}>
+          <Text style={styles.emoji}>📬</Text>
+          <Text variant="headlineMedium" style={styles.title}>
+            Check your email
+          </Text>
+          <Text variant="bodyLarge" style={styles.confirmBody}>
+            If an account exists for {email.trim()}, a reset link is on its way. It
+            works once and expires in an hour.
+          </Text>
+          <Text variant="bodyMedium" style={styles.hint}>
+            Nothing arriving? Check your spam folder, or try again.
+          </Text>
+          <Button
+            mode="text"
+            onPress={() => {
+              setSent(false);
+              setError(null);
+            }}
+            style={styles.retry}
+          >
+            Try a different email
+          </Button>
+          <Button mode="contained" onPress={() => router.replace("/(auth)/login")} style={styles.submit} contentStyle={styles.submitContent}>
+            Back to sign in
+          </Button>
+        </View>
+      </SafeAreaView>
+    );
   }
 
   return (
@@ -52,23 +80,13 @@ export default function SignupScreen() {
         >
           <View style={styles.header}>
             <Text variant="headlineMedium" style={styles.title}>
-              Create your account
+              Reset your password
             </Text>
             <Text variant="bodyLarge" style={styles.subtitle}>
-              Start preserving your family's memories.
+              Enter your email and we'll send you a link to choose a new one.
             </Text>
           </View>
 
-          <TextInput
-            label="Your name"
-            mode="outlined"
-            value={name}
-            onChangeText={setName}
-            autoCapitalize="words"
-            autoComplete="name"
-            textContentType="name"
-            style={styles.input}
-          />
           <TextInput
             label="Email"
             mode="outlined"
@@ -79,25 +97,8 @@ export default function SignupScreen() {
             keyboardType="email-address"
             inputMode="email"
             style={styles.input}
+            onSubmitEditing={onSubmit}
           />
-          <TextInput
-            label="Password"
-            mode="outlined"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry={!showPassword}
-            autoCapitalize="none"
-            autoComplete="password-new"
-            textContentType="newPassword"
-            right={
-              <TextInput.Icon
-                icon={showPassword ? "eye-off" : "eye"}
-                onPress={() => setShowPassword((v) => !v)}
-              />
-            }
-            style={styles.input}
-          />
-          <PasswordChecklist password={password} />
 
           {error ? (
             <HelperText type="error" visible style={styles.error}>
@@ -113,17 +114,14 @@ export default function SignupScreen() {
             style={styles.submit}
             contentStyle={styles.submitContent}
           >
-            Create account
+            Send reset link
           </Button>
 
-          <View style={styles.footer}>
-            <Text variant="bodyMedium">Already have an account? </Text>
-            <Link href="/(auth)/login">
-              <Text variant="bodyMedium" style={styles.link}>
-                Sign in
-              </Text>
-            </Link>
-          </View>
+          <Link href="/(auth)/login" style={styles.back}>
+            <Text variant="bodyMedium" style={styles.backText}>
+              Back to sign in
+            </Text>
+          </Link>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -141,6 +139,11 @@ const styles = StyleSheet.create({
   error: { marginTop: -4 },
   submit: { marginTop: 12, borderRadius: 12 },
   submitContent: { paddingVertical: 8 },
-  footer: { flexDirection: "row", justifyContent: "center", marginTop: 20 },
-  link: { fontWeight: "700", textDecorationLine: "underline" },
+  back: { alignSelf: "center", marginTop: 20 },
+  backText: { textDecorationLine: "underline", opacity: 0.7 },
+  confirm: { flex: 1, padding: 24, alignItems: "center", justifyContent: "center", gap: 10 },
+  emoji: { fontSize: 44 },
+  confirmBody: { textAlign: "center", opacity: 0.8 },
+  hint: { textAlign: "center", opacity: 0.6, marginTop: 4 },
+  retry: { marginTop: 4 },
 });

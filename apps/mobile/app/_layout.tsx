@@ -11,6 +11,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "@/auth-context";
+import { AppLockProvider } from "@/app-lock";
 import { queryClient } from "@/query";
 import { darkTheme, lightTheme } from "@/theme";
 
@@ -52,7 +53,9 @@ export default function RootLayout() {
         >
           <StatusBar style={scheme === "dark" ? "light" : "dark"} />
           <AuthProvider>
-            <AuthGate />
+            <AppLockProvider>
+              <AuthGate />
+            </AppLockProvider>
           </AuthProvider>
         </PaperProvider>
       </SafeAreaProvider>

@@ -20,6 +20,7 @@ export type AuthStatus = "loading" | "authed" | "unauthed";
 interface AuthContextValue {
   status: AuthStatus;
   signIn: (email: string, password: string) => Promise<void>;
+  signUp: (name: string, email: string, password: string) => Promise<void>;
   signOut: () => void;
 }
 
@@ -49,6 +50,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       async signIn(email: string, password: string) {
         // Native sessions are always "stay logged in" (remember = true).
         const res = await api.login(email, password, true);
+        client.setToken(res.access_token, { remember: true });
+        setStatus("authed");
+      },
+      async signUp(name: string, email: string, password: string) {
+        // Create the account, then land straight in the app on the returned
+        // token. Like sign-in, native accounts are always remembered.
+        const res = await api.signup(email, name, password);
         client.setToken(res.access_token, { remember: true });
         setStatus("authed");
       },

@@ -1,43 +1,67 @@
-// Create-account screen: name, email, and a password vetted against the same
-// complexity rules the API enforces (shown as a live checklist). On success the
-// shared api.signup(...) returns a session token, which the auth context stores
-// as an always-remembered native session and the AuthGate routes into the app.
-// Copy + validation mirror apps/web/src/app/signup/page.tsx.
+// Reset-password screen. Reached by the reset link in the email opening the app
+// via either the custom scheme (futureroots://reset-password/<token>) or the
+// https Universal Link / App Link (https://futureroots.app/reset-password/<token>);
+// expo-router maps that path here from the [token] route param. This lives in
+// the (auth) group so an unauthenticated deep-link open is not bounced to login.
+// Mirrors apps/web/src/app/reset-password/[token]/page.tsx.
 import React, { useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "react-native";
-import { Link } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Button, HelperText, Text, TextInput } from "react-native-paper";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ApiError } from "@futureroots/api-client";
-import { useAuth } from "@/auth-context";
+import { api } from "@/api";
 import { PasswordChecklist, passwordMeetsRules } from "@/password-rules";
 
-export default function SignupScreen() {
-  const { signUp } = useAuth();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+export default function ResetPasswordScreen() {
+  const router = useRouter();
+  const { token } = useLocalSearchParams<{ token: string }>();
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
 
   const rulesMet = passwordMeetsRules(password);
-  const canSubmit =
-    name.trim().length > 0 && email.trim().length > 0 && rulesMet && !busy;
+  const canSubmit = rulesMet && !busy && typeof token === "string" && token.length > 0;
 
   async function onSubmit() {
     if (!canSubmit) return;
     setError(null);
     setBusy(true);
     try {
-      await signUp(name.trim(), email.trim(), password);
-      // Success: AuthGate redirects into (app).
+      await api.resetPassword(token as string, password);
+      setDone(true);
     } catch (e) {
       setError(
         e instanceof ApiError ? e.message : "Something went wrong. Please try again."
       );
       setBusy(false);
     }
+  }
+
+  if (done) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.confirm}>
+          <Text style={styles.emoji}>✅</Text>
+          <Text variant="headlineMedium" style={styles.title}>
+            Password updated
+          </Text>
+          <Text variant="bodyLarge" style={styles.confirmBody}>
+            You can sign in with your new password now.
+          </Text>
+          <Button
+            mode="contained"
+            onPress={() => router.replace("/(auth)/login")}
+            style={styles.submit}
+            contentStyle={styles.submitContent}
+          >
+            Sign in
+          </Button>
+        </View>
+      </SafeAreaView>
+    );
   }
 
   return (
@@ -52,36 +76,12 @@ export default function SignupScreen() {
         >
           <View style={styles.header}>
             <Text variant="headlineMedium" style={styles.title}>
-              Create your account
-            </Text>
-            <Text variant="bodyLarge" style={styles.subtitle}>
-              Start preserving your family's memories.
+              Choose a new password
             </Text>
           </View>
 
           <TextInput
-            label="Your name"
-            mode="outlined"
-            value={name}
-            onChangeText={setName}
-            autoCapitalize="words"
-            autoComplete="name"
-            textContentType="name"
-            style={styles.input}
-          />
-          <TextInput
-            label="Email"
-            mode="outlined"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            autoComplete="email"
-            keyboardType="email-address"
-            inputMode="email"
-            style={styles.input}
-          />
-          <TextInput
-            label="Password"
+            label="New password"
             mode="outlined"
             value={password}
             onChangeText={setPassword}
@@ -113,17 +113,8 @@ export default function SignupScreen() {
             style={styles.submit}
             contentStyle={styles.submitContent}
           >
-            Create account
+            Set new password
           </Button>
-
-          <View style={styles.footer}>
-            <Text variant="bodyMedium">Already have an account? </Text>
-            <Link href="/(auth)/login">
-              <Text variant="bodyMedium" style={styles.link}>
-                Sign in
-              </Text>
-            </Link>
-          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -136,11 +127,11 @@ const styles = StyleSheet.create({
   content: { padding: 24, gap: 12, flexGrow: 1, justifyContent: "center" },
   header: { marginBottom: 16, gap: 4 },
   title: { fontWeight: "700" },
-  subtitle: { opacity: 0.7 },
   input: { marginBottom: 4 },
   error: { marginTop: -4 },
   submit: { marginTop: 12, borderRadius: 12 },
   submitContent: { paddingVertical: 8 },
-  footer: { flexDirection: "row", justifyContent: "center", marginTop: 20 },
-  link: { fontWeight: "700", textDecorationLine: "underline" },
+  confirm: { flex: 1, padding: 24, alignItems: "center", justifyContent: "center", gap: 10 },
+  emoji: { fontSize: 44 },
+  confirmBody: { textAlign: "center", opacity: 0.8, marginBottom: 8 },
 });

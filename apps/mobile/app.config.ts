@@ -35,6 +35,11 @@ const config: ExpoConfig = {
   ios: {
     bundleIdentifier: "com.futureroots.app",
     supportsTablet: true,
+    // Universal Links: emailed/in-app https links (reset-password, invites,
+    // family, legacy) open the app when the AASA file is served from the domain,
+    // and fall back to the web otherwise. Server-side AASA is tracked in the
+    // build plan; this is the app-side declaration.
+    associatedDomains: ["applinks:futureroots.app", "applinks:www.futureroots.app"],
   },
   android: {
     package: "app.futureroots",
@@ -42,6 +47,22 @@ const config: ExpoConfig = {
       foregroundImage: "./assets/adaptive-icon.png",
       backgroundColor: "#ffffff",
     },
+    // Android App Links: same https paths, auto-verified against the domain's
+    // assetlinks.json (server-side, tracked in the build plan).
+    intentFilters: [
+      {
+        action: "VIEW",
+        autoVerify: true,
+        data: [
+          { scheme: "https", host: "futureroots.app", pathPrefix: "/reset-password" },
+          { scheme: "https", host: "futureroots.app", pathPrefix: "/invites" },
+          { scheme: "https", host: "futureroots.app", pathPrefix: "/family" },
+          { scheme: "https", host: "futureroots.app", pathPrefix: "/legacy" },
+          { scheme: "https", host: "www.futureroots.app", pathPrefix: "/reset-password" },
+        ],
+        category: ["BROWSABLE", "DEFAULT"],
+      },
+    ],
   },
   plugins: ["expo-router", "expo-secure-store", "expo-local-authentication"],
   extra: {

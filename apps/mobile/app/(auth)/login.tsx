@@ -24,10 +24,13 @@ export default function LoginScreen() {
     setBusy(true);
     try {
       await signIn(email.trim(), password);
-      // Success: AuthGate redirects into (app).
+      // Success: AuthGate redirects into (app). The AppLockProvider offers to
+      // turn on the biometric lock right after this first sign-in.
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
         setError("That email or password doesn't look right. Please try again.");
+      } else if (e instanceof ApiError) {
+        setError(e.message);
       } else {
         setError("We couldn't sign you in just now. Please try again in a moment.");
       }
@@ -101,6 +104,12 @@ export default function LoginScreen() {
             Sign in
           </Button>
 
+          <Link href="/(auth)/forgot-password" style={styles.forgot}>
+            <Text variant="bodyMedium" style={styles.forgotText}>
+              Forgot your password?
+            </Text>
+          </Link>
+
           <View style={styles.footer}>
             <Text variant="bodyMedium">New here? </Text>
             <Link href="/(auth)/signup">
@@ -126,6 +135,8 @@ const styles = StyleSheet.create({
   error: { marginTop: -4 },
   submit: { marginTop: 12, borderRadius: 12 },
   submitContent: { paddingVertical: 8 },
+  forgot: { alignSelf: "center", marginTop: 16 },
+  forgotText: { textDecorationLine: "underline", opacity: 0.7 },
   footer: { flexDirection: "row", justifyContent: "center", marginTop: 20 },
   link: { fontWeight: "700", textDecorationLine: "underline" },
 });
