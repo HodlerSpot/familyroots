@@ -885,6 +885,38 @@ class PushSubscription(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class NativePushPlatform(str, enum.Enum):
+    ios = "ios"
+    android = "android"
+
+
+class NativePushToken(Base):
+    """A single native (iOS/Android) device's Expo push token for a user.
+
+    The mobile app enrolls here after the OS grants push permission; the
+    dispatcher (``services/notify_native.deliver_native``) POSTs to Expo's push
+    service for these tokens exactly as ``_deliver_push`` does for web VAPID
+    subscriptions. Separate table from ``push_subscriptions`` because the
+    transports are unrelated: web push is VAPID-signed POSTs to a browser vendor
+    endpoint; native push is an opaque Expo token sent to one fixed Expo host.
+    The token is unique across the table: re-registering the same token
+    reassigns it to whoever holds the device now (shared-device handoff) and
+    refreshes ``last_seen_at``. Tokens Expo reports as ``DeviceNotRegistered``
+    are pruned by the dispatcher, mirroring web dead-subscription pruning."""
+
+    __tablename__ = "native_push_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    expo_push_token: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    platform: Mapped[NativePushPlatform] = mapped_column(
+        Enum(NativePushPlatform, native_enum=False, length=20)
+    )
+    device_label: Mapped[str | None] = mapped_column(String(200), nullable=True)  # "Rose's iPhone"
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Notification(Base):
     """An in-app "bell" notification for one user. ALWAYS written when a
     notify()-worthy action fires (in the same transaction as the domain

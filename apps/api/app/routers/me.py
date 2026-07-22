@@ -17,6 +17,8 @@ from ..models import (
     Family,
     MediaObject,
     MediaStatus,
+    NativePushPlatform,
+    NativePushToken,
     Notification,
     NotificationPreference,
     PushSubscription,
@@ -29,6 +31,8 @@ from ..schemas import (
     MediaCreate,
     MediaUploadTicket,
     MyContributionOut,
+    NativePushRegisterIn,
+    NativePushUnregisterIn,
     NotificationPrefs,
     PushSubscribeIn,
     PushUnsubscribeIn,
@@ -190,6 +194,61 @@ def unsubscribe_push(
     ).delete(synchronize_session=False)
     db.commit()
     return {"unsubscribed": True}
+
+
+# --- native (iOS/Android) push tokens ---
+
+# No push_targets allowlist here: that guard exists because a web push endpoint
+# is a client-supplied URL POSTed to from inside the VPC (an SSRF sink). An Expo
+# token is opaque and the native dispatcher only ever POSTs to a hardcoded Expo
+# host, so there is no URL to validate. There is also no "feature-dark" 503:
+# native sends need no server-side key (the Expo access token is optional), so
+# enrollment is always available on native builds.
+
+
+@router.post("/native-push-tokens", status_code=status.HTTP_201_CREATED)
+def register_native_push_token(
+    payload: NativePushRegisterIn, db: DbSession, user: CurrentUser
+) -> dict:
+    """Enroll this device's Expo push token for the caller. The token is unique:
+    re-registering reassigns it to whoever holds the device now (shared-device
+    handoff), updates the platform/label, and refreshes last_seen_at."""
+    token = (
+        db.query(NativePushToken)
+        .filter(NativePushToken.expo_push_token == payload.expo_push_token)
+        .first()
+    )
+    now = utcnow()
+    if token is None:
+        token = NativePushToken(
+            user_id=user.id,
+            expo_push_token=payload.expo_push_token,
+            platform=NativePushPlatform(payload.platform),
+            device_label=payload.device_label,
+            last_seen_at=now,
+        )
+        db.add(token)
+    else:
+        token.user_id = user.id
+        token.platform = NativePushPlatform(payload.platform)
+        token.device_label = payload.device_label
+        token.last_seen_at = now
+    db.commit()
+    return {"registered": True}
+
+
+@router.post("/native-push-tokens/unregister")
+def unregister_native_push_token(
+    payload: NativePushUnregisterIn, db: DbSession, user: CurrentUser
+) -> dict:
+    """Drop this device's Expo token. Scoped to the caller so one user can never
+    delete another's token by guessing it."""
+    db.query(NativePushToken).filter(
+        NativePushToken.expo_push_token == payload.expo_push_token,
+        NativePushToken.user_id == user.id,
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {"unregistered": True}
 
 
 # --- in-app inbox (bell) ---

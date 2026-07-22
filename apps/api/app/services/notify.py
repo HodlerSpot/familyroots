@@ -207,6 +207,7 @@ class NotificationBatch:
             sender.send(**email)
         if self.push_user_ids:
             _deliver_push(db, self)
+            _deliver_native(db, self)
 
 
 def notify(
@@ -318,6 +319,16 @@ def _deliver_push(db: Session, batch: NotificationBatch) -> None:
             synchronize_session=False
         )
         db.commit()
+
+
+def _deliver_native(db: Session, batch: NotificationBatch) -> None:
+    """Fan the same batch out to enrolled native (iOS/Android) devices. Kept as
+    a thin wrapper (lazy import) so the native transport lives in its own module
+    and web-only deploys never import httpx-based send code paths until push
+    actually fires."""
+    from .notify_native import deliver_native
+
+    deliver_native(db, batch)
 
 
 # --- shared emitter: fund activation (used by two call sites) -----------------

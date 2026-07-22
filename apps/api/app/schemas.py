@@ -533,6 +533,21 @@ class PushUnsubscribeIn(BaseModel):
     endpoint: str = Field(min_length=1, max_length=500)
 
 
+class NativePushRegisterIn(BaseModel):
+    """A native (iOS/Android) device enrolling its Expo push token. Unlike web
+    push there is no endpoint URL to validate — the token is opaque and the
+    dispatcher only ever POSTs to a hardcoded Expo host, so there is no SSRF
+    surface to guard."""
+
+    expo_push_token: str = Field(min_length=1, max_length=255)
+    platform: Literal["ios", "android"]
+    device_label: str | None = Field(default=None, max_length=200)
+
+
+class NativePushUnregisterIn(BaseModel):
+    expo_push_token: str = Field(min_length=1, max_length=255)
+
+
 class InboxItemOut(BaseModel):
     id: uuid.UUID
     kind: str

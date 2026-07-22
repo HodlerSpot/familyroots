@@ -251,6 +251,13 @@ class Settings(BaseSettings):
     vapid_private_key: str = ""
     vapid_public_key: str = ""
     vapid_subject: str = "mailto:hello@futureroots.app"
+    # Native push (iOS/Android via Expo). The dispatcher POSTs to a HARDCODED
+    # Expo host, so there is no user-controlled URL and nothing to configure to
+    # send. This optional access token is a SECRET (in the futureroots/api blob)
+    # used only if the Expo project enforces authenticated sends; when empty,
+    # sends go out unauthenticated (Expo's default). Native push is
+    # feature-dark whenever no device has enrolled a token — no key gates it.
+    expo_access_token: str = ""
 
     model_config = {"env_file": ".env", "env_prefix": "FUTUREROOTS_"}
 
