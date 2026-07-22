@@ -18,6 +18,7 @@ Trust model:
 
 import logging
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.exc import IntegrityError
@@ -496,12 +497,27 @@ def handle_invoice_upcoming(
 
 # --- membership lifecycle hooks ---
 
-def handle_owner_departure(db: Session, family_id: uuid.UUID, user_id: uuid.UUID) -> None:
+def handle_owner_departure(
+    db: Session,
+    family_id: uuid.UUID,
+    user_id: uuid.UUID,
+    *,
+    defer: "Callable[[Callable[[], None]], None] | None" = None,
+) -> None:
     """Call from member-removal / leave / account-deletion paths when the
     departing user owns the family's live subscription: a person shouldn't
     silently keep paying for a family they're no longer in. Stripe call is
     best-effort; on failure the row stays visibly wrong for the admin
-    reconcile."""
+    reconcile.
+
+    When `defer` is supplied (the erasure path), the DB mutation still happens
+    IN the caller's transaction but the external side effects — the Stripe
+    cancel-at-period-end call and the emails to the remaining parents — are
+    registered on the sink and run only POST-COMMIT (mirrors the
+    NotificationBatch.deliver idiom), so a rolled-back erasure can never leave
+    parents emailed / billing cancelled for a deletion that didn't happen. The
+    mirror is set to cancel_at_period_end inline and the next /sync reconverges
+    it to live Stripe state."""
     row = (
         db.query(FamilySubscription)
         .filter(
@@ -513,14 +529,51 @@ def handle_owner_departure(db: Session, family_id: uuid.UUID, user_id: uuid.UUID
     if row is None or row.owner_user_id != user_id:
         return
     owner = db.get(User, user_id)
+    sub_id = row.stripe_subscription_id
+    owner_name = owner.display_name if owner else "A parent"
+
+    if defer is not None:
+        # DB mutation in-transaction; Stripe + emails post-commit.
+        row.cancel_at_period_end = True
+        row.updated_at = utcnow()
+        # Build the email payloads eagerly (pure data) capturing only primitives,
+        # so the deferred closure holds no ORM state across the commit.
+        end_date = _aware(row.current_period_end)
+        payloads = [
+            (
+                parent.email,
+                copy.owner_departure(
+                    parent_name=parent.display_name,
+                    owner_name=owner_name,
+                    end_date=end_date,
+                    family_id=family_id,
+                ),
+            )
+            for parent in _active_parents(db, family_id)
+            if parent.id != user_id
+        ]
+
+        def _external() -> None:
+            try:
+                get_payment_provider().set_cancel_at_period_end(sub_id, True)
+            except Exception:  # noqa: BLE001 — best-effort, reconcile fixes drift
+                logger.warning(
+                    "owner-departure cancel_at_period_end failed for %s — reconcile",
+                    sub_id,
+                )
+            sender = get_email_sender()
+            for email, payload in payloads:
+                sender.send(to=email, **payload)
+
+        defer(_external)
+        return
+
     try:
-        state = get_payment_provider().set_cancel_at_period_end(
-            row.stripe_subscription_id, True
-        )
+        state = get_payment_provider().set_cancel_at_period_end(sub_id, True)
     except Exception:  # noqa: BLE001 — best-effort, reconcile fixes drift
         logger.warning(
             "owner-departure cancel_at_period_end failed for %s — reconcile",
-            row.stripe_subscription_id,
+            sub_id,
         )
         state = None
     if state is not None:
@@ -535,7 +588,7 @@ def handle_owner_departure(db: Session, family_id: uuid.UUID, user_id: uuid.UUID
             parent,
             copy.owner_departure(
                 parent_name=parent.display_name,
-                owner_name=owner.display_name if owner else "A parent",
+                owner_name=owner_name,
                 end_date=_aware(row.current_period_end),
                 family_id=family_id,
             ),

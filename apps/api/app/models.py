@@ -241,7 +241,11 @@ class AdminAuditLog(Base):
     __tablename__ = "admin_audit_log"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    admin_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    # SET NULL on erasure: the audit trail survives, the actor link is severed
+    # (an admin's own account can be erased without destroying accountability).
+    admin_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     action: Mapped[str] = mapped_column(String(60))  # e.g. bug_verified, role_changed
     target: Mapped[str | None] = mapped_column(String(120), nullable=True)  # e.g. "user:<id>"
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -255,7 +259,10 @@ class Family(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(120))
-    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    # SET NULL on erasure: a family survives its creator leaving the platform.
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     max_upload_mb: Mapped[int] = mapped_column(default=10)  # per-family attachment size cap
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -274,7 +281,9 @@ class FamilyMember(Base):
     status: Mapped[MemberStatus] = mapped_column(
         Enum(MemberStatus, native_enum=False, length=20), default=MemberStatus.active
     )
-    invited_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     family: Mapped[Family] = relationship(back_populates="members")
@@ -320,8 +329,12 @@ class ChildRelationship(Base):
     __table_args__ = (UniqueConstraint("child_id", "user_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    child_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("children.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     relationship_type: Mapped[FamilyRole] = mapped_column("relationship", role_column())
 
     child: Mapped[Child] = relationship(back_populates="relationships")
@@ -350,7 +363,11 @@ class MediaObject(Base):
     storage_key: Mapped[str] = mapped_column(String(255), unique=True)
     content_type: Mapped[str] = mapped_column(String(100))
     byte_size: Mapped[int] = mapped_column(BigInteger, default=0)
-    uploaded_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    # SET NULL on erasure: media a departed member uploaded (a child's/family's
+    # memory) stays with the family; only the uploader link is severed.
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     status: Mapped[MediaStatus] = mapped_column(
         Enum(MediaStatus, native_enum=False, length=20), default=MediaStatus.pending
     )
@@ -377,7 +394,10 @@ class VaultItem(Base):
     # Off by default: supporters (non-family adults) only see items a parent
     # has explicitly shared with them. Any parent can toggle this at any time.
     visible_to_supporters: Mapped[bool] = mapped_column(default=False)
-    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    # SET NULL on erasure: a memory is family history and survives its author.
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -395,7 +415,10 @@ class FeedEvent(Base):
     type: Mapped[FeedEventType] = mapped_column(
         Enum(FeedEventType, native_enum=False, length=20)
     )
-    actor_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    # SET NULL on erasure: the family's feed history survives a departed actor.
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True
@@ -409,7 +432,10 @@ class Goal(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
-    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    # SET NULL on erasure: a goal is the child's record and survives its author.
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     title: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     reward_type: Mapped[RewardType] = mapped_column(
@@ -432,7 +458,10 @@ class GoalCompletion(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     goal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("goals.id"), unique=True)
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    verified_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    # SET NULL on erasure: the child's achievement survives its verifier.
+    verified_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     goal: Mapped[Goal] = relationship()
@@ -453,15 +482,25 @@ class Contribution(Base):
     __tablename__ = "contributions"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
-    contributor_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    # Both SET NULL, not delete: a contribution is a retained financial record
+    # (§3.D). On child erasure the child link is severed; on contributor erasure
+    # the person link is severed. The money fields are NEVER touched.
+    child_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("children.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    contributor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     amount_cents: Mapped[int] = mapped_column(BigInteger)
     currency: Mapped[str] = mapped_column(String(3), default="USD")
     fee_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     refunded_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # cumulative gross refunded
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # SET NULL on erasure: the contribution is a RETAINED financial record
+    # (§3.D); its attached personal video message is deleted and this link
+    # severed. Defense in depth so a stray media delete can't 500 (runbook §4.5).
     media_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("media_objects.id"), nullable=True
+        ForeignKey("media_objects.id", ondelete="SET NULL"), nullable=True
     )
     provider_payment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[ContributionStatus] = mapped_column(
@@ -469,7 +508,7 @@ class Contribution(Base):
         default=ContributionStatus.pending,
     )
     trigger_feed_event_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("feed_events.id"), nullable=True
+        ForeignKey("feed_events.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -481,7 +520,11 @@ class FundAccount(Base):
     __tablename__ = "fund_accounts"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), unique=True)
+    # SET NULL on erasure: the account row is RETAINED as the anchor for the
+    # append-only ledger (§3.B/§3.D); only the child link is severed.
+    child_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("children.id", ondelete="SET NULL"), unique=True, nullable=True
+    )
     currency: Mapped[str] = mapped_column(String(3), default="USD")
     # --- Stripe Connect (Express): the child's real account. The account is
     # legally the parent's (setup_by), earmarked for the child; the id is
@@ -495,7 +538,9 @@ class FundAccount(Base):
         Enum(FundAccountStatus, native_enum=False, length=20),
         default=FundAccountStatus.none,
     )
-    setup_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    setup_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     charges_enabled: Mapped[bool] = mapped_column(default=False)
     payouts_enabled: Mapped[bool] = mapped_column(default=False)
     requirements_due: Mapped[bool] = mapped_column(default=False)
@@ -522,8 +567,12 @@ class FundNudge(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    child_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("children.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -544,9 +593,13 @@ class MemoryPrompt(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
-    family_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("families.id"), index=True)
-    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    family_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("families.id", ondelete="CASCADE"), index=True
+    )
+    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id", ondelete="CASCADE"))
     period: Mapped[str] = mapped_column(String(7))  # "YYYY-MM" (UTC calendar month)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -579,7 +632,10 @@ class TimeCapsule(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
-    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    # SET NULL on erasure: a capsule is family history and survives its author.
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     type: Mapped[CapsuleType] = mapped_column(Enum(CapsuleType, native_enum=False, length=20))
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     media_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -636,7 +692,9 @@ class PredictionRound(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
+    child_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("children.id", ondelete="CASCADE"), index=True
+    )
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     # UTC date of the birthday this round seals on. SERVER-ONLY FOR SUPPORTERS:
     # never serialized to them (it is birthdate-derived).
@@ -674,7 +732,9 @@ class Prediction(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    round_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("prediction_rounds.id"), index=True)
+    round_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("prediction_rounds.id", ondelete="CASCADE"), index=True
+    )
     author_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
     body: Mapped[str] = mapped_column(String(120))  # 2-120 chars after trim, plain text
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -696,7 +756,10 @@ class LegacyItem(Base):
     media_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("media_objects.id"), nullable=True
     )
-    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    # SET NULL on erasure: a legacy item is family history and survives its author.
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     media: Mapped[MediaObject | None] = relationship()
@@ -712,8 +775,10 @@ class CapsuleReleaseVote(Base):
     __table_args__ = (UniqueConstraint("capsule_id", "user_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    capsule_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("time_capsules.id"), index=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    capsule_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("time_capsules.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -723,7 +788,11 @@ class Comment(Base):
     __tablename__ = "comments"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    feed_event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feed_events.id"), index=True)
+    # CASCADE: a comment cannot outlive the feed event it hangs on (so erasing
+    # a child's feed events cleanly removes their comment threads).
+    feed_event_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("feed_events.id", ondelete="CASCADE"), index=True
+    )
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     body: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
@@ -872,13 +941,15 @@ class FamilyCall(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    family_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("families.id"), index=True)
+    family_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("families.id", ondelete="CASCADE"), index=True
+    )
     active_family_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     channel_name: Mapped[str] = mapped_column(String(64), unique=True)
     status: Mapped[CallStatus] = mapped_column(
         Enum(CallStatus, native_enum=False, length=20), default=CallStatus.active
     )
-    started_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    started_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -891,8 +962,12 @@ class CallParticipant(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    call_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("family_calls.id"), index=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    call_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("family_calls.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     # Server-assigned Agora uid, stable for the life of the call (reused on
     # rejoin). Client never supplies it.
     agora_uid: Mapped[int] = mapped_column(BigInteger)
@@ -911,9 +986,13 @@ class CallChildPresence(Base):
     __table_args__ = (UniqueConstraint("call_id", "child_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    call_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("family_calls.id"), index=True)
-    child_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("children.id"), index=True)
-    marked_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    call_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("family_calls.id", ondelete="CASCADE"), index=True
+    )
+    child_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("children.id", ondelete="CASCADE"), index=True
+    )
+    marked_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -924,11 +1003,11 @@ class PlannedCall(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     family_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("families.id"), unique=True, index=True
+        ForeignKey("families.id", ondelete="CASCADE"), unique=True, index=True
     )
     scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     note: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    set_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    set_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
@@ -960,8 +1039,15 @@ class FamilySubscription(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    family_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("families.id"), index=True)
-    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    # Both SET NULL, not delete: a subscription is a retained financial record
+    # (§3.D). On family erasure the family link is severed; on owner erasure the
+    # owner link is severed. The money/status fields are NEVER touched here.
+    family_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("families.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     stripe_customer_id: Mapped[str] = mapped_column(String(64))
     stripe_subscription_id: Mapped[str] = mapped_column(String(64), unique=True)
     plan: Mapped[SubscriptionPlan] = mapped_column(
@@ -992,9 +1078,16 @@ class PremiumGrant(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    family_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("families.id"), index=True)
+    # Both SET NULL, not delete: a grant is a retained financial record (§3.D).
+    # On family erasure the family link is severed; on granter erasure the
+    # person link is severed. The money fields are NEVER touched.
+    family_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("families.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     source: Mapped[str] = mapped_column(String(20), default="gift")  # future: "promo", "support"
-    granted_by_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    granted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     stripe_checkout_session_id: Mapped[str] = mapped_column(String(255), unique=True)  # idempotency key
     stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     amount_cents: Mapped[int] = mapped_column()          # integer cents, always
@@ -1006,7 +1099,7 @@ class PremiumGrant(Base):
     # are ignored by the entitlement derivation but never deleted.
     voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     voided_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -1022,7 +1115,11 @@ class PremiumGiftIntent(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     family_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("families.id"), index=True)
-    gifter_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    # SET NULL on erasure: this staging row is retained/severed alongside the
+    # grant it backs (§3.D); the gifter link is severed on gifter erasure.
+    gifter_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     stripe_checkout_session_id: Mapped[str] = mapped_column(String(255), unique=True)
     message: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

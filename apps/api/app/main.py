@@ -15,6 +15,7 @@ from .routers import (
     capsules,
     children,
     contributions,
+    erasure,
     families,
     feed,
     funds,
@@ -77,6 +78,7 @@ app.include_router(social.router)
 app.include_router(premium.router)
 app.include_router(calls.router)
 app.include_router(me.router)
+app.include_router(erasure.router)
 app.include_router(webhooks.router)
 app.include_router(issues.router)
 app.include_router(admin.router)

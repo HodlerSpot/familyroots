@@ -208,6 +208,21 @@ class PaymentProvider(Protocol):
         """Hosted Billing Portal URL. Local: '{return_url}?portal=simulated'."""
         ...
 
+    # --- erasure / DSAR (compliance) ---
+
+    def delete_or_anonymize_customer(self, customer_id: str) -> None:
+        """Erasure: delete/anonymize the adult's Stripe Customer object. Stripe
+        RETAINS the transaction/invoice records regardless (their own legal
+        obligation — the mirror of our §3.D retention). Local: no-op."""
+        ...
+
+    def deauthorize_connect_account(self, account_id: str) -> None:
+        """COUNSEL-GATED stub (runbook §5): a child's Connect Express account is
+        the parent's, not ours to erase. Deauthorize-vs-parent-closes-account
+        and the disposition of any un-transferred balance are live-money legal
+        calls (WS0), so this is NOT wired into the erasure walk."""
+        ...
+
 
 class LocalPaymentProvider:
     """Dev-only simulated card processor. Always succeeds."""
@@ -308,6 +323,12 @@ class LocalPaymentProvider:
 
     def create_billing_portal(self, customer_id: str, *, return_url: str) -> str:
         return f"{return_url}?portal=simulated"
+
+    def delete_or_anonymize_customer(self, customer_id: str) -> None:
+        return None  # no Stripe account locally; nothing to delete
+
+    def deauthorize_connect_account(self, account_id: str) -> None:
+        return None  # counsel-gated stub; never reached in local mode
 
 
 class StripePaymentProvider:
@@ -641,6 +662,30 @@ class StripePaymentProvider:
             params={"customer": customer_id, "return_url": return_url}
         )
         return session.url
+
+    def delete_or_anonymize_customer(self, customer_id: str) -> None:
+        """Best-effort Customer.delete. Stripe keeps the completed
+        charges/invoices regardless (their tax/regulatory retention) — that is
+        expected and correct; we do not try to erase transaction history."""
+        try:
+            self.client.customers.delete(customer_id)
+        except Exception:  # noqa: BLE001 — best-effort; a human reconciles from the log
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "delete_or_anonymize_customer failed for %s — reconcile in the "
+                "Stripe dashboard",
+                customer_id,
+            )
+
+    def deauthorize_connect_account(self, account_id: str) -> None:
+        # TODO(counsel): un-transferred-balance disposition + deauthorize-vs-
+        # parent-closes-account is a live-money legal decision (runbook §5, WS0).
+        # Intentionally not implemented so no erasure path silently touches a
+        # parent's own Connect funds. Raise loudly if ever wired up by mistake.
+        raise NotImplementedError(
+            "Connect deauthorize is counsel-gated (runbook §5); not implemented"
+        )
 
 
 def _build_provider() -> PaymentProvider:

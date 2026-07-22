@@ -304,13 +304,14 @@ Open:
 
 - Cognito auth swap (needs an egress path for JWKS or a Cognito VPC endpoint) — **deferred by founder decision 2026-07-16** (multi-day effort)
 - CloudFront in front of API + custom domain + WAF — **deferred by founder decision 2026-07-16** (adds ~$10–15/mo)
-- Account-deletion / erasure endpoints: the manual operational flow is now
-  documented in `docs/erasure-runbook.md`; its §7 "automation backlog" is the
-  spec for the eventual self-serve endpoints (table walks, tombstone-vs-delete
-  for `users`, media walk on `MediaStorage.delete()`, Stripe
-  Customer/Connect handling, `consent_records.revoked_at` writes). Counsel
-  items (money-transmission posture, legacy balance escheatment, retention
-  period for money records) are flagged inline there
+- Account-deletion / erasure endpoints + DSAR data export: the manual
+  operational flow is documented in `docs/erasure-runbook.md` (§7 = automation
+  backlog); the **engineering plan** that operationalizes it (self-serve
+  erasure, DSAR export, consent-revocation enforcement, and the new
+  predictions/keepsake/memory-prompt data) is
+  `docs/specs/compliance-erasure-dsar-plan.md`. Counsel items
+  (money-transmission posture, legacy balance escheatment, retention period for
+  money records, Stripe/Connect deauthorize) are its blocking WS0
 - EU/UK withdrawal-right consent line on checkout is live (immediate-performance
   acknowledgment, unchecked by default) — **pending counsel review**
 

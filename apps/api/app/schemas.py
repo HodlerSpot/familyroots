@@ -63,6 +63,14 @@ class ChangePasswordRequest(BaseModel):
     _pw = field_validator("new_password")(validate_password_complexity)
 
 
+class StepUpRequest(BaseModel):
+    """Re-authentication for a destructive/irreversible action (account, child,
+    or family erasure). The caller re-supplies their current password server-side
+    so a stolen live session alone cannot trigger an erasure."""
+
+    password: str = Field(max_length=128)
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
