@@ -64,10 +64,50 @@ const config: ExpoConfig = {
       },
     ],
   },
-  plugins: ["expo-router", "expo-secure-store", "expo-local-authentication"],
+  plugins: [
+    "expo-router",
+    "expo-secure-store",
+    "expo-local-authentication",
+    // Native capture permissions (Add a memory flow): camera + library + mic.
+    [
+      "expo-image-picker",
+      {
+        photosPermission:
+          "FutureRoots uses your photos so you can add memories to a child's vault.",
+        cameraPermission:
+          "FutureRoots uses the camera so you can capture photos and videos for a child's vault.",
+        microphonePermission:
+          "FutureRoots uses the microphone so you can record videos for a child's vault.",
+      },
+    ],
+    // Voice notes are recorded with expo-av; declare the mic usage string.
+    [
+      "expo-av",
+      {
+        microphonePermission:
+          "FutureRoots uses the microphone so you can record a voice note for a child's vault.",
+      },
+    ],
+    // Stripe PaymentSheet (Contribute flow). merchantIdentifier powers Apple Pay;
+    // enableGooglePay turns on the Google Pay sheet on Android. The publishable
+    // key itself is public and travels in `extra` (below), never here.
+    [
+      "@stripe/stripe-react-native",
+      {
+        merchantIdentifier: "merchant.com.futureroots.app",
+        enableGooglePay: true,
+      },
+    ],
+  ],
   extra: {
     appEnv: APP_ENV,
     apiUrl: API_URL[APP_ENV],
+    // Stripe publishable key is public (it only creates client-side tokens), so
+    // it is safe to ship in the bundle. It is injected from the environment at
+    // build/start time (EAS env or a local .env), never hardcoded here. When
+    // unset, the Contribute flow falls back to a warm "payments not ready" note
+    // just like the web app does.
+    stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY ?? "",
     // Populated once the founder provisions the EAS project.
     eas: { projectId: "" },
   },

@@ -5,33 +5,20 @@
 //   - media:     { mode: "header" } — native sends an Authorization header on
 //                GET /media/{id}, so the whole web media-token subsystem is
 //                skipped (the API already accepts a bearer there).
-//   - upload:    an expo-file-system-based UploadPort lands in Phase 3; for now
-//                a typed stub keeps the contract satisfied without pulling a
-//                dependency we do not yet use.
+//   - upload:    an expo-file-system-based UploadPort (see ./upload) that
+//                streams a captured/picked file's bytes straight to the
+//                presigned URL the create-media ticket hands back.
 //   - onSessionExpired: clears the session and notifies the auth context so the
 //                app flips to the unauthenticated stack (no window.location).
 import Constants from "expo-constants";
-import { createApi, type UploadPort } from "@futureroots/api-client";
+import { createApi } from "@futureroots/api-client";
 import { sessionStore } from "./session-store";
+import { mobileUpload, type MobileUpload } from "./upload";
 
 const apiUrl =
   (Constants.expoConfig?.extra?.apiUrl as string | undefined) ?? "http://localhost:8000";
 
-/** A file staged for upload on native: a local content URI plus its MIME type.
- * The real byte-PUT (expo-file-system) is implemented in Phase 3. */
-export interface MobileUpload {
-  uri: string;
-  contentType: string;
-}
-
-const upload: UploadPort<MobileUpload> = {
-  contentType: (file) => file.contentType,
-  put: async () => {
-    throw new Error(
-      "Media upload is wired in Phase 3 (expo-file-system). This scaffold does not upload."
-    );
-  },
-};
+export type { MobileUpload };
 
 // The auth context registers here so a 401 on an authenticated call can flip
 // the whole app to the login stack. Kept as a module-level hook so the
@@ -48,7 +35,7 @@ export const client = createApi<MobileUpload>({
   fetch: (url, init) => fetch(url, init),
   store: sessionStore,
   media: { mode: "header" },
-  upload,
+  upload: mobileUpload,
   isTestnet: false,
   onSessionExpired: () => {
     // The shared client does not clear the store itself; the platform handler
