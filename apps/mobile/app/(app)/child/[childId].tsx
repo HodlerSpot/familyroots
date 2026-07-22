@@ -207,12 +207,17 @@ export default function ChildVaultScreen() {
               </Card.Content>
             </Card>
 
-            {/* Entry points to the flows that land in later chunks */}
+            {/* Entry points to the child's other family surfaces */}
             <View style={styles.entryRow}>
               <EntryButton
                 icon="camera-plus-outline"
                 label="Add a memory"
                 onPress={() => router.push(`/add-memory/${childId}`)}
+              />
+              <EntryButton
+                icon="trophy-outline"
+                label="Goals & badges"
+                onPress={() => router.push(`/goals/${childId}`)}
               />
               <EntryButton
                 icon="mailbox-up-outline"

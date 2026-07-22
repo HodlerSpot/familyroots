@@ -30,6 +30,7 @@ export default function AppLayout() {
         <Stack.Screen name="add-memory/[childId]" options={{ title: "Add a memory" }} />
         <Stack.Screen name="capsules/[childId]" options={{ title: "Time capsules" }} />
         <Stack.Screen name="predictions/[childId]" options={{ title: "Future predictions" }} />
+        <Stack.Screen name="goals/[childId]" options={{ title: "Goals & badges" }} />
       </Stack>
     </ActiveFamilyProvider>
   );
