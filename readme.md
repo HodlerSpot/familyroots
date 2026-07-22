@@ -2,7 +2,7 @@
 
 **Building Generational Wealth & Memories**
 
-FutureRoots is a Family Wealth Network that helps families preserve memories, transfer wisdom, teach financial literacy, and build generational wealth through a child-centered family platform. Blockchain is invisible infrastructure; the product is a warm, private family experience with zero crypto surface.
+FutureRoots is a Family Wealth Network that helps families preserve memories, transfer wisdom, teach financial literacy, and build generational wealth through a child-centered family platform.
 
 Every child gets a lifetime **FutureRoots Vault**: memories, milestones, family messages, time capsules, and a growing future fund that grandparents and relatives contribute to in moments of celebration.
 
