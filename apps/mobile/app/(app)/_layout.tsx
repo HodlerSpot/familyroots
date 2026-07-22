@@ -1,59 +1,36 @@
-// The authenticated tab shell. Four core tabs for this phase — Home, Kids,
-// Alerts, Menu — as stubs; the full family-scoped shell (role-aware tabs, the
-// center Add action, the family switcher) arrives in later phases.
+// The authenticated area is a Stack: the family-scoped tab shell is one screen
+// in it, and every pushed detail screen (full feed, a moment thread, a child's
+// vault, the write-flow stubs) is a sibling that slides in over the tabs with a
+// native back button. The whole area is wrapped in the ActiveFamilyProvider so
+// every screen reads the same active family + role.
 import React from "react";
-import { Tabs } from "expo-router";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Stack } from "expo-router";
 import { useTheme } from "react-native-paper";
+import { ActiveFamilyProvider } from "@/active-family";
 
-export default function AppTabsLayout() {
+export default function AppLayout() {
   const theme = useTheme();
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: true,
-        tabBarActiveTintColor: theme.colors.primary,
-        tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
-        tabBarStyle: { height: 64, paddingBottom: 8, paddingTop: 6 },
-        tabBarLabelStyle: { fontSize: 12 },
-      }}
-    >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Home",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="home-heart" color={color} size={size} />
-          ),
+    <ActiveFamilyProvider>
+      <Stack
+        screenOptions={{
+          headerStyle: { backgroundColor: theme.colors.surface },
+          headerTintColor: theme.colors.primary,
+          headerTitleStyle: { color: theme.colors.onSurface },
+          headerShadowVisible: false,
+          contentStyle: { backgroundColor: theme.colors.background },
         }}
-      />
-      <Tabs.Screen
-        name="kids"
-        options={{
-          title: "Kids",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="baby-face-outline" color={color} size={size} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="alerts"
-        options={{
-          title: "Alerts",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="bell-outline" color={color} size={size} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="menu"
-        options={{
-          title: "Menu",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="menu" color={color} size={size} />
-          ),
-        }}
-      />
-    </Tabs>
+      >
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="feed" options={{ title: "Family moments" }} />
+        <Stack.Screen name="moment/[eventId]" options={{ title: "Moment" }} />
+        <Stack.Screen name="child/[childId]" options={{ title: "Vault" }} />
+        <Stack.Screen name="legacy" options={{ title: "Legacy archive" }} />
+        <Stack.Screen name="contribute/[childId]" options={{ title: "Give a gift" }} />
+        <Stack.Screen name="add-memory/[childId]" options={{ title: "Add a memory" }} />
+        <Stack.Screen name="capsules/[childId]" options={{ title: "Time capsules" }} />
+        <Stack.Screen name="predictions/[childId]" options={{ title: "Future predictions" }} />
+      </Stack>
+    </ActiveFamilyProvider>
   );
 }
