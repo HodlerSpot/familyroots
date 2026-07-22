@@ -1,0 +1,13 @@
+{
+  "name": "futureroots",
+  "version": "0.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build:web": "npm run build -w web",
+    "test:api-client": "npm run test -w @futureroots/api-client"
+  }
+}
