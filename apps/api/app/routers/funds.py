@@ -22,7 +22,13 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
 from ..config import settings
-from ..deps import CurrentUser, DbSession, get_child_with_access, require_guardian_role
+from ..deps import (
+    ClientPlatform,
+    CurrentUser,
+    DbSession,
+    get_child_with_access,
+    require_guardian_role,
+)
 from ..models import (
     ConsentRecord,
     ConsentType,
@@ -43,6 +49,7 @@ from ..services.payments import (
     get_payment_provider,
     sync_fund_account_state,
 )
+from ..return_urls import bridge_url, is_mobile
 
 router = APIRouter(tags=["funds"])
 
@@ -77,7 +84,12 @@ def _nudge_claim(db, child_id: uuid.UUID, user_id: uuid.UUID) -> FundNudge | Non
 
 
 @router.post("/children/{child_id}/fund/setup", response_model=FundSetupOut)
-def setup_fund(child_id: uuid.UUID, db: DbSession, user: CurrentUser) -> FundSetupOut:
+def setup_fund(
+    child_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+    platform: ClientPlatform,
+) -> FundSetupOut:
     """Start (or resume) hosted onboarding for the child's Future Fund.
     Parent/guardian only. Always returns a FRESH single-use onboarding link —
     links expire quickly and are never stored."""
@@ -124,11 +136,21 @@ def setup_fund(child_id: uuid.UUID, db: DbSession, user: CurrentUser) -> FundSet
             )
         )
 
-    base = f"{settings.web_base_url}/family/{child.family_id}/child/{child.id}/fund/setup"
+    if is_mobile(platform):
+        return_url = bridge_url(
+            "fund-return", family_id=str(child.family_id), child_id=str(child.id)
+        )
+        refresh_url = bridge_url(
+            "fund-refresh", family_id=str(child.family_id), child_id=str(child.id)
+        )
+    else:
+        base = f"{settings.web_base_url}/family/{child.family_id}/child/{child.id}/fund/setup"
+        return_url = f"{base}/return"
+        refresh_url = f"{base}/refresh"
     url = provider.create_account_link(
         account.stripe_account_id,
-        return_url=f"{base}/return",
-        refresh_url=f"{base}/refresh",
+        return_url=return_url,
+        refresh_url=refresh_url,
     )
     db.commit()
     return FundSetupOut(url=url)

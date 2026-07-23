@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated, Generator
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -49,6 +49,22 @@ def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def get_client_platform(
+    x_client_platform: Annotated[str | None, Header()] = None,
+) -> str:
+    """The calling client's platform: ``ios``, ``android``, or ``web``.
+
+    Read from the optional ``X-Client-Platform`` request header. Absent or
+    unrecognized ⇒ ``web``, so the browser path never changes. The native app
+    sends this so hosted Stripe/Connect flows return through the deep-link
+    bridge instead of a normal web page (see ``app.return_urls``)."""
+    value = (x_client_platform or "").strip().lower()
+    return value if value in {"ios", "android"} else "web"
+
+
+ClientPlatform = Annotated[str, Depends(get_client_platform)]
 
 
 def get_admin_user(user: CurrentUser) -> User:

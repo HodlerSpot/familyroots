@@ -218,6 +218,13 @@ class Settings(BaseSettings):
     premium_gift_amount_cents: int = 9900   # local-backend simulation + display only
     web_base_url: str = "http://localhost:3000"
     cors_extra_origins: str = ""  # comma-separated additional allowed origins
+    # Custom URL scheme the native app registers (iOS/Android). Hosted
+    # Stripe/Connect flows can't redirect to a custom scheme directly — Stripe
+    # requires https return URLs — so when a request comes from the mobile app
+    # (X-Client-Platform: ios/android) the return URL points at the https
+    # /m/return bridge page on web_base_url, which deep-links back in via this
+    # scheme. Web (header absent or "web") keeps its normal hosted pages.
+    mobile_deep_link_scheme: str = "futureroots"
     # Testnet harness (testnet.futureroots.app only). Gates the /testnet
     # endpoints and the points engine; the family product runs with this off.
     testnet_mode: bool = False

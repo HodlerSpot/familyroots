@@ -321,6 +321,48 @@ def test_setup_records_contributions_consent(client):
         assert len(records) == 1
 
 
+# --- platform-aware Connect onboarding return URLs (mobile deep-link bridge) ---
+
+def test_fund_setup_return_urls_platform_aware(client, monkeypatch):
+    """Web (no header) keeps the /fund/setup/return|refresh pages byte-for-byte;
+    iOS/Android point Connect onboarding at the https /m/return bridge."""
+    from app.config import settings
+    from app.services import payments as pay
+
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    child_web = add_child(client, parent, family_id, "Web")
+    child_ios = add_child(client, parent, family_id, "Ios")
+
+    calls: list[dict] = []
+    original = pay._provider.create_account_link
+
+    def spy(account_id, **kwargs):
+        calls.append(dict(kwargs))
+        return original(account_id, **kwargs)
+
+    monkeypatch.setattr(pay._provider, "create_account_link", spy)
+
+    assert client.post(f"/children/{child_web}/fund/setup", headers=parent).status_code == 200
+    assert client.post(
+        f"/children/{child_ios}/fund/setup",
+        headers={**parent, "X-Client-Platform": "ios"},
+    ).status_code == 200
+
+    web, ios = calls
+    base = f"{settings.web_base_url}/family/{family_id}/child/{child_web}/fund/setup"
+    assert web["return_url"] == f"{base}/return"
+    assert web["refresh_url"] == f"{base}/refresh"
+    assert ios["return_url"] == (
+        f"{settings.web_base_url}/m/return?to=fund-return"
+        f"&family_id={family_id}&child_id={child_ios}"
+    )
+    assert ios["refresh_url"] == (
+        f"{settings.web_base_url}/m/return?to=fund-refresh"
+        f"&family_id={family_id}&child_id={child_ios}"
+    )
+
+
 # --- nudges ---
 
 def test_nudge_emails_parents_only_and_throttles(client, tmp_path):

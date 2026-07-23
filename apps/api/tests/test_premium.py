@@ -826,6 +826,146 @@ def test_gift_lapsed_long_ago_sends_no_stale_premium_ended_email(client, tmp_pat
     assert not [t for t in outbox_texts(tmp_path) if "back on the Free plan" in t]
 
 
+# --- platform-aware return URLs (mobile deep-link bridge) ---
+#
+# Web (no X-Client-Platform header, or "web") must stay byte-for-byte identical
+# to the pre-mobile behavior. iOS/Android point Stripe at the https /m/return
+# bridge on web_base_url, tagged with a `to` target so the bridge can deep-link
+# back into the app.
+
+
+def _spy_kwargs(monkeypatch, method_name):
+    """Record each call's kwargs on the singleton payment provider, then
+    delegate to the real (local) method so the endpoint settles as usual."""
+    from app.services import payments as pay
+
+    calls: list[dict] = []
+    original = getattr(pay._provider, method_name)
+
+    def spy(*args, **kwargs):
+        calls.append(dict(kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(pay._provider, method_name, spy)
+    return calls
+
+
+def test_checkout_return_urls_platform_aware(client, monkeypatch):
+    from app.config import settings
+
+    parent = signup(client, "parent@example.com")
+    fam_web = create_family(client, parent, "Web")
+    fam_ios = create_family(client, parent, "iOS")
+    calls = _spy_kwargs(monkeypatch, "create_subscription_checkout")
+
+    assert client.post(
+        f"/families/{fam_web}/premium/checkout", json={"plan": "monthly"}, headers=parent
+    ).status_code == 200
+    assert client.post(
+        f"/families/{fam_ios}/premium/checkout",
+        json={"plan": "monthly"},
+        headers={**parent, "X-Client-Platform": "ios"},
+    ).status_code == 200
+
+    web, ios = calls
+    assert web["success_url"] == (
+        f"{settings.web_base_url}/family/{fam_web}/premium/success"
+        "?session_id={CHECKOUT_SESSION_ID}"
+    )
+    assert web["cancel_url"] == f"{settings.web_base_url}/family/{fam_web}/premium?canceled=1"
+    assert ios["success_url"] == (
+        f"{settings.web_base_url}/m/return?to=premium-success&family_id={fam_ios}"
+        "&session_id={CHECKOUT_SESSION_ID}"
+    )
+    assert ios["cancel_url"] == (
+        f"{settings.web_base_url}/m/return?to=premium-cancel&family_id={fam_ios}"
+    )
+
+
+def test_gift_return_urls_platform_aware(client, monkeypatch):
+    from app.config import settings
+
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    gran = make_grandparent(client, parent, family_id)  # gifts stack, so gran can go twice
+    calls = _spy_kwargs(monkeypatch, "create_gift_checkout")
+
+    assert client.post(
+        f"/families/{family_id}/premium/gift-checkout", json={}, headers=gran
+    ).status_code == 200
+    assert client.post(
+        f"/families/{family_id}/premium/gift-checkout",
+        json={},
+        headers={**gran, "X-Client-Platform": "android"},
+    ).status_code == 200
+
+    web, mob = calls
+    assert web["success_url"] == (
+        f"{settings.web_base_url}/family/{family_id}/premium/gift/success"
+        "?session_id={CHECKOUT_SESSION_ID}"
+    )
+    assert web["cancel_url"] == (
+        f"{settings.web_base_url}/family/{family_id}/premium/gift?canceled=1"
+    )
+    assert mob["success_url"] == (
+        f"{settings.web_base_url}/m/return?to=gift-success&family_id={family_id}"
+        "&session_id={CHECKOUT_SESSION_ID}"
+    )
+    assert mob["cancel_url"] == (
+        f"{settings.web_base_url}/m/return?to=gift-cancel&family_id={family_id}"
+    )
+
+
+def test_portal_return_url_platform_aware(client, monkeypatch):
+    from app.config import settings
+
+    parent = signup(client, "parent@example.com")
+    family_id = create_family(client, parent)
+    make_premium(client, parent, family_id)
+    calls = _spy_kwargs(monkeypatch, "create_billing_portal")
+
+    assert client.post(f"/families/{family_id}/premium/portal", headers=parent).status_code == 200
+    assert client.post(
+        f"/families/{family_id}/premium/portal",
+        headers={**parent, "X-Client-Platform": "ios"},
+    ).status_code == 200
+
+    web, ios = calls
+    assert web["return_url"] == f"{settings.web_base_url}/family/{family_id}"
+    assert ios["return_url"] == (
+        f"{settings.web_base_url}/m/return?to=portal&family_id={family_id}"
+    )
+
+
+def test_unknown_or_web_platform_header_keeps_web_pages(client, monkeypatch):
+    """An explicit "web" and an unrecognized value both leave the web behavior
+    untouched — the mobile bridge is opt-in via a known ios/android value."""
+    from app.config import settings
+
+    parent = signup(client, "parent@example.com")
+    fam_web = create_family(client, parent, "Web")
+    fam_junk = create_family(client, parent, "Junk")
+    calls = _spy_kwargs(monkeypatch, "create_subscription_checkout")
+
+    assert client.post(
+        f"/families/{fam_web}/premium/checkout",
+        json={"plan": "annual"},
+        headers={**parent, "X-Client-Platform": "web"},
+    ).status_code == 200
+    assert client.post(
+        f"/families/{fam_junk}/premium/checkout",
+        json={"plan": "annual"},
+        headers={**parent, "X-Client-Platform": "banana"},
+    ).status_code == 200
+
+    for fam, call in zip((fam_web, fam_junk), calls):
+        assert call["success_url"] == (
+            f"{settings.web_base_url}/family/{fam}/premium/success"
+            "?session_id={CHECKOUT_SESSION_ID}"
+        )
+        assert "/m/return" not in call["cancel_url"]
+
+
 # --- owner departure hook ---
 
 def test_owner_departure_cancels_at_period_end_and_emails_parents(client, tmp_path):

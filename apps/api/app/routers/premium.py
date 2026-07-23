@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from ..config import settings
 from ..deps import (
+    ClientPlatform,
     CurrentUser,
     DbSession,
     get_active_membership,
@@ -58,6 +59,7 @@ from ..services.premium import (
 )
 from ..services import premium_emails as copy
 from ..services.email import get_email_sender
+from ..return_urls import bridge_url, is_mobile
 
 router = APIRouter(prefix="/families/{family_id}/premium", tags=["premium"])
 
@@ -133,7 +135,11 @@ def premium_status(family_id: uuid.UUID, db: DbSession, user: CurrentUser) -> Pr
 
 @router.post("/checkout", response_model=CheckoutSessionOut)
 def create_checkout(
-    family_id: uuid.UUID, payload: PremiumCheckoutIn, db: DbSession, user: CurrentUser
+    family_id: uuid.UUID,
+    payload: PremiumCheckoutIn,
+    db: DbSession,
+    user: CurrentUser,
+    platform: ClientPlatform,
 ) -> CheckoutSessionOut:
     membership = get_active_membership(db, family_id, user)
     require_parent_role(membership)
@@ -175,15 +181,24 @@ def create_checkout(
         "owner_user_id": str(user.id),
         "plan": payload.plan,
     }
+    if is_mobile(platform):
+        success_url = (
+            bridge_url("premium-success", family_id=str(family_id))
+            + "&session_id={CHECKOUT_SESSION_ID}"
+        )
+        cancel_url = bridge_url("premium-cancel", family_id=str(family_id))
+    else:
+        success_url = (
+            f"{settings.web_base_url}/family/{family_id}/premium/success"
+            "?session_id={CHECKOUT_SESSION_ID}"
+        )
+        cancel_url = f"{settings.web_base_url}/family/{family_id}/premium?canceled=1"
     session_id, redirect_url = provider.create_subscription_checkout(
         customer_id=customer_id,
         price_id=price_id or f"price_local_{payload.plan}",
         metadata=metadata,
-        success_url=(
-            f"{settings.web_base_url}/family/{family_id}/premium/success"
-            "?session_id={CHECKOUT_SESSION_ID}"
-        ),
-        cancel_url=f"{settings.web_base_url}/family/{family_id}/premium?canceled=1",
+        success_url=success_url,
+        cancel_url=cancel_url,
         # Double-clicks within the hour reuse one Stripe session.
         idempotency_scope=f"{family_id}-{payload.plan}-{utcnow():%Y%m%d%H}",
     )
@@ -212,7 +227,11 @@ def create_checkout(
 
 @router.post("/gift-checkout", response_model=CheckoutSessionOut)
 def create_gift_checkout(
-    family_id: uuid.UUID, payload: GiftCheckoutIn, db: DbSession, user: CurrentUser
+    family_id: uuid.UUID,
+    payload: GiftCheckoutIn,
+    db: DbSession,
+    user: CurrentUser,
+    platform: ClientPlatform,
 ) -> CheckoutSessionOut:
     membership = get_active_membership(db, family_id, user)
     if membership.role == FamilyRole.parent:
@@ -249,10 +268,21 @@ def create_gift_checkout(
             "gifter_user_id": str(user.id),
         },
         success_url=(
-            f"{settings.web_base_url}/family/{family_id}/premium/gift/success"
-            "?session_id={CHECKOUT_SESSION_ID}"
+            (
+                bridge_url("gift-success", family_id=str(family_id))
+                + "&session_id={CHECKOUT_SESSION_ID}"
+            )
+            if is_mobile(platform)
+            else (
+                f"{settings.web_base_url}/family/{family_id}/premium/gift/success"
+                "?session_id={CHECKOUT_SESSION_ID}"
+            )
         ),
-        cancel_url=f"{settings.web_base_url}/family/{family_id}/premium/gift?canceled=1",
+        cancel_url=(
+            bridge_url("gift-cancel", family_id=str(family_id))
+            if is_mobile(platform)
+            else f"{settings.web_base_url}/family/{family_id}/premium/gift?canceled=1"
+        ),
     )
     # Same transaction as session creation: the webhook joins on this row.
     db.add(
@@ -336,7 +366,12 @@ def resume_premium(family_id: uuid.UUID, db: DbSession, user: CurrentUser) -> Pr
 
 
 @router.post("/portal", response_model=PremiumPortalOut)
-def billing_portal(family_id: uuid.UUID, db: DbSession, user: CurrentUser) -> PremiumPortalOut:
+def billing_portal(
+    family_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+    platform: ClientPlatform,
+) -> PremiumPortalOut:
     """Hosted Billing Portal (payment method, invoices) — subscription owner only."""
     membership = get_active_membership(db, family_id, user)
     require_parent_role(membership)
@@ -350,9 +385,14 @@ def billing_portal(family_id: uuid.UUID, db: DbSession, user: CurrentUser) -> Pr
             status.HTTP_403_FORBIDDEN,
             "Only the parent who started the plan can open billing",
         )
+    return_url = (
+        bridge_url("portal", family_id=str(family_id))
+        if is_mobile(platform)
+        else f"{settings.web_base_url}/family/{family_id}"
+    )
     url = get_payment_provider().create_billing_portal(
         sub.stripe_customer_id,
-        return_url=f"{settings.web_base_url}/family/{family_id}",
+        return_url=return_url,
     )
     return PremiumPortalOut(portal_url=url)
 
