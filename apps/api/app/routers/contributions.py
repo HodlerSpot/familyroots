@@ -10,6 +10,7 @@ from ..models import (
     FundAccount,
     FundAccountStatus,
     FundLedgerEntry,
+    LedgerEntryType,
     User,
 )
 from ..schemas import ContributionCreate, ContributionOut, FundOut, LedgerEntryOut
@@ -129,6 +130,7 @@ def child_fund(child_id: uuid.UUID, db: DbSession, user: CurrentUser) -> FundOut
             balance_cents=0,
             account_status=FundAccountStatus.none,
             setup_by_name=None,
+            gift_count=0,
             entries=[],
         )
 
@@ -142,12 +144,23 @@ def child_fund(child_id: uuid.UUID, db: DbSession, user: CurrentUser) -> FundOut
         .order_by(FundLedgerEntry.created_at.desc(), FundLedgerEntry.id.desc())
         .all()
     )
+    # "Gifts from the family": count contribution entries whose contribution is
+    # not fully refunded. Refund entries are `adjustment`, so they never add; a
+    # full refund flips the contribution to `refunded` (drop it, -1); a partial
+    # refund leaves it `succeeded` (still counted).
+    gift_count = sum(
+        1
+        for entry, contribution, _ in rows
+        if entry.entry_type == LedgerEntryType.contribution
+        and (contribution is None or contribution.status != ContributionStatus.refunded)
+    )
     return FundOut(
         child_id=child_id,
         currency=account.currency,
         balance_cents=fund_balance_cents(db, account.id),
         account_status=account.account_status,
         setup_by_name=setup_by.display_name if setup_by else None,
+        gift_count=gift_count,
         entries=[
             LedgerEntryOut(
                 id=entry.id,

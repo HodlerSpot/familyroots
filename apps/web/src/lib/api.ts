@@ -169,6 +169,9 @@ export interface FundOut {
   balance_cents: number;
   account_status: FundAccountStatus;
   setup_by_name: string | null;
+  /** Gifts that still stand: contributions minus fully-refunded ones (a full
+   * refund drops one; a partial refund does not). Server-derived. */
+  gift_count: number;
   entries: {
     id: string;
     amount_cents: number;

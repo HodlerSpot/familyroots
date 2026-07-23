@@ -95,8 +95,8 @@ export function FamilyFundCard({
             {formatMoney(fund.balance_cents, fund.currency)}
           </p>
           <p className="text-sm text-stone-500">
-            {fund.entries.length > 0
-              ? `${fund.entries.length} gift${fund.entries.length === 1 ? "" : "s"} from the family`
+            {fund.gift_count > 0
+              ? `${fund.gift_count} gift${fund.gift_count === 1 ? "" : "s"} from the family`
               : "The first gift starts the journey"}
           </p>
         </div>

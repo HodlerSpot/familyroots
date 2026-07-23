@@ -347,6 +347,11 @@ class FundOut(BaseModel):
     balance_cents: int
     account_status: FundAccountStatus
     setup_by_name: str | None
+    # Number of gifts that still stand: contribution entries minus fully-refunded
+    # ones. A full refund drops the gift (-1); a partial refund leaves it. Derived
+    # server-side because it needs each contribution's refund status, which the
+    # ledger `entries` (a raw transaction history, refunds included) doesn't carry.
+    gift_count: int
     entries: list[LedgerEntryOut]
 
 

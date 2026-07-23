@@ -72,6 +72,7 @@ def test_refund_reverses_ledger(client):
 
     fund = client.get(f"/children/{child_id}/fund", headers=parent).json()
     assert fund["balance_cents"] == 2500 - 103  # net of the 2.9% + 30¢ fee
+    assert fund["gift_count"] == 1  # the one contribution counts
 
     r = client.post(f"/admin/contributions/{c['id']}/refund", headers=admin)
     assert r.status_code == 200 and r.json()["status"] == "refunded"
@@ -79,6 +80,7 @@ def test_refund_reverses_ledger(client):
     fund = client.get(f"/children/{child_id}/fund", headers=parent).json()
     assert fund["balance_cents"] == 0  # compensating entry reverses it
     assert len(fund["entries"]) == 2  # original + adjustment (append-only)
+    assert fund["gift_count"] == 0  # a FULL refund drops the gift (-1)
 
     # a second refund is refused (not succeeded anymore)
     assert client.post(f"/admin/contributions/{c['id']}/refund", headers=admin).status_code == 409
@@ -92,14 +94,18 @@ def test_partial_refunds_accumulate(client):
     setup_fund(client, parent, child_id)
     c = _succeeded_contribution(client, parent, child_id, 3000)  # net 2883 after 117 fee
 
-    assert client.get(f"/children/{child_id}/fund", headers=parent).json()["balance_cents"] == 2883
+    fund = client.get(f"/children/{child_id}/fund", headers=parent).json()
+    assert fund["balance_cents"] == 2883
+    assert fund["gift_count"] == 1
 
     # partial refund of 1000 gross -> ~961 net reversed
     r = client.post(f"/admin/contributions/{c['id']}/refund", json={"amount_cents": 1000}, headers=admin)
     assert r.status_code == 200
     assert r.json()["status"] == "succeeded"  # still partially live
     assert r.json()["refunded_cents"] == 1000
-    assert client.get(f"/children/{child_id}/fund", headers=parent).json()["balance_cents"] == 2883 - 961
+    fund = client.get(f"/children/{child_id}/fund", headers=parent).json()
+    assert fund["balance_cents"] == 2883 - 961
+    assert fund["gift_count"] == 1  # a PARTIAL refund leaves the gift counted
 
     # over-refund is rejected
     assert client.post(
@@ -109,7 +115,9 @@ def test_partial_refunds_accumulate(client):
     # refund the remaining 2000 -> fully refunded, balance exactly 0
     r = client.post(f"/admin/contributions/{c['id']}/refund", json={"amount_cents": 2000}, headers=admin)
     assert r.json()["status"] == "refunded" and r.json()["refunded_cents"] == 3000
-    assert client.get(f"/children/{child_id}/fund", headers=parent).json()["balance_cents"] == 0
+    fund = client.get(f"/children/{child_id}/fund", headers=parent).json()
+    assert fund["balance_cents"] == 0
+    assert fund["gift_count"] == 0  # now fully refunded -> no longer counts
 
 
 def test_contribution_status_filter_and_csv(client):
