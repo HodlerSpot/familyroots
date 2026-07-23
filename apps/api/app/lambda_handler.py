@@ -93,56 +93,6 @@ def _set_role(email: str, role: str) -> dict:
         return {"status": "ok", "email": user.email, "role": user.role.value}
 
 
-def _purge(admin_email: str, confirm: str) -> dict:
-    """DESTRUCTIVE one-off: wipe ALL application data in this database, keeping
-    only the given admin user. Guarded by a confirm token and only reachable via
-    a direct Lambda invoke (AWS creds required) — never an HTTP route. Truncates
-    every model table (CASCADE resolves the FK cycles) but preserves
-    alembic_version so the schema stays at head, then re-inserts the admin row
-    (role forced to admin, avatar nulled since media_objects is gone). If the
-    admin email isn't present in this DB, everything is still wiped and the DB is
-    left with zero users (reported)."""
-    from sqlalchemy import text
-
-    from .db import Base, SessionLocal
-    from .models import User, UserRole
-
-    if confirm != "yes-wipe-everything":
-        return {"error": "refused: pass confirm='yes-wipe-everything'"}
-    if not admin_email:
-        return {"error": "admin_email required"}
-    email = admin_email.lower()
-
-    with SessionLocal() as db:
-        admin = db.query(User).filter(User.email == email).first()
-        admin_data = None
-        if admin is not None:
-            admin_data = {c.name: getattr(admin, c.name) for c in User.__table__.columns}
-            admin_data["role"] = UserRole.admin  # ensure it stays an admin
-            admin_data["avatar_media_id"] = None  # media_objects is truncated below
-
-        # TRUNCATE every model table (NOT alembic_version) in one statement;
-        # CASCADE + RESTART IDENTITY handles the mutually-dependent FKs. This is
-        # transactional in Postgres, so a failure rolls back cleanly.
-        table_names = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
-        db.execute(text(f"TRUNCATE TABLE {table_names} RESTART IDENTITY CASCADE"))
-
-        preserved = False
-        if admin_data is not None:
-            db.add(User(**admin_data))
-            preserved = True
-        db.commit()
-        users_remaining = db.query(User).count()
-
-    return {
-        "status": "purged",
-        "admin_email": email,
-        "admin_preserved": preserved,
-        "users_remaining": users_remaining,
-        "tables_truncated": len(Base.metadata.sorted_tables),
-    }
-
-
 def _run_maintenance() -> dict:
     """Idempotent daily sweep (retention prunes + abandoned-call cap). Safe to
     run at any time, any number of times."""
@@ -164,6 +114,4 @@ def handler(event, context):
             return _create_database(event.get("name", ""))
         if cmd == "set_role":
             return _set_role(event.get("email", ""), event.get("role", ""))
-        if cmd == "purge":
-            return _purge(event.get("admin_email", ""), event.get("confirm", ""))
     return _mangum(event, context)
