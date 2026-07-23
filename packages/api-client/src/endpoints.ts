@@ -394,6 +394,24 @@ function buildApi<TFile>(
         body: JSON.stringify({ endpoint }),
       }),
 
+    // Native (iOS/Android) push enrollment for THIS device. The Expo push token
+    // is opaque; re-registering reassigns it to the current holder (shared-device
+    // handoff). Native-only — the web app never calls these.
+    registerNativePush: (
+      expo_push_token: string,
+      platform: "ios" | "android",
+      device_label?: string
+    ) =>
+      request<{ registered: boolean }>("/me/native-push-tokens", {
+        method: "POST",
+        body: JSON.stringify({ expo_push_token, platform, device_label: device_label ?? null }),
+      }),
+    unregisterNativePush: (expo_push_token: string) =>
+      request<{ unregistered: boolean }>("/me/native-push-tokens/unregister", {
+        method: "POST",
+        body: JSON.stringify({ expo_push_token }),
+      }),
+
     // In-app notification bell (inbox)
     inbox: (limit = 20, cursor?: string) =>
       request<InboxPage>(`/me/inbox${qs({ limit: String(limit), cursor })}`),

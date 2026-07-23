@@ -30,6 +30,16 @@ export function relativeTime(iso: string): string {
   return then.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+/** "January 5, 2027" — the long calendar form used on plan/renewal surfaces.
+ * Mirrors the web app's formatLongDate (apps/web/src/lib/text.ts). */
+export function formatLongDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
 /** Split a non-negative second count into whole hours and minutes. */
 function hoursAndMinutes(seconds: number): { hours: number; minutes: number } {
   const total = Math.max(0, Math.floor(seconds || 0));

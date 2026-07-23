@@ -90,9 +90,17 @@ export default function HomeScreen() {
                 {roleLine(activeFamily.role)}
               </Text>
             </View>
-            {canSwitch ? (
-              <IconButton icon="swap-horizontal" size={24} onPress={() => setSwitcherOpen(true)} />
-            ) : null}
+            <View style={styles.headerActions}>
+              <IconButton
+                icon="account-group-outline"
+                size={24}
+                onPress={() => router.push("/members")}
+                accessibilityLabel="Family members"
+              />
+              {canSwitch ? (
+                <IconButton icon="swap-horizontal" size={24} onPress={() => setSwitcherOpen(true)} />
+              ) : null}
+            </View>
           </View>
         </TouchableRipple>
 
@@ -169,6 +177,7 @@ const styles = StyleSheet.create({
   headerRipple: { borderRadius: 12 },
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   headerText: { flex: 1, minWidth: 0 },
+  headerActions: { flexDirection: "row", alignItems: "center" },
   title: { fontWeight: "700" },
   muted: {},
   section: { gap: 12 },

@@ -58,6 +58,21 @@ export async function pickMedia(): Promise<MobileUpload | null> {
   return { uri: asset.uri, contentType: assetContentType(asset) };
 }
 
+/** Pick a photo (images only) from the library. Used for profile avatars,
+ * where a video would make no sense. Returns null if permission is denied or
+ * the member cancels. */
+export async function pickImage(): Promise<MobileUpload | null> {
+  const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!perm.granted) return null;
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ["images"],
+    quality: 0.85,
+  });
+  if (result.canceled || result.assets.length === 0) return null;
+  const asset = result.assets[0];
+  return { uri: asset.uri, contentType: assetContentType(asset) };
+}
+
 /** Pick any document (a PDF, a report card, a certificate). */
 export async function pickDocument(): Promise<MobileUpload | null> {
   const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });

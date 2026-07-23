@@ -10,6 +10,7 @@
 //                presigned URL the create-media ticket hands back.
 //   - onSessionExpired: clears the session and notifies the auth context so the
 //                app flips to the unauthenticated stack (no window.location).
+import { Platform } from "react-native";
 import Constants from "expo-constants";
 import { createApi } from "@futureroots/api-client";
 import { sessionStore } from "./session-store";
@@ -17,6 +18,11 @@ import { mobileUpload, type MobileUpload } from "./upload";
 
 const apiUrl =
   (Constants.expoConfig?.extra?.apiUrl as string | undefined) ?? "http://localhost:8000";
+
+// Every JSON API call carries the platform so the backend can build deep-link
+// return URLs that bounce through the https bridge back to futureroots://.
+// Platform.OS is "ios" | "android" on device (web isn't a target here).
+const clientPlatform = Platform.OS;
 
 export type { MobileUpload };
 
@@ -32,7 +38,8 @@ export function setSessionExpiredHandler(fn: (() => void) | null): void {
 
 export const client = createApi<MobileUpload>({
   apiUrl,
-  fetch: (url, init) => fetch(url, init),
+  fetch: (url, init) =>
+    fetch(url, { ...init, headers: { ...init.headers, "X-Client-Platform": clientPlatform } }),
   store: sessionStore,
   media: { mode: "header" },
   upload: mobileUpload,

@@ -32,6 +32,9 @@ interface ActiveFamilyContextValue {
   activeFamily: FamilySummary | null;
   /** Switch the active family (persisted). Ignores unknown ids. */
   setActiveFamilyId: (id: string) => void;
+  /** Make a family active without the membership guard, for the moment right
+   * after joining via an invite (the families list may still be refetching). */
+  activateFamily: (id: string) => void;
   /** True when the active family's role is supporter (reduced surface). */
   isSupporter: boolean;
   loading: boolean;
@@ -88,6 +91,11 @@ export function ActiveFamilyProvider({ children }: { children: ReactNode }) {
     void SecureStore.setItemAsync(ACTIVE_KEY, id).catch(() => {});
   }
 
+  function activateFamily(id: string) {
+    setActiveId(id);
+    void SecureStore.setItemAsync(ACTIVE_KEY, id).catch(() => {});
+  }
+
   const activeFamily = useMemo(
     () => families?.find((f) => f.id === activeId) ?? null,
     [families, activeId]
@@ -98,6 +106,7 @@ export function ActiveFamilyProvider({ children }: { children: ReactNode }) {
       families: families ?? [],
       activeFamily,
       setActiveFamilyId,
+      activateFamily,
       isSupporter: activeFamily?.role === "supporter",
       loading: isLoading || !hydrated,
       error: isError,

@@ -4,7 +4,7 @@
 // redirect between the (auth) and (app) route groups based on auth state.
 import React, { useEffect } from "react";
 import { ActivityIndicator, useColorScheme, View } from "react-native";
-import { Slot, useRouter, useSegments } from "expo-router";
+import { Slot, usePathname, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { PaperProvider, MD2Colors } from "react-native-paper";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -14,10 +14,12 @@ import { AuthProvider, useAuth } from "@/auth-context";
 import { AppLockProvider } from "@/app-lock";
 import { queryClient } from "@/query";
 import { darkTheme, lightTheme } from "@/theme";
+import { setPendingInvite, takePendingInvite } from "@/pending-invite";
 
 function AuthGate() {
   const { status } = useAuth();
   const segments = useSegments();
+  const pathname = usePathname();
   const router = useRouter();
 
   useEffect(() => {
@@ -25,11 +27,17 @@ function AuthGate() {
     const inAuthGroup = segments[0] === "(auth)";
     const inAppGroup = segments[0] === "(app)";
     if (status === "unauthed" && !inAuthGroup) {
+      // Preserve an invite deep link so we can complete it after sign-in.
+      const match = pathname.match(/\/invites\/([^/?#]+)/);
+      if (match) setPendingInvite(decodeURIComponent(match[1]));
       router.replace("/(auth)/login");
     } else if (status === "authed" && !inAppGroup) {
-      router.replace("/(app)");
+      // Land in the app, or straight into a pending invite if one was tapped
+      // while signed out.
+      const pending = takePendingInvite();
+      router.replace(pending ? `/(app)/invites/${pending}` : "/(app)");
     }
-  }, [status, segments, router]);
+  }, [status, segments, pathname, router]);
 
   if (status === "loading") {
     return (

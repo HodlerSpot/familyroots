@@ -31,6 +31,12 @@ export default function AppLayout() {
         <Stack.Screen name="capsules/[childId]" options={{ title: "Time capsules" }} />
         <Stack.Screen name="predictions/[childId]" options={{ title: "Future predictions" }} />
         <Stack.Screen name="goals/[childId]" options={{ title: "Goals & badges" }} />
+        <Stack.Screen name="premium" options={{ title: "FutureRoots Premium" }} />
+        <Stack.Screen name="notifications" options={{ title: "Notifications" }} />
+        <Stack.Screen name="your-data" options={{ title: "Your data" }} />
+        <Stack.Screen name="profile" options={{ title: "Your profile" }} />
+        <Stack.Screen name="members" options={{ title: "Family members" }} />
+        <Stack.Screen name="invites/[token]" options={{ title: "Invitation" }} />
       </Stack>
     </ActiveFamilyProvider>
   );

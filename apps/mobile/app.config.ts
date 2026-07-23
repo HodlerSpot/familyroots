@@ -68,6 +68,12 @@ const config: ExpoConfig = {
     "expo-router",
     "expo-secure-store",
     "expo-local-authentication",
+    // In-app browser for the Stripe hosted flows (Premium checkout / gift /
+    // billing portal). The return bridge bounces back to the futureroots://
+    // scheme, which openAuthSessionAsync intercepts to close the browser.
+    "expo-web-browser",
+    // Native push. No parameters needed; APNs/FCM credentials live in EAS.
+    "expo-notifications",
     // Native capture permissions (Add a memory flow): camera + library + mic.
     [
       "expo-image-picker",
