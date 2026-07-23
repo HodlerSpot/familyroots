@@ -21,16 +21,17 @@ const config: ExpoConfig = {
   scheme: "futureroots",
   version: "0.1.0",
   orientation: "portrait",
-  // Placeholder brand assets derived from docs/brand/logo.png (copied into
-  // ./assets so they resolve within the project root); Phase 6 replaces them
-  // with properly sized icon/splash exports.
+  // Brand assets built from the FutureRoots shield mark (docs/brand/logo-mark
+  // source) on the emerald/warm-stone palette. icon.png is a flattened 1024
+  // square with no alpha (iOS App Store requirement). See docs/brand for the
+  // recommended vector redraw before public launch.
   icon: "./assets/icon.png",
   userInterfaceStyle: "automatic",
   newArchEnabled: true,
   splash: {
     image: "./assets/splash.png",
     resizeMode: "contain",
-    backgroundColor: "#ffffff",
+    backgroundColor: "#FAFAF9", // warm stone-50, matches the splash image field
   },
   assetBundlePatterns: ["**/*"],
   ios: {
@@ -46,7 +47,10 @@ const config: ExpoConfig = {
     package: "com.futureroots.mobile",
     adaptiveIcon: {
       foregroundImage: "./assets/adaptive-icon.png",
-      backgroundColor: "#ffffff",
+      // Warm stone-50 rather than emerald: the full-colour mark keeps clean
+      // contrast on a light field, and emerald would blend with the mark's
+      // green shield side and fringe its anti-aliased edge.
+      backgroundColor: "#FAFAF9",
     },
     // Android App Links: same https paths, auto-verified against the domain's
     // assetlinks.json (server-side, tracked in the build plan).
