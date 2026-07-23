@@ -130,8 +130,9 @@ const config: ExpoConfig = {
     // unset, the Contribute flow falls back to a warm "payments not ready" note
     // just like the web app does.
     stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY ?? "",
-    // Populated once the founder provisions the EAS project.
-    eas: { projectId: "" },
+    // EAS project (org: futureroots-technologies-ltd), created via `eas init`.
+    // Native push (getExpoPushTokenAsync) requires this.
+    eas: { projectId: "5b375e7f-ed41-4756-9999-b4896caf3986" },
   },
 };
 
