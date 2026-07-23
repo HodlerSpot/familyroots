@@ -42,8 +42,10 @@ export function SiteHeader() {
         </a>
         {authed ? (
           <div className="flex items-center gap-1">
-            {/* The bell is a family-product concept; testnet has no inbox. */}
-            {!IS_TESTNET && <NotificationBell />}
+            {/* In-app notifications apply on testnet too: testers are real
+                backing users and get notify() inbox rows + push for family
+                actions (only email is moot on synthetic wallet addresses). */}
+            <NotificationBell />
             <AccountMenu />
           </div>
         ) : (
@@ -185,6 +187,8 @@ function AccountMenu() {
   const links: MenuLink[] = IS_TESTNET
     ? [
         { label: "My account", href: "/account", icon: <UserIcon /> },
+        { label: "My contributions", href: "/contributions", icon: <GiftIcon /> },
+        { label: "Notification settings", href: "/settings", icon: <BellIcon /> },
         { label: "Leaderboard", href: "/leaderboard", icon: <TrophyIcon /> },
         ...(isAdmin
           ? [{ label: "Command center", href: "/admin", icon: <GridIcon /> }]
