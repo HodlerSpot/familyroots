@@ -17,6 +17,7 @@ const API_URL: Record<AppEnv, string> = {
 const config: ExpoConfig = {
   name: "FutureRoots",
   slug: "futureroots",
+  owner: "futureroots-mobile",
   scheme: "futureroots",
   version: "0.1.0",
   orientation: "portrait",
@@ -33,7 +34,7 @@ const config: ExpoConfig = {
   },
   assetBundlePatterns: ["**/*"],
   ios: {
-    bundleIdentifier: "com.futureroots.app",
+    bundleIdentifier: "com.futureroots.mobile",
     supportsTablet: true,
     // Universal Links: emailed/in-app https links (reset-password, invites,
     // family, legacy) open the app when the AASA file is served from the domain,
@@ -42,7 +43,7 @@ const config: ExpoConfig = {
     associatedDomains: ["applinks:futureroots.app", "applinks:www.futureroots.app"],
   },
   android: {
-    package: "app.futureroots",
+    package: "com.futureroots.mobile",
     adaptiveIcon: {
       foregroundImage: "./assets/adaptive-icon.png",
       backgroundColor: "#ffffff",
@@ -100,7 +101,7 @@ const config: ExpoConfig = {
     [
       "@stripe/stripe-react-native",
       {
-        merchantIdentifier: "merchant.com.futureroots.app",
+        merchantIdentifier: "merchant.com.futureroots.mobile",
         enableGooglePay: true,
       },
     ],
