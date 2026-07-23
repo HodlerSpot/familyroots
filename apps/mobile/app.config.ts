@@ -17,7 +17,7 @@ const API_URL: Record<AppEnv, string> = {
 const config: ExpoConfig = {
   name: "FutureRoots",
   slug: "futureroots",
-  owner: "futureroots-mobile",
+  owner: "futureroots-technologies-ltd", // Expo org account (matches the legal entity)
   scheme: "futureroots",
   version: "0.1.0",
   orientation: "portrait",
