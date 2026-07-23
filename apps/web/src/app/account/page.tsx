@@ -2,13 +2,53 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, getToken, mediaUrl, UserOut } from "@/lib/api";
-import { Button, Card, ErrorNote, Label, PasswordInput } from "@/components/ui";
+import JSZip from "jszip";
+import { api, ApiError, ensureMediaToken, getToken, mediaUrl, setToken, UserOut } from "@/lib/api";
+import { Button, Card, ErrorNote, Label, Modal, PasswordInput } from "@/components/ui";
 import { PasswordRules, passwordMeetsRules } from "@/components/password-rules";
 import { QuestBoard, testnetApi } from "@/components/testnet/api";
 import { Avatar } from "@/components/testnet/identicon";
 
 const IS_TESTNET = process.env.NEXT_PUBLIC_TESTNET === "1";
+
+// Guess a file extension from a content type so media discovered without a
+// manifest filename still lands in the zip with a sensible, openable name.
+function extFromContentType(contentType: unknown): string {
+  if (typeof contentType !== "string") return "";
+  const map: Record<string, string> = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/heic": ".heic",
+    "video/mp4": ".mp4",
+    "video/quicktime": ".mov",
+    "video/webm": ".webm",
+    "audio/mpeg": ".mp3",
+    "audio/mp4": ".m4a",
+    "application/pdf": ".pdf",
+  };
+  return map[contentType] ?? "";
+}
+
+// Recursively collect every string that appears under a `media_id` or
+// `cloud_media_id` key anywhere in the export bundle, so nested memories,
+// capsules, contributions, and legacy media are downloaded too — not just the
+// top-level media manifest.
+function collectMediaIds(node: unknown, into: Set<string>): void {
+  if (Array.isArray(node)) {
+    for (const item of node) collectMediaIds(item, into);
+    return;
+  }
+  if (node && typeof node === "object") {
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if ((key === "media_id" || key === "cloud_media_id") && typeof value === "string" && value) {
+        into.add(value);
+      }
+      collectMediaIds(value, into);
+    }
+  }
+}
 
 export default function AccountPage() {
   return IS_TESTNET ? <TestnetAccount /> : <FamilyAccount />;
@@ -234,6 +274,17 @@ function FamilyAccount() {
   const [photoSaved, setPhotoSaved] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // "Your data" — export download
+  const [downloading, setDownloading] = useState(false);
+  const [exportError, setExportError] = useState("");
+
+  // "Your data" — delete-account flow (guarded modal)
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteAck, setDeleteAck] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
   useEffect(() => {
     if (!getToken()) {
       router.replace("/login?next=/account");
@@ -279,6 +330,111 @@ function FamilyAccount() {
       setError(err instanceof ApiError ? err.message : "Something went wrong. Please try again");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function downloadMyData() {
+    setExportError("");
+    setDownloading(true);
+    try {
+      const bundle = await api.exportMyData();
+
+      const zip = new JSZip();
+      zip.file("futureroots-my-data.json", JSON.stringify(bundle, null, 2));
+
+      // Build the set of media to fetch: start from the top-level manifest
+      // (authoritative filenames + content types), then fold in anything
+      // referenced deeper in the bundle so nested media come along too.
+      const filenames = new Map<string, string>();
+      const ids = new Set<string>();
+      const manifest = Array.isArray(bundle.media) ? bundle.media : [];
+      for (const entry of manifest) {
+        if (!entry || typeof entry !== "object") continue;
+        const m = entry as { media_id?: unknown; content_type?: unknown; filename?: unknown };
+        if (typeof m.media_id !== "string" || !m.media_id) continue;
+        ids.add(m.media_id);
+        const name =
+          typeof m.filename === "string" && m.filename
+            ? m.filename
+            : m.media_id + extFromContentType(m.content_type);
+        filenames.set(m.media_id, name);
+      }
+      collectMediaIds(bundle, ids);
+
+      // Fetch each file with the short-lived media token. Tolerate per-file
+      // failures (network, permission, or the media CORS rule not yet live) so
+      // one unreachable file never sinks the whole export — the JSON is already
+      // in the zip regardless.
+      await ensureMediaToken();
+      const unavailable: string[] = [];
+      for (const id of ids) {
+        const filename = filenames.get(id) ?? id;
+        try {
+          const res = await fetch(mediaUrl(id));
+          if (!res.ok) throw new Error(`couldn't be fetched (HTTP ${res.status})`);
+          zip.file(`media/${filename}`, await res.blob());
+        } catch (err) {
+          unavailable.push(`${id} — ${err instanceof Error ? err.message : "couldn't be fetched"}`);
+        }
+      }
+      if (unavailable.length > 0) {
+        zip.file(
+          "media/_unavailable.txt",
+          "A few of your photos or videos couldn't be added to this download. " +
+            "You can still view them in the app, and downloading again later usually picks them up.\n\n" +
+            unavailable.join("\n") +
+            "\n"
+        );
+      }
+
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "futureroots-my-data.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(
+        err instanceof ApiError
+          ? err.message
+          : "We couldn't prepare your data just now. Please try again"
+      );
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  function openDeleteFlow() {
+    setDeletePassword("");
+    setDeleteAck(false);
+    setDeleteError("");
+    setDeleteOpen(true);
+  }
+
+  function closeDeleteFlow() {
+    if (deleting) return; // don't let a click-away interrupt an in-flight erase
+    setDeleteOpen(false);
+  }
+
+  async function confirmDelete() {
+    if (!deletePassword || !deleteAck || deleting) return;
+    setDeleteError("");
+    setDeleting(true);
+    try {
+      await api.deleteMyAccount(deletePassword);
+      // Account is gone; clear the session and send them off warmly.
+      setToken(null);
+      router.replace("/login?farewell=1");
+    } catch (err) {
+      setDeleting(false);
+      if (err instanceof ApiError && err.status === 403) {
+        setDeleteError("That password doesn't match. Please try again.");
+      } else if (err instanceof ApiError) {
+        setDeleteError(err.message);
+      } else {
+        setDeleteError("We couldn't complete this just now. Please try again.");
+      }
     }
   }
 
@@ -386,6 +542,149 @@ function FamilyAccount() {
           </Button>
         </form>
       </Card>
+
+      {/* --- Your data (GDPR self-serve: export + account deletion) --- */}
+      <Card>
+        <h2 className="text-lg font-semibold text-emerald-900">Your data</h2>
+
+        {/* Download my data */}
+        <div className="mt-4">
+          <h3 className="font-medium text-stone-800">Download a copy of your data</h3>
+          <p className="mt-1 text-sm text-stone-600">
+            Get everything you&apos;ve added to FutureRoots in one zip file: your profile, your
+            memories and messages, your contributions, and more — along with your actual photos and
+            videos, saved right alongside it.
+          </p>
+          <div className="mt-3">
+            <Button variant="soft" onClick={downloadMyData} disabled={downloading}>
+              {downloading ? "Preparing your data…" : "Download my data"}
+            </Button>
+          </div>
+          {exportError && (
+            <div className="mt-3">
+              <ErrorNote>{exportError}</ErrorNote>
+            </div>
+          )}
+        </div>
+
+        {/* Delete my account */}
+        <div className="mt-8 border-t border-stone-200 pt-6">
+          <h3 className="font-medium text-stone-800">Delete my account</h3>
+          <p className="mt-1 text-sm text-stone-600">
+            This permanently closes your account and removes your personal information from
+            FutureRoots. This can&apos;t be undone.
+          </p>
+          <div className="mt-3">
+            <Button variant="danger" onClick={openDeleteFlow}>
+              Delete my account
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      <DeleteAccountModal
+        open={deleteOpen}
+        onClose={closeDeleteFlow}
+        password={deletePassword}
+        onPasswordChange={setDeletePassword}
+        ack={deleteAck}
+        onAckChange={setDeleteAck}
+        deleting={deleting}
+        error={deleteError}
+        onConfirm={confirmDelete}
+      />
     </div>
+  );
+}
+
+function DeleteAccountModal({
+  open,
+  onClose,
+  password,
+  onPasswordChange,
+  ack,
+  onAckChange,
+  deleting,
+  error,
+  onConfirm,
+}: {
+  open: boolean;
+  onClose: () => void;
+  password: string;
+  onPasswordChange: (v: string) => void;
+  ack: boolean;
+  onAckChange: (v: boolean) => void;
+  deleting: boolean;
+  error: string;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal open={open} onClose={onClose} title="Delete your account">
+      <div className="space-y-4">
+        <p className="text-stone-700">
+          We&apos;re sorry to see you go. Before you confirm, here&apos;s what happens.
+        </p>
+
+        <div className="rounded-lg bg-red-50 p-4">
+          <p className="text-sm font-medium text-red-900">What we delete</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-red-800">
+            <li>Your profile and sign-in</li>
+            <li>The memories, messages, and other things you&apos;ve added</li>
+            <li>Your notification settings for this account</li>
+          </ul>
+        </div>
+
+        <div className="rounded-lg bg-stone-100 p-4">
+          <p className="text-sm font-medium text-stone-800">What we keep</p>
+          <p className="mt-1 text-sm text-stone-600">
+            We&apos;re required by law to keep records of payments and contributions. We hold on to
+            those financial records, but we remove your name and personal details from them so
+            they&apos;re no longer connected to you.
+          </p>
+        </div>
+
+        <p className="text-sm text-stone-600">
+          This is permanent and can&apos;t be undone. To confirm, please re-enter your password.
+        </p>
+
+        <div>
+          <Label htmlFor="delete-password">Your password</Label>
+          <PasswordInput
+            id="delete-password"
+            value={password}
+            onChange={(e) => onPasswordChange(e.target.value)}
+            autoComplete="current-password"
+            placeholder="Enter your current password"
+            disabled={deleting}
+          />
+        </div>
+
+        <label className="flex cursor-pointer items-start gap-3 text-sm text-stone-700">
+          <input
+            type="checkbox"
+            checked={ack}
+            onChange={(e) => onAckChange(e.target.checked)}
+            disabled={deleting}
+            className="mt-0.5 h-5 w-5 shrink-0 rounded border-stone-300 text-red-600 focus:ring-red-400"
+          />
+          <span>I understand this permanently deletes my account and can&apos;t be undone.</span>
+        </label>
+
+        {error && <ErrorNote>{error}</ErrorNote>}
+
+        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <Button variant="soft" onClick={onClose} disabled={deleting}>
+            Keep my account
+          </Button>
+          <Button
+            variant="danger"
+            onClick={onConfirm}
+            disabled={deleting || !password || !ack}
+          >
+            {deleting ? "Deleting…" : "Permanently delete"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
