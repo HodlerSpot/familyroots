@@ -5,7 +5,7 @@
 // from TestnetRoot when NEXT_PUBLIC_TESTNET=1 (see docs/testnet.md).
 
 import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WagmiProvider, createConfig, http } from "wagmi";
 import { baseSepolia } from "wagmi/chains";
@@ -24,6 +24,7 @@ const queryClient = new QueryClient();
 
 export default function TestnetShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   // null until mounted: the token lives in localStorage, client-side only
   const [authed, setAuthed] = useState<boolean | null>(null);
 
@@ -43,7 +44,21 @@ export default function TestnetShell({ children }: { children: React.ReactNode }
             <QuestsButton />
           </>
         ) : (
-          <WalletGate onSignedIn={() => setAuthed(true)} />
+          <WalletGate
+            onSignedIn={() => {
+              setAuthed(true);
+              // A fresh wallet sign-in should land on the family home, not the
+              // pre-auth route (/, /login, /signup) the gate was covering.
+              // Deep links to any other route are respected.
+              if (
+                pathname === "/" ||
+                pathname.startsWith("/login") ||
+                pathname.startsWith("/signup")
+              ) {
+                router.replace("/family");
+              }
+            }}
+          />
         )}
       </QueryClientProvider>
     </WagmiProvider>
