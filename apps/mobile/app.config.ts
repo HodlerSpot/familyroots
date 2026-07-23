@@ -104,6 +104,21 @@ const config: ExpoConfig = {
         enableGooglePay: true,
       },
     ],
+    // Family Video Call (react-native-agora). Local config plugin (see
+    // ./plugins/withAgora.js) because react-native-agora ships no Expo plugin:
+    // it adds the Android call permissions and, as a fallback, iOS camera/mic
+    // usage strings if the capture plugins above haven't already set them. The
+    // native module links via autolinking, so a `expo prebuild` + dev-client
+    // build is required to run the call (it does not work in Expo Go).
+    [
+      "./plugins/withAgora",
+      {
+        cameraPermission:
+          "FutureRoots uses the camera so you can see and be seen on a family video call.",
+        microphonePermission:
+          "FutureRoots uses the microphone so everyone can hear you on a family video call.",
+      },
+    ],
   ],
   extra: {
     appEnv: APP_ENV,

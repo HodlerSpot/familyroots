@@ -22,6 +22,7 @@ import { useActiveFamily } from "@/active-family";
 import { MemoryPromptCard } from "@/components/memory-prompt";
 import { MomentCard } from "@/components/moment-card";
 import { FamilySwitcher } from "@/components/family-switcher";
+import { FamilyCallCard } from "@/components/family-call/call-card";
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -105,6 +106,15 @@ export default function HomeScreen() {
         </TouchableRipple>
 
         <MemoryPromptCard familyId={activeFamily.id} />
+
+        {/* Family video call (full members only; supporters never see it) */}
+        {!isSupporter ? (
+          <FamilyCallCard
+            familyId={activeFamily.id}
+            familyName={activeFamily.name}
+            role={activeFamily.role}
+          />
+        ) : null}
 
         {/* Latest moments preview */}
         <View style={styles.section}>

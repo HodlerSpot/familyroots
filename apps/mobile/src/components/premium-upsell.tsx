@@ -34,10 +34,15 @@ export function PremiumUpsellCard({
   capability,
   role,
   onDismiss,
+  onUpgrade,
 }: {
   capability: string;
   role: FamilyRole | null;
   onDismiss: () => void;
+  /** Optional call-to-action. When provided, a primary button opens the Premium
+   * screen (parents "See FutureRoots Premium", everyone else "Gift Premium to
+   * the family"). Omitted where the upsell is purely a gentle heads-up. */
+  onUpgrade?: () => void;
 }) {
   const theme = useTheme();
   const copy = CAPABILITY_COPY[capability] ?? DEFAULT_COPY;
@@ -76,9 +81,16 @@ export function PremiumUpsellCard({
             ) : null}
           </View>
         </View>
-        <Button mode="text" onPress={onDismiss} style={styles.dismiss}>
-          Maybe later
-        </Button>
+        <View style={styles.actions}>
+          {onUpgrade ? (
+            <Button mode="contained" onPress={onUpgrade}>
+              {isParent ? "See FutureRoots Premium" : "Gift Premium to the family"}
+            </Button>
+          ) : null}
+          <Button mode="text" onPress={onDismiss} style={styles.dismiss}>
+            Maybe later
+          </Button>
+        </View>
       </Card.Content>
     </Card>
   );
@@ -92,5 +104,6 @@ const styles = StyleSheet.create({
   headText: { flex: 1, minWidth: 0, gap: 4 },
   title: { fontWeight: "700" },
   helper: { marginTop: 2 },
+  actions: { gap: 4 },
   dismiss: { alignSelf: "flex-start" },
 });
